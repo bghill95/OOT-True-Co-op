@@ -162,6 +162,10 @@ void GameInteractor_ExecuteOnActorDestroy(void* actor) {
     GameInteractor::Instance->ExecuteHooksForFilter<GameInteractor::OnActorDestroy>(actor);
 }
 
+void GameInteractor_ExecuteOnCollisionCheckSetAC(void* actor, void* collider) {
+    GameInteractor::Instance->ExecuteHooks<GameInteractor::OnCollisionCheckSetAC>(actor, collider);
+}
+
 void GameInteractor_ExecuteOnEnemyDefeat(void* actor) {
     GameInteractor::Instance->ExecuteHooks<GameInteractor::OnEnemyDefeat>(actor);
     GameInteractor::Instance->ExecuteHooksForID<GameInteractor::OnEnemyDefeat>(((Actor*)actor)->id, actor);

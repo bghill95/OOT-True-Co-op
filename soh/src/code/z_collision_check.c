@@ -2,6 +2,7 @@
 #include "vt.h"
 #include "overlays/effects/ovl_Effect_Ss_HitMark/z_eff_ss_hitmark.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
+#include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include <assert.h>
 
 typedef s32 (*ColChkResetFunc)(PlayState*, Collider*);
@@ -1273,6 +1274,7 @@ s32 CollisionCheck_SetAC(PlayState* play, CollisionCheckContext* colChkCtx, Coll
     if (colChkCtx->sacFlags & 1) {
         return -1;
     }
+    GameInteractor_ExecuteOnCollisionCheckSetAC(collider->actor, collider);
     index = colChkCtx->colACCount;
     colChkCtx->colAC[colChkCtx->colACCount++] = collider;
     return index;

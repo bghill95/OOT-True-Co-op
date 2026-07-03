@@ -1,4 +1,5 @@
 #include "Anchor.h"
+#include "EnemySync.h"
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
@@ -358,4 +359,7 @@ void Anchor::RegisterHooks() {
     });
 
     // #endregion
+
+    // Shared enemy/boss HP + synced deaths (see EnemySync.cpp)
+    EnemySync::RegisterHooks(isConnected);
 }
