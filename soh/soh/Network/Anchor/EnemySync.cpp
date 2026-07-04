@@ -98,6 +98,10 @@ struct RemoteEnemyState {
     uint8_t mask = 0;
     uint8_t phase = 0;
     std::vector<Vec3s> joints;
+    // Streamed world-space vertices of each SUBMITTED quad AT/AC collider, 4 Vec3f
+    // per quad, in the authority's st.colliders capture order. Empty when this
+    // enemy submitted no quad class this frame (the whole Deku Tree roster).
+    std::vector<Vec3f> quadVerts;
     nlohmann::json extras;
 };
 
@@ -622,20 +626,59 @@ static void DetectAndForwardLocalHits(Actor* actor, TrackedState& st) {
     Actor_SetColorFilter(actor, 0x4000, 255, 0, 8);
 }
 
-static void SubmitColliders(Actor* actor, TrackedState& st, uint8_t mask) {
+static void SubmitColliders(Actor* actor, TrackedState& st, RemoteEnemyState& r) {
+    uint8_t mask = r.mask;
     if (gPlayState == NULL || mask == 0) {
         return;
     }
+    // Cursor into r.quadVerts (4 Vec3f per submitted quad). The authority appended
+    // one 4-vertex set per quad that passed the AT/AC predicate below, in this same
+    // st.colliders order, so the nth qualifying quad here pairs with the nth set.
+    size_t quadCursor = 0;
     for (Collider* col : st.colliders) {
         if (col == nullptr || col->actor != actor) {
             continue;
         }
         if (col->shape == COLSHAPE_CYLINDER) {
+            // Repositioned from the streamed world.pos (ApplyPose ran first) — accurate.
             Collider_UpdateCylinder(actor, (ColliderCylinder*)col);
+        } else if (col->shape == COLSHAPE_QUAD) {
+            // Quad AT/AC vertices are AI-set; the suppressed mirror never recomputes
+            // them, so drive them from the stream. A quad that qualifies for AT/AC
+            // submission but has NO fresh verts this frame is skipped entirely —
+            // stale quad geometry lands false hits at old positions, worse than a
+            // missing collider. (Same predicate the authority used to decide which
+            // quads to stream, so cursor and quad iteration stay in lockstep.)
+            bool quadAtAc = ((mask & SUBMIT_AT) && (col->atFlags & AT_ON)) ||
+                            ((mask & SUBMIT_AC) && (col->acFlags & AC_ON));
+            if (quadAtAc) {
+                if (quadCursor + 4 <= r.quadVerts.size()) {
+                    Collider_SetQuadVertices((ColliderQuad*)col, &r.quadVerts[quadCursor],
+                                             &r.quadVerts[quadCursor + 1], &r.quadVerts[quadCursor + 2],
+                                             &r.quadVerts[quadCursor + 3]);
+                    quadCursor += 4;
+                } else {
+                    continue; // qualifies but no fresh verts: never submit stale quad geometry
+                }
+            }
+        } else if (col->shape == COLSHAPE_TRIS) {
+            // Tris vertices are likewise AI-set and NOT streamed this milestone
+            // (out of scope) — submitting them would land false hits at stale
+            // positions. Skip AT/AC/OC submission entirely; log once as a canary so
+            // a later Tris-bearing enemy surfaces instead of silently mis-hitting.
+            static bool sTrisCanary = false;
+            if (!sTrisCanary) {
+                sTrisCanary = true;
+                SPDLOG_WARN("[EnemySync] MIRROR skipping COLSHAPE_TRIS submission id={} key={:#x} "
+                            "(AI-set tris geometry not streamed)",
+                            actor->id, st.key);
+            }
+            continue;
         }
-        // JntSph world spheres refresh in the enemy's PostLimbDraw (still runs);
-        // Quad/Tris vertices are AI-set and may be stale — exposure is bounded by
-        // the authority's mask (only frames the real AI submitted that class).
+        // JntSph world spheres refresh in the enemy's PostLimbDraw (still runs on
+        // suppressed mirrors); cylinders repositioned above; quads carry fresh
+        // streamed verts. Exposure is bounded by the authority's mask (only frames
+        // the real AI submitted that class).
         if ((mask & SUBMIT_AC) && (col->acFlags & AC_ON)) {
             CollisionCheck_SetAC(gPlayState, &gPlayState->colChkCtx, col);
         }
@@ -823,7 +866,7 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
         adapter->DeserializeExtras(actor, r.extras);
     }
 
-    SubmitColliders(actor, st, r.mask);
+    SubmitColliders(actor, st, r);
 
     *should = false;
 }
@@ -850,6 +893,36 @@ static nlohmann::json SnapshotEnemy(Actor* actor, TrackedState& st) {
             jt.push_back(skel->jointTable[i].z);
         }
         e["jt"] = jt;
+    }
+    // Quad AT/AC vertex streaming: the mirror's suppressed AI never recomputes these
+    // AI-set world-space vertices, so stream the four dim.quad[] Vec3fs (12 floats)
+    // of every quad this actor submitted for AT/AC this frame. Cylinders reposition
+    // from world.pos and JntSph spheres refresh in PostLimbDraw, so only quads are
+    // stale on the mirror. Capture order == SubmitColliders' st.colliders iteration
+    // on both sides, and the predicate here mirrors SubmitColliders' exactly, so the
+    // nth streamed set pairs with the nth qualifying quad on the mirror. Absent for
+    // the whole Deku Tree roster (no quad AT/AC enemies).
+    if (st.submitMask & (SUBMIT_AT | SUBMIT_AC)) {
+        std::vector<float> qv;
+        for (Collider* col : st.colliders) {
+            if (col == nullptr || col->actor != actor || col->shape != COLSHAPE_QUAD) {
+                continue;
+            }
+            bool quadAtAc = ((st.submitMask & SUBMIT_AT) && (col->atFlags & AT_ON)) ||
+                            ((st.submitMask & SUBMIT_AC) && (col->acFlags & AC_ON));
+            if (!quadAtAc) {
+                continue;
+            }
+            ColliderQuad* quad = (ColliderQuad*)col;
+            for (int32_t v = 0; v < 4; v++) {
+                qv.push_back(quad->dim.quad[v].x);
+                qv.push_back(quad->dim.quad[v].y);
+                qv.push_back(quad->dim.quad[v].z);
+            }
+        }
+        if (!qv.empty()) {
+            e["qv"] = qv;
+        }
     }
     const ActorSyncAdapter* adapter = GetAdapter(actor->id);
     if (adapter != nullptr) {
@@ -902,6 +975,28 @@ void IngestEnemyState(const nlohmann::json& payload) {
                     }
                 } else {
                     SPDLOG_WARN("[EnemySync] Bad jt size {} for key={:#x}", jt.size(), key);
+                }
+            }
+            // Quad AT/AC vertices (Step 4). Cleared unconditionally so a quad that
+            // stopped attacking (qv absent this frame) never re-submits last frame's
+            // stale verts. Present only while a quad-AT/AC enemy is submitting.
+            r.quadVerts.clear();
+            if (e.contains("qv")) {
+                const auto& qv = e["qv"];
+                size_t n = qv.size();
+                // Must be whole Vec3f (mult of 3) and whole quads (mult of 12),
+                // capped at every captured collider being a quad.
+                if (n % 12 == 0 && n <= (size_t)MAX_TRACKED_COLLIDERS * 12) {
+                    r.quadVerts.reserve(n / 3);
+                    for (size_t i = 0; i + 2 < n; i += 3) {
+                        Vec3f v;
+                        v.x = qv[i + 0].get<float>();
+                        v.y = qv[i + 1].get<float>();
+                        v.z = qv[i + 2].get<float>();
+                        r.quadVerts.push_back(v);
+                    }
+                } else {
+                    SPDLOG_WARN("[EnemySync] Bad qv size {} for key={:#x}", n, key);
                 }
             }
         }

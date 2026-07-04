@@ -38,6 +38,15 @@ void Anchor::HandlePacket_DamagePlayer(nlohmann::json payload) {
     Player* otherPlayer = anchorClient.player;
     Player* self = GET_PLAYER(gPlayState);
 
+    // Step 4 (W1): the receiver's own i-frames are authoritative. Contact damage is
+    // now detected on each player's OWN machine (mirror-side re-submitted enemy ATs),
+    // so a relayed DAMAGE_PLAYER must not re-apply while local i-frames are already
+    // active — closes a latency race where two relays land within one RTT and stack.
+    // Positive invincibilityTimer = active post-hit intangibility (z64player.h).
+    if (self->invincibilityTimer > 0) {
+        return;
+    }
+
     // Prevent incoming damage during cutscenes or item get sequences
     if (Player_InBlockingCsMode(gPlayState, self) || self->stateFlags1 & PLAYER_STATE1_IN_ITEM_CS ||
         self->stateFlags1 & PLAYER_STATE1_GETTING_ITEM) {
