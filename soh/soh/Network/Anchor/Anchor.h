@@ -17,6 +17,15 @@ void DummyPlayer_Update(Actor* actor, PlayState* play);
 void DummyPlayer_Draw(Actor* actor, PlayState* play);
 void DummyPlayer_Destroy(Actor* actor, PlayState* play);
 
+// Life-state carried by PLAYER_LIFE_STATE (edge-triggered) and cached per client.
+// Default 0 (ALIVE) so a value-initialized/legacy-peer client reads as alive.
+typedef enum {
+    LIFE_STATE_ALIVE = 0,
+    LIFE_STATE_REVIVING = 1,
+    LIFE_STATE_DOWNED = 2,
+    LIFE_STATE_GAME_OVER = 3,
+} LifeState;
+
 typedef struct {
     uint32_t clientId;
     std::string name;
@@ -30,6 +39,7 @@ typedef struct {
     bool isGameComplete;
     s16 sceneNum;
     s32 entranceIndex;
+    u8 lifeState; // LifeState; default 0 (ALIVE)
 
     // Only available in PLAYER_UPDATE packets
     s32 linkAge;
@@ -52,6 +62,12 @@ typedef struct {
     // Ptr to the dummy player
     Player* player;
 } AnchorClient;
+
+// A client counts as "alive" for gameplay/authority purposes while ALIVE or
+// mid-fairy-revive (REVIVING). Task 8 wires this into ComputeAuthorityClientId.
+inline bool IsClientAlive(const AnchorClient& client) {
+    return client.lifeState == LIFE_STATE_ALIVE || client.lifeState == LIFE_STATE_REVIVING;
+}
 
 typedef struct {
     uint32_t ownerClientId;
@@ -88,6 +104,7 @@ class Anchor : public Network {
     void HandlePacket_EntranceDiscovered(nlohmann::json payload);
     void HandlePacket_GameComplete(nlohmann::json payload);
     void HandlePacket_GiveItem(nlohmann::json payload);
+    void HandlePacket_PlayerLifeState(nlohmann::json payload);
     void HandlePacket_PlayerSfx(nlohmann::json payload);
     void HandlePacket_PlayerUpdate(nlohmann::json payload);
     void HandlePacket_RequestTeamState(nlohmann::json payload);
@@ -105,6 +122,7 @@ class Anchor : public Network {
 
   public:
     uint32_t ownClientId;
+    u8 myLifeState = 0; // our own cached LifeState (LIFE_STATE_ALIVE); broadcast via PLAYER_LIFE_STATE
     inline static const std::string clientVersion = (char*)gBuildVersion;
 
     // Packet types //
@@ -122,6 +140,7 @@ class Anchor : public Network {
     inline static const std::string GAME_COMPLETE = "GAME_COMPLETE";
     inline static const std::string GIVE_ITEM = "GIVE_ITEM";
     inline static const std::string HANDSHAKE = "HANDSHAKE";
+    inline static const std::string PLAYER_LIFE_STATE = "PLAYER_LIFE_STATE";
     inline static const std::string PLAYER_SFX = "PLAYER_SFX";
     inline static const std::string PLAYER_UPDATE = "PLAYER_UPDATE";
     inline static const std::string REQUEST_TEAM_STATE = "REQUEST_TEAM_STATE";
@@ -167,6 +186,7 @@ class Anchor : public Network {
     void SendPacket_GameComplete();
     void SendPacket_GiveItem(u16 modId, s16 getItemId);
     void SendPacket_Handshake();
+    void SendPacket_PlayerLifeState(u8 state);
     void SendPacket_PlayerSfx(u16 sfxId);
     void SendPacket_PlayerUpdate();
     void SendPacket_RequestTeamState();

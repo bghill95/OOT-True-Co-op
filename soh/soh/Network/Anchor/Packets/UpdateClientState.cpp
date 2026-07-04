@@ -42,6 +42,10 @@ nlohmann::json Anchor::PrepClientState() {
         payload["entranceIndex"] = 0x00;
     }
 
+    // Life state travels with the client-state blob so late joiners learn every
+    // peer's current life state (cross-version safe: parsed under a contains guard).
+    payload["lifeState"] = myLifeState;
+
     return payload;
 }
 
@@ -69,5 +73,6 @@ void Anchor::HandlePacket_UpdateClientState(nlohmann::json payload) {
         clients[clientId].isGameComplete = client.isGameComplete;
         clients[clientId].sceneNum = client.sceneNum;
         clients[clientId].entranceIndex = client.entranceIndex;
+        clients[clientId].lifeState = client.lifeState;
     }
 }

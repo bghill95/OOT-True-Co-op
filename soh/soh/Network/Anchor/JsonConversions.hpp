@@ -63,6 +63,7 @@ inline void from_json(const json& j, AnchorClient& client) {
     j.contains("isGameComplete") ? j.at("isGameComplete").get_to(client.isGameComplete) : client.isGameComplete = false;
     j.contains("sceneNum") ? j.at("sceneNum").get_to(client.sceneNum) : client.sceneNum = SCENE_ID_MAX;
     j.contains("entranceIndex") ? j.at("entranceIndex").get_to(client.entranceIndex) : client.entranceIndex = 0;
+    j.contains("lifeState") ? j.at("lifeState").get_to(client.lifeState) : client.lifeState = 0;
     j.contains("self") ? j.at("self").get_to(client.self) : client.self = false;
 }
 

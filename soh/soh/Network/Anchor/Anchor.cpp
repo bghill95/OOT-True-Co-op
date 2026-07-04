@@ -123,6 +123,8 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_GameComplete(payload);
         else if (packetType == GIVE_ITEM)
             HandlePacket_GiveItem(payload);
+        else if (packetType == PLAYER_LIFE_STATE)
+            HandlePacket_PlayerLifeState(payload);
         else if (packetType == PLAYER_SFX)
             HandlePacket_PlayerSfx(payload);
         else if (packetType == UPDATE_TEAM_STATE)

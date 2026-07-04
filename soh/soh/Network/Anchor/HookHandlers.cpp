@@ -1,6 +1,7 @@
 #include "Anchor.h"
 #include "EnemySync.h"
 #include "PuppetFairy.h"
+#include "CoopWarp.h"
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
@@ -366,4 +367,7 @@ void Anchor::RegisterHooks() {
 
     // Cosmetic companion fairy per remote-player puppet (see PuppetFairy.cpp)
     RegisterPuppetFairyHooks(isConnected);
+
+    // Queued, gated system warps for boss co-entry / spectate / cutscene sync (see CoopWarp.cpp)
+    RegisterCoopWarpHooks(isConnected);
 }
