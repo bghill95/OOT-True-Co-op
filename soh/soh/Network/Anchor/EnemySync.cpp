@@ -83,6 +83,7 @@ struct TrackedState {
     bool dynamicKey = false;          // key is host-assigned (bit 63)
     bool remoteSpawned = false;       // spawned from an ENEMY_SPAWN packet
     bool needsSpawnBroadcast = false; // authority: announce this dynamic spawn
+    bool projectile = false;          // whitelisted enemy projectile: fire-and-forget replica, never streamed/mirrored
     uint8_t phase = 0;                // last adapter phase seen/applied
 };
 
@@ -198,6 +199,19 @@ bool IsTrackedEnemy(Actor* actor) {
 
 static bool IsTrackedCategory(Actor* actor) {
     return actor->category == ACTORCAT_ENEMY || actor->category == ACTORCAT_BOSS;
+}
+
+// Whitelisted enemy projectiles, replicated via fire-and-forget spawn (never
+// streamed): both are deterministic ballistic actors after spawn — fixed
+// world.rot.y, constant speedXZ = 10, no mid-flight re-homing — so each machine
+// runs its own copy's physics. Both are ACTORCAT_PROP by the time the enemy-sync
+// hooks fire (the Deku nut from its InitVars; the Octorok rock via
+// Actor_ChangeCategory inside its Init at z_en_okuta.c:156, which runs before the
+// OnActorInit/OnActorSpawn hooks), so they slip past IsTrackedCategory and are
+// untracked today. The rock shares ACTOR_EN_OKUTA with its live parent Octorok,
+// so gate on the already-changed PROP category to catch only the projectile.
+static bool IsSyncedProjectile(Actor* actor) {
+    return actor->id == ACTOR_EN_NUTSBALL || (actor->id == ACTOR_EN_OKUTA && actor->category == ACTORCAT_PROP);
 }
 
 // EN_GOMA params >= 6: hatch debris (>=10) and defeat limb pieces (>=100) are
@@ -730,14 +744,22 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
     }
     TrackedState& st = it->second;
 
+    // Step 3: whitelisted projectiles are fire-and-forget — never suppressed, never
+    // mirrored. Each machine runs its own deterministic copy's physics to completion
+    // and kills it locally, so leave *should untouched (local AI) and bail before any
+    // perception/suppression logic below.
+    if (st.projectile) {
+        return;
+    }
+
     // Task 2 (W1 Step 2): while we own this enemy's AI, let it perceive the nearest
     // player (local or a same-scene puppet) instead of only the local Link. This
     // MUST run before the became-authority early-return below — being the authority
     // is exactly the case we care about. Guards: authority only; at least one puppet
     // present (implicit local + a cached puppet ⇒ the design's targets.size() > 1);
-    // not mid death-handoff; never the permanently-local Floormaster. (Step 3 adds
-    // !st.projectile here once that field exists.)
-    if (IsLocalAuthority() && !sPerceptionTargets.empty() && !st.dying && !IsMirrorBlocked(actor)) {
+    // not mid death-handoff; not a projectile (belt-and-suspenders — the early return
+    // above already excludes them); never the permanently-local Floormaster.
+    if (IsLocalAuthority() && !sPerceptionTargets.empty() && !st.dying && !st.projectile && !IsMirrorBlocked(actor)) {
         OverridePlayerPerception(actor);
     }
 
@@ -970,13 +992,21 @@ static void Tick() {
             // Dying enemies leave the stream so both sides play the death
             // locally — except adapter-managed bosses, which must stream their
             // defeat phase edge (the mirror releases itself on that edge).
+            // Projectiles carry health 0 by design, so exclude them from the
+            // health==0 exit here — they must fall through to the spawn broadcast
+            // below (they are announced once, then run local physics on each side).
             bool leftStream = st.deathCooldown > 0 || st.dying ||
-                              (actor->colChkInfo.health == 0 && GetAdapter(actor->id) == nullptr);
+                              (actor->colChkInfo.health == 0 && GetAdapter(actor->id) == nullptr && !st.projectile);
             if (leftStream) {
                 st.submitMask = 0;
                 continue;
             }
-            enemies.push_back(SnapshotEnemy(actor, st));
+            // Step 3: never stream projectiles (deterministic ballistic actors run
+            // their own physics on every machine — streaming would add ~20 pkt/s per
+            // nut and a suppressed copy could not be deflected locally).
+            if (!st.projectile) {
+                enemies.push_back(SnapshotEnemy(actor, st));
+            }
             st.submitMask = 0;
 
             // Announce dynamic spawns (deferred to the tick: Actor_SpawnAsChild
@@ -986,9 +1016,12 @@ static void Tick() {
             // ENEMY_SPAWN (remoteSpawned): after a handover the new authority must
             // re-announce them so a (re)joining mirror maps the key instead of
             // hitting "Unmapped dynamic key". Idempotent — HandleRemoteSpawn ignores
-            // keys it already knows. (Step 3 adds !st.projectile to exclude nuts.)
-            bool rebroadcast = st.dynamicKey && (tickCounter % SPAWN_REBROADCAST_TICKS) == 0;
-            if ((st.needsSpawnBroadcast || rebroadcast) && actor->colChkInfo.health > 0) {
+            // keys it already knows. Projectiles are excluded from rebroadcast: they
+            // are fire-and-forget (announced once via needsSpawnBroadcast), and a
+            // re-announce after the other side's copy already died would resurrect it.
+            bool rebroadcast = st.dynamicKey && !st.projectile && (tickCounter % SPAWN_REBROADCAST_TICKS) == 0;
+            // Relax the health>0 gate for projectiles (they spawn with health 0).
+            if ((st.needsSpawnBroadcast || rebroadcast) && (actor->colChkInfo.health > 0 || st.projectile)) {
                 st.needsSpawnBroadcast = false;
                 uint64_t parentKey = 0;
                 if (actor->parent != NULL) {
@@ -997,8 +1030,16 @@ static void Tick() {
                         parentKey = pit->second.key;
                     }
                 }
+                // Projectiles: send world.rot, not shape.rot. Flight direction lives
+                // in world.rot.y (fixed at spawn, consumed by Actor_MoveXZGravity),
+                // whereas both projectiles zero their cosmetic shape.rot.y on their
+                // first update (z_en_nutsball.c:101 / z_en_okuta.c:158) — which runs
+                // the same frame they spawn, before this broadcast. Sending shape.rot
+                // would replicate a zeroed yaw and the mirror copy would fly the wrong
+                // way. Regular dynamic spawns keep shape.rot (their facing).
+                Vec3s spawnRot = st.projectile ? actor->world.rot : actor->shape.rot;
                 Anchor::Instance->SendPacket_EnemySpawn(st.key, st.spawnActorId, st.spawnParams, actor->world.pos,
-                                                        actor->shape.rot, actor->room, parentKey);
+                                                        spawnRot, actor->room, parentKey);
             }
         }
         if (!enemies.empty()) {
@@ -1064,7 +1105,7 @@ static void Tick() {
 // ---------------------------------------------------------------------------
 
 static void OnEnemyActorInit(Actor* actor) {
-    if (!IsTrackedCategory(actor) || gPlayState == NULL || IsTrackingExcluded(actor)) {
+    if (!(IsTrackedCategory(actor) || IsSyncedProjectile(actor)) || gPlayState == NULL || IsTrackingExcluded(actor)) {
         return;
     }
 
@@ -1073,6 +1114,7 @@ static void OnEnemyActorInit(Actor* actor) {
     state.prevHealth = actor->colChkInfo.health;
     state.spawnActorId = actor->id;
     state.spawnParams = (uint16_t)actor->params;
+    state.projectile = IsSyncedProjectile(actor);
 
     auto pending = pendingDynamicKeys.find(actor);
     if (pending != pendingDynamicKeys.end()) {
@@ -1146,7 +1188,8 @@ static void ReKeyDynamic(Actor* actor, TrackedState& st, uint64_t newKey, bool r
 // after Actor_Spawn returns (this hook can't tell them apart — nested child
 // spawns during an actor's init would race a pass-through key).
 static void OnEnemyActorSpawn(Actor* actor) {
-    if (!IsTrackedCategory(actor) || gPlayState == NULL || IsTrackingExcluded(actor) || !MirroringEnabled()) {
+    if (!(IsTrackedCategory(actor) || IsSyncedProjectile(actor)) || gPlayState == NULL || IsTrackingExcluded(actor) ||
+        !MirroringEnabled()) {
         return;
     }
     if (gPlayState->numSetupActors != 0) {
@@ -1232,7 +1275,9 @@ void NoteUnresolvedRemoteKill(uint64_t key) {
 nlohmann::json BuildRoster(int16_t roomNum) {
     nlohmann::json entries = nlohmann::json::array();
     for (auto& [actor, st] : tracked) {
-        if (actor->room != roomNum) {
+        // Projectiles are fire-and-forget (no shared HP, no death sync) — never put
+        // them in the roster, or a mirror would ghost-kill its own local copy.
+        if (actor->room != roomNum || st.projectile) {
             continue;
         }
         nlohmann::json e;
@@ -1251,7 +1296,10 @@ void ReconcileRoster(int16_t roomNum, const nlohmann::json& entries) {
             authority[e["key"].get<uint64_t>()] = { e["alive"].get<bool>(), e["hp"].get<uint8_t>() };
         }
         for (auto& [actor, st] : tracked) {
-            if (actor->room != roomNum || st.dying || actor->update == NULL || IsMirrorBlocked(actor)) {
+            // Projectiles never appear in a roster (BuildRoster skips them), so an
+            // absent key must not be read as "authority killed it" — skip them here
+            // too, or a mirror's live local copy would be ghost-killed on room entry.
+            if (actor->room != roomNum || st.projectile || st.dying || actor->update == NULL || IsMirrorBlocked(actor)) {
                 continue;
             }
             auto it = authority.find(st.key);
@@ -1277,6 +1325,14 @@ static void OnEnemyActorUpdate(Actor* actor) {
         return;
     }
     TrackedState& state = it->second;
+
+    // Step 3: projectiles carry no shared HP — damage is canonical per machine
+    // (each copy natively ATs its own local Link). Skip the HP-drop detector and
+    // the remote-damage/force-kill bookkeeping entirely; none of it applies (their
+    // deathCooldown / pendingKillFrames / expectedRemoteDamage are never set).
+    if (state.projectile) {
+        return;
+    }
 
     if (state.deathCooldown > 0) {
         state.deathCooldown--;
@@ -1341,13 +1397,25 @@ static void OnEnemyActorKill(Actor* actor) {
     }
     TrackedState& state = it->second;
 
+    // Step 3: projectiles (Deku nut / Octorok rock) are fire-and-forget. Each
+    // machine spawns, simulates, and kills its OWN copy (wall/floor/AT/AC/OC hit or
+    // the ~11 s self-timer), so never broadcast a death or despawn for them. A
+    // trailing removal packet would either target an already-dead copy on the peer
+    // (blocked, but noisy) or, worse, race a stale spawn — and there is no shared
+    // HP to reconcile. (This early return supersedes the old "Octorok rock on
+    // impact" despawn branch below, which pre-dated the projectile carve-out and
+    // wrongly assumed the rock was a tracked, despawn-replicated dynamic spawn.)
+    if (state.projectile) {
+        return;
+    }
+
     // Only broadcast real deaths (health exhausted), not despawns/cleanup kills
     if (state.deathCooldown == 0 && actor->colChkInfo.health == 0) {
         state.deathCooldown = DEATH_COOLDOWN_FRAMES;
         Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/true);
     } else if (state.deathCooldown == 0 && state.dynamicKey && MirroringEnabled() && IsLocalAuthority()) {
-        // Non-death removal of a dynamic spawn (e.g. Octorok rock on impact):
-        // mirrors must remove their replicated copy too.
+        // Non-death removal of a replicated dynamic spawn: mirrors must remove their
+        // copy too. (Projectiles are handled by the early return above.)
         state.deathCooldown = DEATH_COOLDOWN_FRAMES;
         Anchor::Instance->SendPacket_EnemyDespawn(state.key);
     }
