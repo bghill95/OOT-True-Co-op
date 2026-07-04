@@ -1,4 +1,5 @@
 #include "Anchor.h"
+#include "soh/Network/Anchor/EnemySync.h"
 #include "soh/Enhancements/nametag.h"
 #include "soh/frame_interpolation.h"
 
@@ -155,7 +156,12 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
 
     actor->flags &= ~ACTOR_FLAG_LOCK_ON_DISABLED;
 
-    if (player->cylinder.base.acFlags & AC_HIT && player->invincibilityTimer == 0) {
+    // Tracked enemies already damage the remote player locally on their own
+    // machine (mirrored AT colliders) — relaying the puppet hit too would deal
+    // double damage when PvP mode has these colliders active.
+    if (player->cylinder.base.acFlags & AC_HIT && player->invincibilityTimer == 0 &&
+        !(EnemySync::MirroringEnabled() && player->cylinder.base.ac != NULL &&
+          EnemySync::IsTrackedEnemy(player->cylinder.base.ac))) {
         Anchor::Instance->SendPacket_DamagePlayer(client.clientId, player->actor.colChkInfo.damageEffect,
                                                   player->actor.colChkInfo.damage);
         if (player->actor.colChkInfo.damageEffect == DUMMY_PLAYER_HIT_RESPONSE_STUN) {

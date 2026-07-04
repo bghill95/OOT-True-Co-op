@@ -166,6 +166,22 @@ void GameInteractor_ExecuteOnCollisionCheckSetAC(void* actor, void* collider) {
     GameInteractor::Instance->ExecuteHooks<GameInteractor::OnCollisionCheckSetAC>(actor, collider);
 }
 
+void GameInteractor_ExecuteOnCollisionCheckSetAT(void* actor, void* collider) {
+    GameInteractor::Instance->ExecuteHooks<GameInteractor::OnCollisionCheckSetAT>(actor, collider);
+}
+
+void GameInteractor_ExecuteOnCollisionCheckSetOC(void* actor, void* collider) {
+    GameInteractor::Instance->ExecuteHooks<GameInteractor::OnCollisionCheckSetOC>(actor, collider);
+}
+
+void GameInteractor_ExecuteOnColliderSetup(void* actor, void* collider) {
+    GameInteractor::Instance->ExecuteHooks<GameInteractor::OnColliderSetup>(actor, collider);
+}
+
+void GameInteractor_ExecuteOnSkelAnimeInit(void* skelAnime) {
+    GameInteractor::Instance->ExecuteHooks<GameInteractor::OnSkelAnimeInit>(skelAnime);
+}
+
 void GameInteractor_ExecuteOnEnemyDefeat(void* actor) {
     GameInteractor::Instance->ExecuteHooks<GameInteractor::OnEnemyDefeat>(actor);
     GameInteractor::Instance->ExecuteHooksForID<GameInteractor::OnEnemyDefeat>(((Actor*)actor)->id, actor);

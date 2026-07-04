@@ -126,6 +126,7 @@ s32 Collider_SetBaseToActor(PlayState* play, Collider* collider, ColliderInitToA
     collider->ocFlags1 = src->ocFlags1;
     collider->ocFlags2 = OC2_TYPE_1;
     collider->shape = src->shape;
+    GameInteractor_ExecuteOnColliderSetup(collider->actor, collider);
     return 1;
 }
 
@@ -140,6 +141,7 @@ s32 Collider_SetBaseType1(PlayState* play, Collider* collider, Actor* actor, Col
     collider->ocFlags1 = src->ocFlags1;
     collider->ocFlags2 = OC2_TYPE_1;
     collider->shape = src->shape;
+    GameInteractor_ExecuteOnColliderSetup(actor, collider);
     return 1;
 }
 
@@ -151,6 +153,7 @@ s32 Collider_SetBase(PlayState* play, Collider* collider, Actor* actor, Collider
     collider->ocFlags1 = src->ocFlags1;
     collider->ocFlags2 = src->ocFlags2;
     collider->shape = src->shape;
+    GameInteractor_ExecuteOnColliderSetup(actor, collider);
     return 1;
 }
 
@@ -1196,6 +1199,7 @@ s32 CollisionCheck_SetAT(PlayState* play, CollisionCheckContext* colChkCtx, Coll
     if (colChkCtx->sacFlags & 1) {
         return -1;
     }
+    GameInteractor_ExecuteOnCollisionCheckSetAT(collider->actor, collider);
     index = colChkCtx->colATCount;
     colChkCtx->colAT[colChkCtx->colATCount++] = collider;
     return index;
@@ -1355,6 +1359,7 @@ s32 CollisionCheck_SetOC(PlayState* play, CollisionCheckContext* colChkCtx, Coll
     if (colChkCtx->sacFlags & 1) {
         return -1;
     }
+    GameInteractor_ExecuteOnCollisionCheckSetOC(collider->actor, collider);
     index = colChkCtx->colOCCount;
     colChkCtx->colOC[colChkCtx->colOCCount++] = collider;
     return index;

@@ -3,6 +3,7 @@
 #include "soh/Network/Anchor/JsonConversions.hpp"
 #include <nlohmann/json.hpp>
 #include <libultraship/libultraship.h>
+#include <spdlog/spdlog.h>
 
 extern "C" {
 #include "macros.h"
@@ -28,22 +29,25 @@ void Anchor::SendPacket_EnemyHit(Actor* actor, uint64_t enemyKey, uint8_t damage
     payload["type"] = ENEMY_HIT;
     payload["quiet"] = true;
     payload["sceneNum"] = gPlayState->sceneNum;
-    payload["roomNum"] = (int16_t)((enemyKey >> 48) & 0xFF);
-    payload["setupIndex"] = (uint16_t)((enemyKey >> 32) & 0xFFFF);
+    // The raw key (dynamic keys don't decompose into room/setup/params fields);
+    // actorId + homePos ride along for the receiver's fuzzy fallback and logs.
+    payload["key"] = enemyKey;
     payload["actorId"] = actor->id;
-    payload["params"] = (uint16_t)actor->params;
     payload["homePos"] = actor->home.pos;
     payload["damage"] = damage;
     payload["dmgFlags"] = dmgFlags;
     payload["hitPos"] = hitPos;
     payload["health"] = health;
 
+    int sent = 0;
     for (auto& [clientId, client] : clients) {
         if (client.sceneNum == gPlayState->sceneNum && client.online && client.isSaveLoaded && !client.self) {
             payload["targetClientId"] = clientId;
             SendJsonToRemote(payload);
+            sent++;
         }
     }
+    ESYNC_LOG("[EnemySync] HIT tx id={} dmg={} n={}", actor->id, damage, sent);
 }
 
 void Anchor::HandlePacket_EnemyHit(nlohmann::json payload) {
@@ -53,12 +57,17 @@ void Anchor::HandlePacket_EnemyHit(nlohmann::json payload) {
     if (payload["sceneNum"].get<int16_t>() != gPlayState->sceneNum) {
         return;
     }
+    ESYNC_LOG("[EnemySync] HIT rx id={} dmg={}", payload["actorId"].get<int16_t>(), payload["damage"].get<uint8_t>());
 
-    Actor* actor = EnemySync::FindActorForPacket(payload["roomNum"].get<int16_t>(),
-                                                 payload["setupIndex"].get<uint16_t>(),
-                                                 payload["actorId"].get<int16_t>(), payload["params"].get<uint16_t>(),
+    Actor* actor = EnemySync::FindActorForPacket(payload["key"].get<uint64_t>(), payload["actorId"].get<int16_t>(),
                                                  payload["homePos"].get<Vec3f>());
     if (actor == NULL) {
+        return; // FindActorForPacket already logged the canary if it mattered
+    }
+    // While mirrored, health arrives via ENEMY_STATE — a synthetic hit here would
+    // prime collider state the suppressed update never consumes and rot the
+    // expectedRemoteDamage accounting (its decay runs in OnActorUpdate).
+    if (EnemySync::IsSuppressed(actor)) {
         return;
     }
 

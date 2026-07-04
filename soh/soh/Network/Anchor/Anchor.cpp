@@ -103,10 +103,20 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_DamagePlayer(payload);
         else if (packetType == DISABLE_ANCHOR)
             HandlePacket_DisableAnchor(payload);
+        else if (packetType == ENEMY_DESPAWN)
+            HandlePacket_EnemyDespawn(payload);
         else if (packetType == ENEMY_DIED)
             HandlePacket_EnemyDied(payload);
         else if (packetType == ENEMY_HIT)
             HandlePacket_EnemyHit(payload);
+        else if (packetType == ENEMY_HIT_REQUEST)
+            HandlePacket_EnemyHitRequest(payload);
+        else if (packetType == ENEMY_ROSTER)
+            HandlePacket_EnemyRoster(payload);
+        else if (packetType == ENEMY_SPAWN)
+            HandlePacket_EnemySpawn(payload);
+        else if (packetType == ENEMY_STATE)
+            HandlePacket_EnemyState(payload);
         else if (packetType == ENTRANCE_DISCOVERED)
             HandlePacket_EntranceDiscovered(payload);
         else if (packetType == GAME_COMPLETE)

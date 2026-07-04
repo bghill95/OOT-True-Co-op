@@ -1,8 +1,10 @@
 #include "soh/Network/Anchor/Anchor.h"
 #include "soh/Network/Anchor/EnemySync.h"
+#include "soh/Network/Anchor/BossAdapters/ActorSyncAdapter.h"
 #include "soh/Network/Anchor/JsonConversions.hpp"
 #include <nlohmann/json.hpp>
 #include <libultraship/libultraship.h>
+#include <spdlog/spdlog.h>
 
 extern "C" {
 #include "macros.h"
@@ -27,18 +29,21 @@ void Anchor::SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey) {
     nlohmann::json payload;
     payload["type"] = ENEMY_DIED;
     payload["sceneNum"] = gPlayState->sceneNum;
-    payload["roomNum"] = (int16_t)((enemyKey >> 48) & 0xFF);
-    payload["setupIndex"] = (uint16_t)((enemyKey >> 32) & 0xFFFF);
+    // The raw key (dynamic keys don't decompose into room/setup/params fields);
+    // actorId + homePos ride along for the receiver's fuzzy fallback and logs.
+    payload["key"] = enemyKey;
     payload["actorId"] = actor->id;
-    payload["params"] = (uint16_t)actor->params;
     payload["homePos"] = actor->home.pos;
 
+    int sent = 0;
     for (auto& [clientId, client] : clients) {
         if (client.sceneNum == gPlayState->sceneNum && client.online && client.isSaveLoaded && !client.self) {
             payload["targetClientId"] = clientId;
             SendJsonToRemote(payload);
+            sent++;
         }
     }
+    ESYNC_LOG("[EnemySync] DIED tx id={} n={}", actor->id, sent);
 }
 
 void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
@@ -48,12 +53,18 @@ void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
     if (payload["sceneNum"].get<int16_t>() != gPlayState->sceneNum) {
         return;
     }
+    ESYNC_LOG("[EnemySync] DIED rx id={}", payload["actorId"].get<int16_t>());
 
-    Actor* actor = EnemySync::FindActorForPacket(payload["roomNum"].get<int16_t>(),
-                                                 payload["setupIndex"].get<uint16_t>(),
-                                                 payload["actorId"].get<int16_t>(), payload["params"].get<uint16_t>(),
+    Actor* actor = EnemySync::FindActorForPacket(payload["key"].get<uint64_t>(), payload["actorId"].get<int16_t>(),
                                                  payload["homePos"].get<Vec3f>());
     if (actor == NULL) {
+        return; // FindActorForPacket already logged the canary if it mattered
+    }
+    // Adapter-managed bosses hand their defeat to the local simulation on the
+    // streamed phase edge; the authority's eventual Actor_Kill must not inject
+    // a lethal synthetic hit mid-defeat-cutscene (it would force-kill early and
+    // skip the heart container / blue warp / clear flag).
+    if (EnemySync::IsDying(actor) && EnemySync::GetAdapter(((Actor*)actor)->id) != nullptr) {
         return;
     }
 
@@ -63,5 +74,8 @@ void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
         attacker = &clients[clientId].player->actor;
     }
 
+    // Death handoff: release suppression for good so the local simulation plays
+    // the death (animation + drops), then apply M1's lethal synthetic hit.
+    EnemySync::ReleaseForDeath(actor);
     EnemySync::ApplyRemoteDeath(actor, attacker);
 }

@@ -422,7 +422,8 @@ void EnGoma_Dead(EnGoma* this, PlayState* play) {
     }
 
     if (this->actionTimer == 0 && Math_SmoothStepToF(&this->actor.scale.y, 0.0f, 0.5f, 0.00225f, 0.00001f) <= 0.001f) {
-        if (this->actor.params < 6) {
+        // parent may be NULL for network-replicated larvae (co-op enemy sync)
+        if (this->actor.params < 6 && this->actor.parent != NULL) {
             BossGoma* parent = (BossGoma*)this->actor.parent;
 
             parent->childrenGohmaState[this->actor.params] = -1;
@@ -666,7 +667,8 @@ void EnGoma_UpdateHit(EnGoma* this, PlayState* play) {
                 }
             } else {
                 // die if still an egg
-                if (this->actor.params <= 5) { //! BossGoma only has 3 children
+                // parent may be NULL for network-replicated larvae (co-op enemy sync)
+                if (this->actor.params <= 5 && this->actor.parent != NULL) { //! BossGoma only has 3 children
                     BossGoma* parent = (BossGoma*)this->actor.parent;
 
                     parent->childrenGohmaState[this->actor.params] = -1;

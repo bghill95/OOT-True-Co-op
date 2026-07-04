@@ -1463,6 +1463,8 @@ s32 SkelAnime_Init(PlayState* play, SkelAnime* skelAnime, SkeletonHeader* skelet
         osSyncPrintf(VT_RST);
     }
 
+    GameInteractor_ExecuteOnSkelAnimeInit(skelAnime);
+
     if (animation != NULL) {
         Animation_PlayLoop(skelAnime, animation);
     }
@@ -1499,6 +1501,8 @@ s32 SkelAnime_InitFlex(PlayState* play, SkelAnime* skelAnime, FlexSkeletonHeader
         osSyncPrintf(VT_RST);
     }
 
+    GameInteractor_ExecuteOnSkelAnimeInit(skelAnime);
+
     if (animation != NULL) {
         Animation_PlayLoop(skelAnime, animation);
     }
@@ -1525,6 +1529,8 @@ s32 SkelAnime_InitSkin(PlayState* play, SkelAnime* skelAnime, SkeletonHeader* sk
         osSyncPrintf("Skeleton_Info2_skin2_ct メモリアロケーションエラー\n");
         osSyncPrintf(VT_RST);
     }
+
+    GameInteractor_ExecuteOnSkelAnimeInit(skelAnime);
 
     if (animation != NULL) {
         Animation_PlayLoop(skelAnime, animation);
