@@ -1,116 +1,36 @@
-![Ship of Harkinian](docs/shiptitle.darkmode.png#gh-dark-mode-only)
-![Ship of Harkinian](docs/shiptitle.lightmode.png#gh-light-mode-only)
+# OOT True Coop
 
-## Website
+Turning *The Legend of Zelda: Ocarina of Time* into a **true local co-op game**: two windows, two controllers, one shared world — where the enemies and bosses are actually shared, not just the overworld.
 
-Official Website: https://www.shipofharkinian.com/
+This is a fork of [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) (the OoT PC port) built on top of [garrettjoecox's Anchor](https://github.com/garrettjoecox/OOT) multiplayer mod. Stock Anchor already syncs players, inventory, save flags, and room clears between game instances — but every player fights their *own* copies of the enemies. This project adds the missing piece: **synced enemies and bosses**, so two players fight the same monsters together.
 
-## Discord
+## What works so far
 
-Official Discord: https://discord.com/invite/shipofharkinian
+- **M1 — Shared HP:** enemies and bosses share one HP pool across both games; a kill on one screen is a kill on both.
+- **M2 — Host-authority enemy mirroring:** one instance (the "authority") runs the enemy AI; the other renders the exact same enemies — position, movement, and animation. Hits from the mirrored player are validated by the authority through the enemy's real damage code, so vulnerability windows and i-frames are respected. Deaths and item drops happen naturally on both screens.
+- **M3 — Dynamic spawn sync + first co-op boss:** runtime spawns (Stalchildren at night, Gohma larvae, Octorok rocks) appear on both screens, and **Gohma is a fully co-op boss fight** — stun her with one player, slash the eye with the other.
+- **Controller isolation:** each game instance is pinned to its own gamepad and keeps receiving input while unfocused, so two players can play on one PC. This lives in the companion [libultraship fork](https://github.com/bghill95/libultraship) (branch `enemy-sync-input`), which this repo pulls in as a submodule.
 
-If you're having any trouble after reading through this `README`, feel free to ask for help in the Support text channels. Please keep in mind that we do not condone piracy.
+## How it's built
 
-# Quick Start
+The enemy-sync layer lives in [`soh/soh/Network/Anchor/`](soh/soh/Network/Anchor/): an `EnemySync` core, ~25 packet types for the Anchor relay, hook handlers into the game's collision/skeleton-animation code, and a **boss adapter pattern** (`ActorSyncAdapter`) — Gohma's adapter is the first, and more bosses are added by writing new adapters rather than new sync plumbing. A CVar kill switch (`EnemySyncMirroring`) falls back to plain shared-HP mode if mirroring ever misbehaves.
 
-The Ship does not include any copyrighted assets.  You are required to provide a supported copy of the game.
+## Running it
 
-### 1. Verify your ROM dump
-You can verify you have dumped a supported copy of the game by using the compatibility checker at https://ship.equipment/. If you'd prefer to manually validate your ROM dump, you can cross-reference its `sha1` hash with the hashes [here](docs/supportedHashes.json).
+1. Build this repo (see the upstream [Ship of Harkinian build docs](https://github.com/HarbourMasters/Shipwright/blob/develop/docs/BUILDING.md)) — the `libultraship` submodule already points at the co-op fork.
+2. You need your **own, legally dumped** copy of the game. No ROMs or game assets are included in (or accepted into) this repository.
+3. Run two game instances plus an [Anchor relay server](https://github.com/garrettjoecox/anchor), point both at the same room, and enable enemy sync under `CVars.gRemote.Anchor` in each instance's `shipofharkinian.json`.
+4. Full details, a play-test script, and troubleshooting (desync log canaries, the kill switch) are in [COOP-TEST-GUIDE.md](COOP-TEST-GUIDE.md).
 
-### 2. Download The Ship of Harkinian from [Releases](https://github.com/HarbourMasters/Shipwright/releases)
+## Known limitations / roadmap
 
-### 3. Launch the Game!
-#### Windows
-* Extract the zip
-* Launch `soh.exe`
+- Enemies aim at the authority player's Link; nearest-player targeting is the next planned step.
+- Enemy AI sound effects/particles play only on the authority's screen (hit sounds are local everywhere).
+- Floormasters don't mirror yet (their split/merge logic isn't mirror-safe) — they share HP the M1 way.
+- Gohma's blue warp can appear in a slightly different spot on each screen (cosmetic).
+- If one game crashes, the other's enemies pause ~1.5 s and then resume under local AI.
+- Roadmap: more boss adapters through the same `ActorSyncAdapter` interface, nearest-player aggro, mirrored SFX.
 
-#### Linux
-* Place your supported copy of the game in the same folder as the appimage.
-* Execute `soh.appimage`.  You may have to `chmod +x` the appimage via terminal.
+## Credits
 
-#### macOS
-* Run `soh.app`. When prompted, select your supported copy of the game.
-* You should see a notification saying `Processing OTR`, then, once the process is complete, you should get a notification saying `OTR Successfully Generated`, then the game should start.
-
-#### Nintendo Switch
-* Run one of the PC releases to generate an `oot.otr` and/or `oot-mq.otr` file. After launching the game on PC, you will be able to find these files in the same directory as `soh.exe` or `soh.appimage`. On macOS, these files can be found in `/Users/<username>/Library/Application Support/com.shipofharkinian.soh/`
-* Copy the files to your sd card
-```
-sdcard
-└── switch
-    └── soh
-        ├── oot-mq.otr
-        ├── oot.otr
-        ├── soh.nro
-        └── soh.otr
-```
-* Launch via Atmosphere's `Game+R` launcher method.
-
-### 4. Play!
-
-Congratulations, you are now sailing with the Ship of Harkinian! Have fun!
-
-# Configuration
-
-### Default keyboard configuration
-| N64 | A | B | Z | Start | Analog stick | C buttons | D-Pad |
-| - | - | - | - | - | - | - | - |
-| Keyboard | X | C | Z | Space | WASD | Arrow keys | TFGH |
-
-### Other shortcuts
-| Keys | Action |
-| - | - |
-| ESC | Toggle menu |
-| F2 | Toggle capture mouse input |
-| F5 | Save state |
-| F6 | Change state |
-| F7 | Load state |
-| F9 | Toggle Text-to-Speech (Windows and Mac only) |
-| F11 | Fullscreen |
-| Tab | Toggle Alternate assets |
-| Ctrl+R | Reset |
-
-# Project Overview
-Ship of Harkinian (SOH) is built atop a custom library dubbed libultraship (LUS). Back in the N64 days, there was an SDK distributed to developers named libultra; LUS is designed to mimic the functionality of libultra on modern hardware. In addition, we are dependant on the source code provided by the OOT decompilation project.
-
-In order for the game to function, you will require a **legally acquired** ROM for Ocarina of Time. Click [here](https://ship.equipment/) to check the compatibility of your specific rom. Any copyrighted assets are extracted from the ROM and reformatted as a .otr archive file which the code uses.
-
-### Graphics Backends
-Currently, there are three rendering APIs supported: DirectX11 (Windows), OpenGL (all platforms), and Metal (MacOS). You can change which API to use in the `Settings` menu of the menubar, which requires a restart.  If you're having an issue with crashing, you can change the API in the `shipofharkinian.json` file by finding the line `gfxbackend:""` and changing the value to `sdl` for OpenGL. DirectX 11 is the default on Windows.
-
-# Custom Assets
-
-Custom assets are packed in `.otr` archive files. To use custom assets, place them in the `mods` folder.
-
-If you're interested in creating and/or packing your own custom asset `.otr` files, check out the following tools:
-* [**retro - OTR generator**](https://github.com/HarbourMasters64/retro)
-* [**fast64 - Blender plugin**](https://github.com/HarbourMasters/fast64)
-
-# Development
-### Building
-
-If you want to manually compile SoH, please consult the [building instructions](docs/BUILDING.md).
-
-### Playtesting
-If you want to playtest a continuous integration build, you can find them at the links below. Keep in mind that these are for playtesting only, and you will likely encounter bugs and possibly crashes. 
-
-* [Windows](https://nightly.link/HarbourMasters/Shipwright/workflows/generate-builds/develop/soh-windows.zip)
-* [macOS](https://nightly.link/HarbourMasters/Shipwright/workflows/generate-builds/develop/soh-mac.zip)
-* [Linux](https://nightly.link/HarbourMasters/Shipwright/workflows/generate-builds/develop/soh-linux.zip)
-
-### Further Reading
-More detailed documentation can be found in the 'docs' directory, including the aforementioned [building instructions](docs/BUILDING.md).
-
-* [Credits](docs/CREDITS.md)
-* [Custom Music](docs/CUSTOM_MUSIC.md)
-* [Controller Mapping](docs/GAME_CONTROLLER_DB.md)
-* [Modding](docs/MODDING.md)
-* [Versioning](docs/VERSIONING.md)
-
-<a href="https://github.com/Kenix3/libultraship/">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./docs/poweredbylus.darkmode.png">
-    <img alt="Powered by libultraship" src="./docs/poweredbylus.lightmode.png">
-  </picture>
-</a>
+All the heavy lifting of getting OoT running natively on PC is the [HarbourMasters / Ship of Harkinian](https://github.com/HarbourMasters/Shipwright) team's work, and the multiplayer foundation is [garrettjoecox's Anchor](https://github.com/garrettjoecox/OOT) ([relay server](https://github.com/garrettjoecox/anchor)). This fork just teaches the enemies to show up on both screens. We do not condone piracy — bring your own cartridge dump.
