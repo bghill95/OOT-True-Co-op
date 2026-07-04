@@ -88,6 +88,12 @@ void HandleRemoteDespawn(uint64_t key);
 nlohmann::json BuildRoster(int16_t roomNum);
 void ReconcileRoster(int16_t roomNum, const nlohmann::json& entries);
 
+// Records a remote kill (ENEMY_DIED/ENEMY_DESPAWN) whose enemy lives in a room we
+// haven't loaded yet, so we apply it on that room's next OnActorInit rather than
+// dropping it. Static keys only (dynamic spawns don't exist until their spawn
+// packet is processed). Scene-scoped; cleared on scene teardown.
+void NoteUnresolvedRemoteKill(uint64_t key);
+
 // Exact lookup by packed key. Static keys fall back to a fuzzy match (same
 // actorId+params, nearest home position) that logs loudly — fuzzy hits are the
 // desync canary; dynamic keys never fuzzy-match. Keys of recently destroyed

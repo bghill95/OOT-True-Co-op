@@ -108,6 +108,11 @@ static std::unordered_map<uint64_t, RemoteEnemyState> remoteStates;
 // the fuzzy fallback so stale identities never resolve onto other enemies.
 static std::unordered_map<uint64_t, uint16_t> recentlyDeadKeys;
 
+// Static-key death ledger: remote kills received while the enemy's room was
+// unloaded, applied when that room's copy inits (OnEnemyActorInit). Scene-scoped
+// (cleared in Reset), no TTL — an enemy stays dead for the whole scene visit.
+static std::unordered_map<uint64_t, uint8_t> pendingRemoteKills;
+
 // Occurrence counters for (actorId, params) within the currently loaded room.
 // Occurrence order follows the room's setup list, which is identical on every
 // client, and resets on room change — so indices match no matter what order each
@@ -232,6 +237,7 @@ static void Reset() {
     remoteStates.clear();
     spawnCounts.clear();
     recentlyDeadKeys.clear();
+    pendingRemoteKills.clear();
     pendingDynamicKeys.clear();
     countersRoomNum = -1;
     lastRosterRoom = -1;
@@ -649,6 +655,11 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
     TrackedState& st = it->second;
 
     if (cachedAuthorityId == UINT32_MAX || IsLocalAuthority()) {
+        // Handover-to-self: drop any latched suppression here, or hits stay
+        // silently dropped forever (EnemyHit/EnemyHitRequest gate on it).
+        if (st.suppressed) {
+            EndSuppression(actor, st, "became-authority");
+        }
         return; // we own the AI (or nothing is elected): run it
     }
     if (st.dying || IsMirrorBlocked(actor)) {
@@ -845,6 +856,12 @@ static void Tick() {
                 continue;
             }
             ForceUncull(actor, st);
+            // Belt-and-suspenders for the F1 latch: a suppressed enemy that was
+            // culled (so its update never fired the ShouldActorUpdate clear) still
+            // gets released here now that we own its AI.
+            if (st.suppressed) {
+                EndSuppression(actor, st, "became-authority");
+            }
             // Dying enemies leave the stream so both sides play the death
             // locally — except adapter-managed bosses, which must stream their
             // defeat phase edge (the mirror releases itself on that edge).
@@ -860,7 +877,12 @@ static void Tick() {
             // Announce dynamic spawns (deferred to the tick: Actor_SpawnAsChild
             // wires actor->parent only after Actor_Spawn returns, so parent
             // linkage is resolvable here but not inside the OnActorSpawn hook).
-            bool rebroadcast = st.dynamicKey && !st.remoteSpawned && (tickCounter % SPAWN_REBROADCAST_TICKS) == 0;
+            // Rebroadcast ALL living dynamic spawns, including ones we inherited via
+            // ENEMY_SPAWN (remoteSpawned): after a handover the new authority must
+            // re-announce them so a (re)joining mirror maps the key instead of
+            // hitting "Unmapped dynamic key". Idempotent — HandleRemoteSpawn ignores
+            // keys it already knows. (Step 3 adds !st.projectile to exclude nuts.)
+            bool rebroadcast = st.dynamicKey && (tickCounter % SPAWN_REBROADCAST_TICKS) == 0;
             if ((st.needsSpawnBroadcast || rebroadcast) && actor->colChkInfo.health > 0) {
                 st.needsSpawnBroadcast = false;
                 uint64_t parentKey = 0;
@@ -883,6 +905,9 @@ static void Tick() {
     } else if (IsLocalAuthority() && !peerInScene) {
         for (auto& [actor, st] : tracked) {
             st.submitMask = 0;
+            if (st.suppressed) {
+                EndSuppression(actor, st, "became-authority");
+            }
             if (st.cullForced && !st.dying) {
                 RestoreCull(actor, st);
             }
@@ -974,6 +999,17 @@ static void OnEnemyActorInit(Actor* actor) {
     ESYNC_LOG("[EnemySync] TRACK id={} params={:#06x} key={:#x} hp={} colliders={} skel={}", actor->id,
               (uint16_t)actor->params, st.key, st.prevHealth, st.colliders.size(),
               st.skelAnime != nullptr ? st.skelAnime->limbCount : 0);
+
+    // Death ledger: this enemy was killed remotely while its room was unloaded.
+    // Now that its copy exists, apply the kill quietly (same as ReconcileRoster's
+    // ghost-kill: set the cooldown so OnEnemyActorKill won't re-broadcast, no drops).
+    auto ledger = pendingRemoteKills.find(st.key);
+    if (ledger != pendingRemoteKills.end()) {
+        ESYNC_LOG("[EnemySync] ROSTER ledger-kill key={:#x} id={}", st.key, actor->id);
+        st.deathCooldown = DEATH_COOLDOWN_FRAMES;
+        pendingRemoteKills.erase(ledger);
+        Actor_Kill(actor);
+    }
 }
 
 static uint64_t NextDynamicKey() {
@@ -1077,6 +1113,17 @@ void HandleRemoteDespawn(uint64_t key) {
     Actor_Kill(it->second);
 }
 
+void NoteUnresolvedRemoteKill(uint64_t key) {
+    // Dynamic spawns don't exist until their ENEMY_SPAWN is processed, and they
+    // don't re-materialize on room load — a death for an unmapped dynamic key is
+    // just packet ordering, not a ghost we'll meet later. Only static room-listed
+    // enemies can be re-entered alive, so only static keys need the ledger.
+    if (key & DYNAMIC_KEY_BIT) {
+        return;
+    }
+    pendingRemoteKills[key] = 1;
+}
+
 nlohmann::json BuildRoster(int16_t roomNum) {
     nlohmann::json entries = nlohmann::json::array();
     for (auto& [actor, st] : tracked) {
@@ -1172,6 +1219,11 @@ static void OnEnemyActorUpdate(Actor* actor) {
     if (state.expectedRemoteDamage > 0 && state.expectedRemoteDamageTimer > 0) {
         state.expectedRemoteDamageTimer--;
         if (state.expectedRemoteDamageTimer == 0) {
+            // A remote hit's synthetic damage was never consumed by the enemy's
+            // update (custom damage path / i-frame swallow) — telemetry canary so
+            // dropped-hit regressions surface in the logs instead of silently.
+            SPDLOG_WARN("[EnemySync] HITREQ/HIT expired unconsumed id={} key={:#x} dmg={}", actor->id, state.key,
+                        state.expectedRemoteDamage);
             state.expectedRemoteDamage = 0;
         }
     }
@@ -1277,6 +1329,18 @@ void RegisterHooks(bool isConnected) {
 
     COND_HOOK(ShouldActorUpdate, isConnected, [](void* actor, bool* should) {
         OnShouldEnemyUpdate((Actor*)actor, should);
+    });
+
+    // Bug C: En_Encount1 (Stalchild/Leever spawner) is ACTORCAT_PROP, so it's
+    // untracked and runs on every client — a mirror would spawn its own children
+    // on top of the authority's replicated ones. Freeze the spawner on mirrors;
+    // they receive the children exclusively via ENEMY_SPAWN. When the authority
+    // leaves, cachedAuthorityId recomputes to self next Tick and it resumes.
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_ENCOUNT1, isConnected, [](void* actor, bool* should) {
+        if (SyncEnabled() && MirroringEnabled() && cachedAuthorityId != UINT32_MAX && !IsLocalAuthority() &&
+            AnySameScenePeer()) {
+            *should = false;
+        }
     });
 
     COND_HOOK(OnActorUpdate, isConnected, [](void* actor) {

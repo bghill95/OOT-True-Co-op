@@ -68,6 +68,7 @@ void Anchor::HandlePacket_EnemyHit(nlohmann::json payload) {
     // prime collider state the suppressed update never consumes and rot the
     // expectedRemoteDamage accounting (its decay runs in OnActorUpdate).
     if (EnemySync::IsSuppressed(actor)) {
+        ESYNC_LOG("[EnemySync] HIT rx dropped (suppressed) key={:#x}", payload["key"].get<uint64_t>());
         return;
     }
 

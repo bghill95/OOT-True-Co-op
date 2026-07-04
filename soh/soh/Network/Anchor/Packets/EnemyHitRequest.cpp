@@ -62,6 +62,11 @@ void Anchor::HandlePacket_EnemyHitRequest(nlohmann::json payload) {
     }
     // Only apply if we actually own this enemy's AI right now.
     if (EnemySync::IsSuppressed(actor)) {
+        // We're no longer this enemy's authority — the requester should retarget
+        // the current authority. Log it (with who we think owns it) so a stuck
+        // hand-off shows up instead of silently eating the mirror's hit.
+        ESYNC_LOG("[EnemySync] HITREQ rx dropped (suppressed) key={:#x} auth={}", payload["key"].get<uint64_t>(),
+                  EnemySync::CurrentAuthorityId());
         return;
     }
 

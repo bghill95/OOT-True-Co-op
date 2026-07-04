@@ -49,5 +49,14 @@ void Anchor::HandlePacket_EnemyDespawn(nlohmann::json payload) {
         return;
     }
 
-    EnemySync::HandleRemoteDespawn(payload["key"].get<uint64_t>());
+    uint64_t key = payload["key"].get<uint64_t>();
+    // Bug D: mirror the EnemyDied ledger. Despawns carry dynamic keys today, which
+    // NoteUnresolvedRemoteKill filters out — this just guards against a future
+    // static-key despawn arriving while its room is unloaded.
+    int16_t keyRoom = (int16_t)(uint8_t)((key >> 48) & 0xFF);
+    if (keyRoom != gPlayState->roomCtx.curRoom.num) {
+        EnemySync::NoteUnresolvedRemoteKill(key);
+        ESYNC_LOG("[EnemySync] DESPAWN rx unloaded-room ledger key={:#x} room={}", key, keyRoom);
+    }
+    EnemySync::HandleRemoteDespawn(key);
 }
