@@ -1,5 +1,6 @@
 #include "Anchor.h"
 #include "EnemySync.h"
+#include "PuppetFairy.h"
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
@@ -362,4 +363,7 @@ void Anchor::RegisterHooks() {
 
     // Shared enemy/boss HP + synced deaths (see EnemySync.cpp)
     EnemySync::RegisterHooks(isConnected);
+
+    // Cosmetic companion fairy per remote-player puppet (see PuppetFairy.cpp)
+    RegisterPuppetFairyHooks(isConnected);
 }
