@@ -307,7 +307,7 @@ static void AddCollider(Actor* actor, TrackedState& st, Collider* collider) {
 }
 
 static void OnColliderSetup(Actor* actor, Collider* collider) {
-    if (actor == NULL || collider == NULL) {
+    if (actor == NULL || collider == NULL || !IsTrackedCategory(actor)) {
         return;
     }
     auto it = tracked.find(actor);
@@ -318,6 +318,23 @@ static void OnColliderSetup(Actor* actor, Collider* collider) {
     // Not tracked yet — likely inside the overlay init, before OnActorInit.
     colliderSetupRing[colliderSetupRingIndex] = { actor, collider };
     colliderSetupRingIndex = (colliderSetupRingIndex + 1) % 16;
+}
+
+// Ring hygiene: a freed actor's ZeldaArena block can be reused by the very next
+// spawn, which would then claim stale Collider*/SkelAnime* pointers.
+static void ScrubPendingCaptures(Actor* actor) {
+    for (auto& pending : colliderSetupRing) {
+        if (pending.actor == actor) {
+            pending = {};
+        }
+    }
+    size_t instanceSize = ActorDB::Instance->RetrieveEntry(actor->id).entry.instanceSize;
+    uintptr_t base = (uintptr_t)actor;
+    for (auto& skel : skelAnimeRing) {
+        if (skel != nullptr && (uintptr_t)skel >= base && (uintptr_t)skel < base + instanceSize) {
+            skel = nullptr;
+        }
+    }
 }
 
 static void OnSkelAnimeInitCapture(SkelAnime* skelAnime) {
@@ -457,27 +474,37 @@ void ApplyRemoteHit(Actor* actor, uint8_t damage, uint32_t dmgFlags, Vec3s hitPo
     state.expectedRemoteDamageTimer = EXPECTED_DAMAGE_LIFETIME;
 }
 
-void ApplyRemoteDeath(Actor* actor, Actor* attacker) {
+void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent) {
     auto it = tracked.find(actor);
     if (it == tracked.end()) {
         return;
     }
     TrackedState& state = it->second;
-    ESYNC_LOG("[EnemySync] DEATH apply id={} cooldown={} alive={}", actor->id, state.deathCooldown,
-              actor->update != NULL);
+    ESYNC_LOG("[EnemySync] DEATH apply id={} cooldown={} alive={} permanent={}", actor->id, state.deathCooldown,
+              actor->update != NULL, permanent);
     if (state.deathCooldown > 0) {
         return; // already died locally (or handled a remote death) within the echo window
     }
-    state.deathCooldown = DEATH_COOLDOWN_FRAMES; // local death reaction must not re-broadcast
-
     if (actor->update == NULL) {
+        state.deathCooldown = DEATH_COOLDOWN_FRAMES;
         return; // already dead locally
     }
+    state.deathCooldown = DEATH_COOLDOWN_FRAMES; // local death reaction must not re-broadcast
+
+    // The dying latch engages only for deaths we actually apply (echoes and
+    // duplicates above must not strand a live enemy unculled/unmirrored).
+    ReleaseForDeath(actor);
 
     uint8_t health = actor->colChkInfo.health;
     Vec3s hitPos = { (int16_t)actor->world.pos.x, (int16_t)actor->world.pos.y, (int16_t)actor->world.pos.z };
     ApplyRemoteHit(actor, health > 0 ? health : 1, 0, hitPos, 0, attacker);
-    state.pendingKillFrames = REMOTE_DEATH_GRACE;
+    // Only Actor_Kill deaths force-kill as a last resort. Defeat-hook enemies
+    // (En_Karebaba regrowers) consume hits in few action states — force-killing
+    // one that never consumed the synthetic hit would permanently despawn an
+    // enemy the sender's copy regrows.
+    if (permanent) {
+        state.pendingKillFrames = REMOTE_DEATH_GRACE;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -779,6 +806,17 @@ static void Tick() {
     cachedAuthorityId = ComputeAuthorityClientId();
 
     if (gPlayState == NULL || !SyncEnabled() || !MirroringEnabled()) {
+        // One cleanup sweep so a mid-scene CVar flip doesn't strand suppressed
+        // enemies (their dropped M1 hits would desync HP one-way) or forced culls.
+        for (auto& [actor, st] : tracked) {
+            if (st.suppressed) {
+                EndSuppression(actor, st, "sync-off");
+            }
+            if (st.cullForced && !st.dying) {
+                RestoreCull(actor, st);
+            }
+            st.submitMask = 0;
+        }
         return;
     }
 
@@ -1149,7 +1187,7 @@ static void OnEnemyActorKill(Actor* actor) {
     // Only broadcast real deaths (health exhausted), not despawns/cleanup kills
     if (state.deathCooldown == 0 && actor->colChkInfo.health == 0) {
         state.deathCooldown = DEATH_COOLDOWN_FRAMES;
-        Anchor::Instance->SendPacket_EnemyDied(actor, state.key);
+        Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/true);
     } else if (state.deathCooldown == 0 && state.dynamicKey && MirroringEnabled() && IsLocalAuthority()) {
         // Non-death removal of a dynamic spawn (e.g. Octorok rock on impact):
         // mirrors must remove their replicated copy too.
@@ -1176,10 +1214,13 @@ static void OnEnemyDefeated(Actor* actor) {
     }
     state.deathCooldown = DEATH_COOLDOWN_FRAMES;
     ESYNC_LOG("[EnemySync] DEFEAT id={} -> broadcasting death", actor->id);
-    Anchor::Instance->SendPacket_EnemyDied(actor, state.key);
+    // Defeat-hook deaths (regrowers like En_Karebaba never Actor_Kill): the
+    // receiver must not force-kill if its copy can't consume the lethal hit.
+    Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/false);
 }
 
 static void OnEnemyActorDestroy(Actor* actor) {
+    ScrubPendingCaptures(actor);
     pendingDynamicKeys.erase(actor);
     auto it = tracked.find(actor);
     if (it == tracked.end()) {
@@ -1207,6 +1248,14 @@ void RegisterHooks(bool isConnected) {
     // otherwise flush on the WARN canaries only.
     spdlog::default_logger()->flush_on(VerboseSync() ? spdlog::level::info : spdlog::level::warn);
     ESYNC_LOG("[EnemySync] RegisterHooks(isConnected={})", isConnected);
+
+    // While disconnected the OnActorDestroy/OnSceneInit hooks are unregistered,
+    // so every map would go stale; a reconnect's first Tick would then iterate
+    // dangling Actor* pointers. Drop everything — tracking rebuilds naturally
+    // (scene reload / next OnActorInit).
+    if (!isConnected) {
+        Reset();
+    }
 
     RegisterBuiltInAdapters();
 

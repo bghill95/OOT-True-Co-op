@@ -100,9 +100,12 @@ Actor* FindActorForPacket(uint64_t key, int16_t actorId, Vec3f homePos);
 void ApplyRemoteHit(Actor* actor, uint8_t damage, uint32_t dmgFlags, Vec3s hitPos, uint8_t remoteHealth,
                     Actor* attacker);
 
-// Handles a remote death: lethal synthetic hit so the death plays naturally, with
-// a force-kill fallback if the enemy is still alive after a grace period.
-void ApplyRemoteDeath(Actor* actor, Actor* attacker);
+// Handles a remote death: lethal synthetic hit so the death plays naturally.
+// permanent (Actor_Kill deaths) adds a force-kill fallback after a grace period;
+// defeat-hook deaths (regrowers) skip it — a copy that can't consume the hit
+// must not be despawned one-sidedly. Engages the dying latch itself, only for
+// deaths it actually applies.
+void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent);
 
 } // namespace EnemySync
 

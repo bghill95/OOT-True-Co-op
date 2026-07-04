@@ -21,7 +21,7 @@ extern PlayState* gPlayState;
  * period if the enemy is somehow still alive.
  */
 
-void Anchor::SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey) {
+void Anchor::SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanent) {
     if (!IsSaveLoaded() || !EnemySync::SyncEnabled()) {
         return;
     }
@@ -34,6 +34,7 @@ void Anchor::SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey) {
     payload["key"] = enemyKey;
     payload["actorId"] = actor->id;
     payload["homePos"] = actor->home.pos;
+    payload["permanent"] = permanent; // Actor_Kill death vs defeat-hook death (regrowers)
 
     int sent = 0;
     for (auto& [clientId, client] : clients) {
@@ -74,8 +75,8 @@ void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
         attacker = &clients[clientId].player->actor;
     }
 
-    // Death handoff: release suppression for good so the local simulation plays
-    // the death (animation + drops), then apply M1's lethal synthetic hit.
-    EnemySync::ReleaseForDeath(actor);
-    EnemySync::ApplyRemoteDeath(actor, attacker);
+    // Death handoff: ApplyRemoteDeath releases suppression for good (after its
+    // echo/duplicate guards) so the local simulation plays the death naturally.
+    bool permanent = !payload.contains("permanent") || payload["permanent"].get<bool>();
+    EnemySync::ApplyRemoteDeath(actor, attacker, permanent);
 }

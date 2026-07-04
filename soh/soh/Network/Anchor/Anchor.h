@@ -156,7 +156,7 @@ class Anchor : public Network {
     void SendPacket_ClearTeamState(std::string teamId);
     void SendPacket_DamagePlayer(u32 clientId, u8 damageEffect, u8 damage);
     void SendPacket_EnemyDespawn(uint64_t enemyKey);
-    void SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey);
+    void SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanent);
     void SendPacket_EnemyHit(Actor* actor, uint64_t enemyKey, u8 damage, u32 dmgFlags, Vec3s hitPos, u8 health);
     void SendPacket_EnemyHitRequest(Actor* actor, uint64_t enemyKey, u8 damage, u32 dmgFlags, Vec3s hitPos);
     void SendPacket_EnemyRosterRequest(int16_t roomNum);

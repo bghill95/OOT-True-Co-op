@@ -53,8 +53,16 @@ static void OnPlayerUpdateAutoWarp() {
     if (sAutoWarpDone || gPlayState == NULL) {
         return;
     }
+    // Wait out intro/opening cutscenes: warping with cutsceneIndex >= 0xFFF0
+    // resolves a cutscene scene-layer (entrance + offset) and lands the two
+    // clients in different scene setups — mismatched enemy occurrence keys.
+    if (Player_InCsMode(gPlayState) || gPlayState->transitionTrigger != TRANS_TRIGGER_OFF) {
+        return;
+    }
     sAutoWarpDone = true;
 
+    gSaveContext.cutsceneIndex = 0;
+    gSaveContext.nextCutsceneIndex = 0;
     gPlayState->nextEntranceIndex = CVAR_TEST_AUTO_WARP_VALUE;
     gPlayState->transitionTrigger = TRANS_TRIGGER_START;
     gPlayState->transitionType = TRANS_TYPE_INSTANT;
