@@ -140,6 +140,15 @@ static uint8_t skelAnimeRingIndex = 0;
 static uint64_t tickCounter = 0;
 static uint32_t cachedAuthorityId = UINT32_MAX;
 
+// Task 2 (W1 Step 2): per-tick perception-target cache. Holds the clientIds of
+// same-scene live puppets; the local player is always an implicit target, so a
+// non-empty cache means a second player is present. We cache IDs (not Actor*) and
+// re-resolve client.player at read time: puppets are Actor_Kill'd / respawned from
+// the network thread (RefreshClientActors) and a killed puppet is freed during the
+// game loop's PLAYER/NPC actor pass — which runs BEFORE the ENEMY pass where this
+// cache is read — so a cached raw Actor* could dangle. clientIds re-resolve safely.
+static std::vector<uint32_t> sPerceptionTargets;
+
 // Dynamic-spawn plumbing: keys assigned before an actor's deferred init has
 // run ({key, remoteSpawned}), and the local dynamic id counter.
 static std::unordered_map<Actor*, std::pair<uint64_t, bool>> pendingDynamicKeys;
@@ -239,6 +248,7 @@ static void Reset() {
     recentlyDeadKeys.clear();
     pendingRemoteKills.clear();
     pendingDynamicKeys.clear();
+    sPerceptionTargets.clear();
     countersRoomNum = -1;
     lastRosterRoom = -1;
     memset(colliderSetupRing, 0, sizeof(colliderSetupRing));
@@ -641,6 +651,72 @@ static void ApplyPose(Actor* actor, TrackedState& st, RemoteEnemyState& r) {
     }
 }
 
+// Task 2 (W1 Step 2): authority-side nearest-player perception.
+//
+// The engine writes each actor's xzDistToPlayer / yDistToPlayer / xyzDistToPlayerSq /
+// yawTowardsPlayer against the LOCAL player only (z_actor.c:2666-2670), immediately
+// before the ShouldActorUpdate hook fires. So an authority-run enemy never notices a
+// remote player standing next to its puppet. Re-point those four fields at whichever
+// perception target (the local player or a same-scene puppet) is nearest, matching
+// the engine's exact formulas and sign conventions so every downstream facing / aggro
+// / distance check (Actor_IsFacingPlayer, Deku Baba emerge, Octorok appear window, …)
+// reads the intended player.
+//
+// Targets are re-resolved from clientId here (not from a cached Actor*): a puppet can
+// be killed and freed on an earlier actor-category pass of this same frame, so a
+// cross-frame raw pointer could dangle. Each clientId re-resolves to the live puppet
+// and is re-validated with the same liveness predicate used to build the cache.
+static void OverridePlayerPerception(Actor* actor) {
+    if (gPlayState == NULL || Anchor::Instance == nullptr) {
+        return;
+    }
+    Player* localPlayer = GET_PLAYER(gPlayState);
+    if (localPlayer == NULL) {
+        return;
+    }
+
+    // Baseline is the local player — identical to what the engine just computed.
+    Actor* best = &localPlayer->actor;
+    f32 bestXZ = Actor_WorldDistXZToActor(actor, best);
+    f32 bestY = Actor_HeightDiff(actor, best);
+    f32 bestSq = bestXZ * bestXZ + bestY * bestY; // == SQ(xz) + SQ(y), engine's xyzDistToPlayerSq
+
+    for (uint32_t clientId : sPerceptionTargets) {
+        auto it = Anchor::Instance->clients.find(clientId);
+        if (it == Anchor::Instance->clients.end()) {
+            continue;
+        }
+        AnchorClient& c = it->second;
+        // Re-validate: the cache was built last tick; a puppet may have parked,
+        // died, changed scene, or been despawned since.
+        if (!c.online || !c.isSaveLoaded || c.sceneNum != gPlayState->sceneNum || c.player == nullptr ||
+            c.player->actor.update == NULL || (c.stateFlags1 & PLAYER_STATE1_DEAD)) {
+            continue;
+        }
+        Actor* cand = &c.player->actor;
+        f32 xz = Actor_WorldDistXZToActor(actor, cand);
+        f32 y = Actor_HeightDiff(actor, cand);
+        f32 sq = xz * xz + y * y;
+        if (sq < bestSq) {
+            bestSq = sq;
+            bestXZ = xz;
+            bestY = y;
+            best = cand;
+        }
+    }
+
+    // Write exactly the four fields the engine derives at z_actor.c:2666-2670, with
+    // the engine's own helpers so signs/composition match bit-for-bit:
+    //   xzDistToPlayer    = Actor_WorldDistXZToActor(actor, target)   (>= 0)
+    //   yDistToPlayer     = Actor_HeightDiff(actor, target)           (target.y - actor.y)
+    //   xyzDistToPlayerSq = SQ(xzDistToPlayer) + SQ(yDistToPlayer)
+    //   yawTowardsPlayer  = Actor_WorldYawTowardActor(actor, target)
+    actor->xzDistToPlayer = bestXZ;
+    actor->yDistToPlayer = bestY;
+    actor->xyzDistToPlayerSq = bestSq;
+    actor->yawTowardsPlayer = Actor_WorldYawTowardActor(actor, best);
+}
+
 // The mirror step. Runs in the actor's own update slot (ShouldActorUpdate hook):
 // after this frame's collision checks (so AC_HIT results are readable) and
 // before draw (so streamed positions always win over OC pushback).
@@ -653,6 +729,17 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
         return;
     }
     TrackedState& st = it->second;
+
+    // Task 2 (W1 Step 2): while we own this enemy's AI, let it perceive the nearest
+    // player (local or a same-scene puppet) instead of only the local Link. This
+    // MUST run before the became-authority early-return below — being the authority
+    // is exactly the case we care about. Guards: authority only; at least one puppet
+    // present (implicit local + a cached puppet ⇒ the design's targets.size() > 1);
+    // not mid death-handoff; never the permanently-local Floormaster. (Step 3 adds
+    // !st.projectile here once that field exists.)
+    if (IsLocalAuthority() && !sPerceptionTargets.empty() && !st.dying && !IsMirrorBlocked(actor)) {
+        OverridePlayerPerception(actor);
+    }
 
     if (cachedAuthorityId == UINT32_MAX || IsLocalAuthority()) {
         // Handover-to-self: drop any latched suppression here, or hits stay
@@ -816,6 +903,11 @@ static void Tick() {
 
     cachedAuthorityId = ComputeAuthorityClientId();
 
+    // Task 2 (W1 Step 2): rebuild the per-tick perception-target cache. Cleared
+    // unconditionally so a mid-scene sync-off (early-return below), a scene change,
+    // or a departing puppet can never leave a stale target behind for next tick.
+    sPerceptionTargets.clear();
+
     if (gPlayState == NULL || !SyncEnabled() || !MirroringEnabled()) {
         // One cleanup sweep so a mid-scene CVar flip doesn't strand suppressed
         // enemies (their dropped M1 hits would desync HP one-way) or forced culls.
@@ -832,6 +924,19 @@ static void Tick() {
     }
 
     bool peerInScene = AnySameScenePeer();
+
+    // Cache clientIds of same-scene live puppets for authority-side nearest-player
+    // perception (OverridePlayerPerception re-resolves + re-validates each one at
+    // read time). Predicate matches the design's cache-inclusion test exactly; !self
+    // excludes the local player, which is always an implicit perception target.
+    if (Anchor::Instance != nullptr) {
+        for (auto& [cid, c] : Anchor::Instance->clients) {
+            if (!c.self && c.online && c.isSaveLoaded && c.sceneNum == gPlayState->sceneNum &&
+                c.player != nullptr && c.player->actor.update != NULL && !(c.stateFlags1 & PLAYER_STATE1_DEAD)) {
+                sPerceptionTargets.push_back(cid);
+            }
+        }
+    }
 
     if ((tickCounter % 100) == 0 && VerboseSync()) {
         int peers = 0, sameScene = 0;
