@@ -140,6 +140,24 @@ void Tick() {
             gSaveContext.seqId = gPlayState->sequenceCtx.seqId;
             gSaveContext.natureAmbienceId = gPlayState->sequenceCtx.natureAmbienceId;
             SPDLOG_INFO("[Bgm] spectate restore scene bgm (seqId={})", gPlayState->sequenceCtx.seqId & 0xFF);
+        } else if (life == LIFE_STATE_GAME_OVER && sPrevLifeState == LIFE_STATE_DOWNED) {
+            // Sequential both-dead: this player died FIRST and spectated as DOWNED (so we
+            // had replaced the game-over jingle with live scene BGM above), then the
+            // partner also died, advancing us DOWNED->GAME_OVER (z_player.c:9525-9526).
+            // Vanilla played NA_BGM_GAME_OVER only ONCE, at the initial func_80836448
+            // death — which we suppressed — and does NOT re-play it on this transition, so
+            // the real game-over screen would otherwise run under scene BGM. Restore the
+            // game-over music now, mirroring z_player.c:3554-3557 exactly. This fires only
+            // on the DOWNED->GAME_OVER edge; the never-entered-DOWNED path (ALIVE->
+            // GAME_OVER, near-simultaneous death) still carries vanilla game-over music and
+            // never enters this branch, so there is no double-play. Audio only — the Task 8
+            // game-over dim/menu (VB_FADE_IN_GAME_OVER_LIGHTS, un-suppressed once the
+            // partner is no longer alive) is untouched.
+            func_800F6AB0(0);
+            Audio_PlayFanfare(NA_BGM_GAME_OVER);
+            gSaveContext.seqId = (u8)NA_BGM_DISABLED;
+            gSaveContext.natureAmbienceId = NATURE_ID_DISABLED;
+            SPDLOG_INFO("[Bgm] downed->game-over restore game-over music");
         }
         sPrevLifeState = life;
     } else {

@@ -428,10 +428,20 @@ void Audio_StartSeqSkipTicks(u8 playerIdx, u16 seqId, u32 skipTicks) {
     u8 seqId8 = seqId & 0xFF;
     u16 newSeqId;
 
-    // (1) AudioEditor replacement mapping (mirrors Audio_QueueSeqCmd op-0 preamble).
+    // (1) AudioEditor replacement mapping (mirrors Audio_QueueSeqCmd op-0 preamble, which
+    // runs unconditionally regardless of the audio-disabled flag).
     newSeqId = AudioEditor_GetReplacementSeq(seqId8);
     gAudioContext.seqReplaced[playerIdx] = (seqId8 != newSeqId);
     gAudioContext.seqToPlay[playerIdx] = newSeqId;
+
+    // Audio-disabled / waiting-for-fonts guard: mirror the func_800F9280:44 gate
+    // (D_80133408 == 0 || playerIdx == SEQ_PLAYER_SFX) and the op-0 caller's
+    // isWaitingForFonts check (Audio_ProcessSeqCmd:136). When audio is disabled vanilla
+    // performs NO emit + NO gActiveSeqs bookkeeping, so we must skip both too — otherwise
+    // the game-thread seq state drifts from the suppressed audio-thread state.
+    if ((D_80133408 != 0 && playerIdx != SEQ_PLAYER_SFX) || gActiveSeqs[playerIdx].isWaitingForFonts != 0) {
+        return;
+    }
 
     // (2) Emit the exact-tick skip-start audio command: op 0x85 ->
     // AudioLoad_SyncInitSeqPlayerSkipTicks (audio_load.c:565) -> AudioSeq_SkipForwardSequence.
