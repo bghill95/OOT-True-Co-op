@@ -61,6 +61,17 @@ void Anchor::HandlePacket_GiveItem(nlohmann::json payload) {
         getItemEntry = Rando::StaticData::RetrieveItem(static_cast<RandomizerGet>(getItemId)).GetGIEntry_Copy();
     }
 
+    // A3 (channel exclusivity): rupee value travels exclusively through RUPEE_CHANGE.
+    // Drop pure rupee items here too, so a rupee synced via GIVE_ITEM — or a queued /
+    // older-version GIVE_ITEM replay from UpdateTeamState — can never double-add on top
+    // of the RUPEE_CHANGE delta. Mirrors the send-side filter in HookHandlers.cpp.
+    if ((getItemEntry.modIndex == MOD_NONE && getItemEntry.itemId >= ITEM_RUPEE_GREEN &&
+         getItemEntry.itemId <= ITEM_RUPEE_GOLD) ||
+        (getItemEntry.modIndex == MOD_RANDOMIZER && getItemEntry.getItemId >= RG_GREEN_RUPEE &&
+         getItemEntry.getItemId <= RG_HUGE_RUPEE)) {
+        return;
+    }
+
     if (getItemEntry.modIndex == MOD_NONE) {
         if (getItemEntry.getItemId == GI_SWORD_BGS) {
             gSaveContext.bgsFlag = true;

@@ -137,6 +137,8 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_RequestTeamState(payload);
         else if (packetType == REQUEST_TELEPORT)
             HandlePacket_RequestTeleport(payload);
+        else if (packetType == RUPEE_CHANGE)
+            HandlePacket_RupeeChange(payload);
         else if (packetType == SERVER_MESSAGE)
             HandlePacket_ServerMessage(payload);
         else if (packetType == SET_CHECK_STATUS)

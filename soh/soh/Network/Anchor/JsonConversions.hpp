@@ -167,6 +167,7 @@ inline void to_json(json& j, const SaveContext& saveContext) {
         { "isDoubleDefenseAcquired", saveContext.isDoubleDefenseAcquired },
         { "bgsFlag", saveContext.bgsFlag },
         { "swordHealth", saveContext.swordHealth },
+        { "rupees", saveContext.rupees },
         { "sceneFlags", sceneFlagsArray },
         { "eventChkInf", saveContext.eventChkInf },
         { "itemGetInf", saveContext.itemGetInf },
@@ -186,6 +187,11 @@ inline void from_json(const json& j, SaveContext& saveContext) {
     j.at("isDoubleDefenseAcquired").get_to(saveContext.isDoubleDefenseAcquired);
     j.at("bgsFlag").get_to(saveContext.bgsFlag);
     j.at("swordHealth").get_to(saveContext.swordHealth);
+    // Shared wallet (contains-guarded for older peers that omit it). Consumed after
+    // inventory in UpdateTeamState.cpp so the wallet-cap clamp sees synced upgrades.
+    if (j.contains("rupees")) {
+        j.at("rupees").get_to(saveContext.rupees);
+    }
     std::vector<u32> sceneFlagsArray;
     j.at("sceneFlags").get_to(sceneFlagsArray);
     for (int i = 0; i < 124; i++) {

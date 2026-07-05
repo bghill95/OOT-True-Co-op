@@ -83,6 +83,10 @@ class Anchor : public Network {
     bool justLoadedSave = false;
     bool isHandlingUpdateTeamState = false;
     bool isProcessingIncomingPacket = false;
+    // Frame (gPlayState->gameplayFrames) of our last locally-originated RUPEE_CHANGE
+    // send; the receive path only drift-snaps to a peer's absolute total after a
+    // ~40-frame quiet window (see Packets/RupeeChange.cpp).
+    uint32_t lastLocalRupeeSendFrame = 0;
     std::queue<nlohmann::json> incomingPacketQueue;
     std::mutex incomingPacketQueueMutex;
 
@@ -111,6 +115,7 @@ class Anchor : public Network {
     void HandlePacket_PlayerUpdate(nlohmann::json payload);
     void HandlePacket_RequestTeamState(nlohmann::json payload);
     void HandlePacket_RequestTeleport(nlohmann::json payload);
+    void HandlePacket_RupeeChange(nlohmann::json payload);
     void HandlePacket_ServerMessage(nlohmann::json payload);
     void HandlePacket_SetCheckStatus(nlohmann::json payload);
     void HandlePacket_SetFlag(nlohmann::json payload);
@@ -149,6 +154,7 @@ class Anchor : public Network {
     inline static const std::string PLAYER_UPDATE = "PLAYER_UPDATE";
     inline static const std::string REQUEST_TEAM_STATE = "REQUEST_TEAM_STATE";
     inline static const std::string REQUEST_TELEPORT = "REQUEST_TELEPORT";
+    inline static const std::string RUPEE_CHANGE = "RUPEE_CHANGE";
     inline static const std::string SERVER_MESSAGE = "SERVER_MESSAGE";
     inline static const std::string SET_CHECK_STATUS = "SET_CHECK_STATUS";
     inline static const std::string SET_FLAG = "SET_FLAG";
@@ -197,6 +203,7 @@ class Anchor : public Network {
     void SendPacket_PlayerUpdate();
     void SendPacket_RequestTeamState();
     void SendPacket_RequestTeleport(u32 clientId);
+    void SendPacket_RupeeChange(s16 delta);
     void SendPacket_SetCheckStatus(RandomizerCheck rc);
     void SendPacket_SetFlag(s16 sceneNum, s16 flagType, s16 flag);
     void SendPacket_TeleportTo(u32 clientId);

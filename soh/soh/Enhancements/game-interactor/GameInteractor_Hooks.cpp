@@ -208,6 +208,10 @@ void GameInteractor_ExecuteOnPlayerHealthChange(int16_t amount) {
     GameInteractor::Instance->ExecuteHooks<GameInteractor::OnPlayerHealthChange>(amount);
 }
 
+void GameInteractor_ExecuteOnRupeeChange(int16_t rupeeChange) {
+    GameInteractor::Instance->ExecuteHooks<GameInteractor::OnRupeeChange>(rupeeChange);
+}
+
 void GameInteractor_ExecuteOnPlayerBottleUpdate(int16_t contents) {
     GameInteractor::Instance->ExecuteHooks<GameInteractor::OnPlayerBottleUpdate>(contents);
 }

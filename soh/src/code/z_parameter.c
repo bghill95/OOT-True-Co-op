@@ -2944,6 +2944,12 @@ void Rupees_ChangeBy(s16 rupeeChange) {
     if (rupeeChange < 0) {
         gSaveContext.ship.stats.count[COUNT_RUPEES_SPENT] += -rupeeChange;
     }
+
+    // Co-op shared wallet: broadcast every rupee delta at this single choke point
+    // (shops, fees, minigames, scrubs, chest/prize rupees). The Anchor OnRupeeChange
+    // handler is echo-guarded (a remote-applied Rupees_ChangeBy runs while
+    // isProcessingIncomingPacket is set, so it does not re-broadcast).
+    GameInteractor_ExecuteOnRupeeChange(rupeeChange);
 }
 
 void GameplayStats_UpdateAmmoUsed(s16 item, s16 ammoUsed) {

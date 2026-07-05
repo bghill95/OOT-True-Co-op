@@ -9,6 +9,7 @@
 
 extern "C" {
 #include "variables.h"
+#include "macros.h"
 extern PlayState* gPlayState;
 }
 
@@ -216,6 +217,17 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
         }
 
         gSaveContext.inventory = loadedData.inventory;
+
+        // Shared wallet — initial reconciliation ("the running session's wallet wins").
+        // Applied AFTER inventory so CUR_CAPACITY(UPG_WALLET) reflects the just-synced
+        // wallet upgrade. Direct write inside isHandlingUpdateTeamState: OnRupeeChange
+        // does NOT fire (no engine Rupees_ChangeBy call), so there is no echo. Clear the
+        // accumulator so no stale in-flight drain fights the adopted value.
+        if (payload["state"].contains("rupees")) {
+            s16 walletCap = (s16)CUR_CAPACITY(UPG_WALLET);
+            gSaveContext.rupeeAccumulator = 0;
+            gSaveContext.rupees = loadedData.rupees < walletCap ? loadedData.rupees : walletCap;
+        }
 
         // The commented out code below is an attempt at sending the entire randomizer seed over, in hopes that a player
         // doesn't have to generate the seed themselves Currently it doesn't work :)

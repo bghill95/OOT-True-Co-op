@@ -45,6 +45,7 @@ DEFINE_HOOK(OnBossDefeat, (void* actor));
 DEFINE_HOOK(OnTimestamp, (u8 item));
 DEFINE_HOOK(OnPlayerBonk, ());
 DEFINE_HOOK(OnPlayerHealthChange, (int16_t amount));
+DEFINE_HOOK(OnRupeeChange, (int16_t rupeeChange));
 DEFINE_HOOK(OnPlayerBottleUpdate, (int16_t contents));
 DEFINE_HOOK(OnPlayerHoldUpShield, ());
 DEFINE_HOOK(OnPlayerFirstPersonControl, (Player * player));

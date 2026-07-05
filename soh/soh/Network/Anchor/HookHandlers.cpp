@@ -97,6 +97,9 @@ void Anchor::RegisterHooks() {
 
     COND_HOOK(OnPlayerSfx, isConnected, [&](u16 sfxId) { SendPacket_PlayerSfx(sfxId); });
 
+    // Shared wallet: broadcast every local rupee delta (echo-guarded inside the sender).
+    COND_HOOK(OnRupeeChange, isConnected, [&](s16 rupeeChange) { SendPacket_RupeeChange(rupeeChange); });
+
     COND_HOOK(OnLoadGame, isConnected, [&](s16 fileNum) { justLoadedSave = true; });
 
     COND_HOOK(OnSaveFile, isConnected, [&](s16 fileNum, int sectionID) {
@@ -139,6 +142,20 @@ void Anchor::RegisterHooks() {
         if (itemEntry.modIndex == MOD_NONE &&
             (itemEntry.itemId >= ITEM_KEY_BOSS && itemEntry.itemId <= ITEM_KEY_SMALL)) {
             SendPacket_UpdateDungeonItems();
+            return;
+        }
+
+        // A3 (channel exclusivity): rupee value now travels ONLY through RUPEE_CHANGE
+        // (Rupees_ChangeBy -> OnRupeeChange). Drop pure rupee items from GIVE_ITEM so a
+        // synced pickup is not counted twice (item channel + rupee channel). Only the
+        // rupee items are filtered — shop merchandise (shields, nuts, ...) still
+        // replicates through GIVE_ITEM. MOD_NONE ITEM_RUPEE_GREEN..ITEM_RUPEE_GOLD covers
+        // green/blue/red/purple/gold; MOD_RANDOMIZER RG_GREEN_RUPEE..RG_HUGE_RUPEE covers
+        // the rando rupee set (incl. Greg, whose RAND_INF flag still syncs via SET_FLAG).
+        if ((itemEntry.modIndex == MOD_NONE && itemEntry.itemId >= ITEM_RUPEE_GREEN &&
+             itemEntry.itemId <= ITEM_RUPEE_GOLD) ||
+            (itemEntry.modIndex == MOD_RANDOMIZER && itemEntry.getItemId >= RG_GREEN_RUPEE &&
+             itemEntry.getItemId <= RG_HUGE_RUPEE)) {
             return;
         }
 
