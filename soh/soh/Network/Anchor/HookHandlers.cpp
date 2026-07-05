@@ -2,6 +2,7 @@
 #include "EnemySync.h"
 #include "PuppetFairy.h"
 #include "CoopWarp.h"
+#include "BossEntry.h"
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
@@ -370,4 +371,7 @@ void Anchor::RegisterHooks() {
 
     // Queued, gated system warps for boss co-entry / spectate / cutscene sync (see CoopWarp.cpp)
     RegisterCoopWarpHooks(isConnected);
+
+    // Boss-room co-entry: pull the partner into the boss fight (see Packets/BossEntry.cpp)
+    RegisterBossEntryHooks(isConnected);
 }
