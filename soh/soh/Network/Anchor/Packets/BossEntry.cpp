@@ -90,8 +90,7 @@ bool sWarpedInByBossEntry = false;
 // either done (we loaded the boss scene) or dead (superseded / expired).
 struct PendingBossEntry {
     bool active = false;
-    s16 bossSceneNum = 0;
-    s32 entranceIndex = -1;
+    s16 bossSceneNum = 0; // the boss scene we were pulled toward; the latch's match key
     std::chrono::steady_clock::time_point deadline;
 };
 
@@ -111,14 +110,14 @@ void DropPendingBossEntry() {
     sPendingBossEntry.active = false;
 }
 
-// Arm the echo latch AND record the pull it belongs to. MUST be the sole path that sets
-// sWarpedInByBossEntry so the latch is always tied to a tracked, reconciled pull.
-void ArmPendingBossEntry(s16 sceneNum, s32 entrance) {
+// Arm the echo latch AND record the boss scene the pull targets. MUST be the sole path
+// that sets sWarpedInByBossEntry so the latch is always tied to a tracked, reconciled pull
+// and to a specific target scene (the consumer + reconciler both match on bossSceneNum).
+void ArmPendingBossEntry(s16 sceneNum) {
     DropPendingBossEntry(); // flush any prior in-flight pull first (latest wins)
     sWarpedInByBossEntry = true;
     sPendingBossEntry.active = true;
     sPendingBossEntry.bossSceneNum = sceneNum;
-    sPendingBossEntry.entranceIndex = entrance;
     sPendingBossEntry.deadline = std::chrono::steady_clock::now() + RECONCILE_TIMEOUT;
 }
 
@@ -209,7 +208,7 @@ void Anchor::HandlePacket_BossEntry(nlohmann::json payload) {
     // the reconciler can disarm it if the warp is superseded/expired) BEFORE queuing the
     // warp so the boss-scene OnSceneInit this causes stays quiet (breaks the pull loop).
     // cutsceneIndex -1 leaves the boss intro to play naturally on load.
-    ArmPendingBossEntry(sceneNum, boss->bossEntrance);
+    ArmPendingBossEntry(sceneNum);
     RequestEntranceWarp((s16)boss->bossEntrance, -1);
 
     SPDLOG_INFO("[BossEntry] rx -> pull entrance={}", boss->bossEntrance);
@@ -237,9 +236,15 @@ void RegisterBossEntryHooks(bool isConnected) {
             return; // not a boss scene
         }
 
-        // We loaded this boss scene because WE were pulled in: consume the latch and
-        // do NOT re-broadcast (that would pull the original player right back).
-        if (sWarpedInByBossEntry) {
+        // We loaded THIS boss scene because WE were pulled into it: consume the latch and
+        // do NOT re-broadcast (that would pull the original player right back). SCENE-KEYED
+        // (like CutsceneSync's ConsumeLatch matching on entrance): only the armed TARGET
+        // scene may consume the latch. If we independently walk into a DIFFERENT boss scene
+        // while a pull for another is still armed, we must NOT consume it here — we are the
+        // SENDER for this scene, so its broadcast must fire; the stale latch disarms on its
+        // own via the 40s reconcile. The reconciler's branch (i) (!armed) then drops the
+        // pending on the next frame — no double-drop, no missed-drop.
+        if (sWarpedInByBossEntry && sceneNum == sPendingBossEntry.bossSceneNum) {
             sWarpedInByBossEntry = false;
             SPDLOG_INFO("[BossEntry] tx suppressed (self-warped) scene={}", sceneNum);
             return;
