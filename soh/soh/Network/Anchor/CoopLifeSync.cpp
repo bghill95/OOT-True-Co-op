@@ -238,8 +238,11 @@ void UpdateSpectate(PlayState* play) {
     }
 }
 
-// Ticked on OnGameFrameUpdate (game.c:356 — after Play_Update/Play_Draw, so it reads
-// this frame's death-flow state and the VB flag the player update already set).
+// Called each frame by the Anchor per-frame dispatcher (registered on OnGameFrameUpdate;
+// game.c:356 — after Play_Update/Play_Draw, so it reads this frame's death-flow state and
+// the VB flag the player update already set). The dispatcher runs it AFTER the packet-
+// queue drain and BEFORE EnemySync/BgmSync so it SETS myLifeState in the same frame those
+// consumers READ it (see HookHandlers.cpp for the documented order).
 void Tick() {
     if (A() == nullptr || gPlayState == nullptr || !A()->IsSaveLoaded()) {
         return;
@@ -287,13 +290,21 @@ void ResetLocal() {
 
 } // namespace
 
+// Per-frame entry point, called by the Anchor per-frame dispatcher in explicit tick
+// order (see HookHandlers.cpp). Kept separate from the hook registration so the order
+// is guaranteed by call sequence, not by unordered_map iteration.
+void CoopLifeSyncTick() {
+    Tick();
+}
+
 void RegisterCoopLifeSyncHooks(bool isConnected) {
     if (!isConnected) {
         ResetLocal();
     }
 
-    // State machine tick.
-    COND_HOOK(OnGameFrameUpdate, isConnected, [] { Tick(); });
+    // NOTE: the per-frame state-machine tick is NOT registered here; it is driven by the
+    // Anchor per-frame dispatcher (CoopLifeSyncTick) so its order relative to EnemySync /
+    // BgmSync is guaranteed. The disconnect path above still runs ResetLocal().
 
     // VB 1: gate the death-anim funnel WAIT_GROUND -> DELAY_MENU (z_player.c). Block
     // (should=false) while the partner is alive/reviving so the dead player parks in
@@ -336,6 +347,16 @@ void RegisterCoopLifeSyncHooks(bool isConnected) {
         Player* player = GET_PLAYER(gPlayState);
         if (player != nullptr && gSaveContext.health == 0) {
             func_80836448(gPlayState, player, (LinkAnimationHeader*)gPlayerAnim_link_derth_rebirth);
+            // T8#3: the re-kill re-arms gameOverCtx at DEATH_START, re-entering the DYING
+            // anim. Without this, the transition (INACTIVE mid-load) already cleared
+            // sBlockedFunnel, so the next UpdateLocalLife would regress DOWNED->DYING and
+            // re-broadcast wire-ALIVE for ~4s — a spurious authority flap while we are
+            // actually downed-spectating. We are still parked at the funnel (this handler
+            // only runs while DOWNED, i.e. a partner is alive), so re-assert sBlockedFunnel:
+            // the tick keeps broadcasting DOWNED and the corpse re-kill stays purely
+            // cosmetic, never a wire life transition. The funnel VB still re-evaluates
+            // PartnerAlive() every frame, so a both-dead game-over is unaffected.
+            sBlockedFunnel = true;
         }
         sFollowWarpPending = false;
     });

@@ -11,5 +11,9 @@
 // CoopWarp / PuppetFairy pattern).
 void RegisterBossEntryHooks(bool isConnected);
 
+// Per-frame reconcile: ties the echo-latch lifetime to the pull warp (disarms it if the
+// warp is superseded/expired). Called by the Anchor per-frame dispatcher in tick order.
+void BossEntryTick();
+
 #endif // __cplusplus
 #endif // NETWORK_ANCHOR_BOSS_ENTRY_H

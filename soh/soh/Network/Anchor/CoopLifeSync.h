@@ -19,5 +19,10 @@
 // hooks unregister and the local state resets to ALIVE when disconnected.
 void RegisterCoopLifeSyncHooks(bool isConnected);
 
+// Per-frame state-machine tick. Driven by the Anchor per-frame dispatcher in explicit
+// tick order (SETS myLifeState before EnemySync/BgmSync read it), not by a self-
+// registered OnGameFrameUpdate hook.
+void CoopLifeSyncTick();
+
 #endif // __cplusplus
 #endif // NETWORK_ANCHOR_COOP_LIFE_SYNC_H

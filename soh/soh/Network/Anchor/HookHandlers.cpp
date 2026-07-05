@@ -94,7 +94,10 @@ void Anchor::RegisterHooks() {
         SendPacket_PlayerUpdate();
     });
 
-    COND_HOOK(OnGameFrameUpdate, isConnected, [&]() { ProcessIncomingPacketQueue(); });
+    // NOTE: the packet-queue drain is NOT registered as its own OnGameFrameUpdate hook;
+    // it is the FIRST step of the single Anchor per-frame dispatcher registered at the end
+    // of this function (see Anchor_PerFrameTick below), which guarantees the Anchor-internal
+    // tick order that map-iteration order does not.
 
     COND_HOOK(OnPlayerSfx, isConnected, [&](u16 sfxId) { SendPacket_PlayerSfx(sfxId); });
 
@@ -383,9 +386,14 @@ void Anchor::RegisterHooks() {
 
     // #endregion
 
+    // Each module below registers its NON-per-frame hooks (OnSceneInit, VBs, actor
+    // hooks, ...) and does its connect/disconnect Reset. Their per-frame ticks are NOT
+    // self-registered on OnGameFrameUpdate — they are invoked in an explicit, documented
+    // order by the single Anchor_PerFrameTick dispatcher at the end of this function.
+    // Registration order below therefore no longer implies execution order.
+
     // Co-op death / spectate / revival life-state machine + the two death-flow VBs
-    // (see CoopLifeSync.cpp). Registered BEFORE EnemySync so the tick refreshes
-    // myLifeState in the same frame ComputeAuthorityClientId reads it for handoff.
+    // (see CoopLifeSync.cpp). Its per-frame tick (CoopLifeSyncTick) SETS myLifeState.
     RegisterCoopLifeSyncHooks(isConnected);
 
     // Shared enemy/boss HP + synced deaths (see EnemySync.cpp)
@@ -406,7 +414,30 @@ void Anchor::RegisterHooks() {
 
     // BGM rendezvous-seek sync: phase-lock the MAIN track when both players share an
     // area (arriver seeks to the resident) + spectate game-over-music suppression
-    // (see Packets/BgmSync.cpp). Registered after CoopLifeSync so the tick reads this
-    // frame's myLifeState for the DOWNED-entry spectate restore.
+    // (see Packets/BgmSync.cpp).
     RegisterBgmSyncHooks(isConnected);
+
+    // ---- Anchor per-frame dispatcher --------------------------------------------------
+    // GameInteractor::ExecuteHooks iterates an unordered_map, so per-hook execution order
+    // is implementation-defined — NOT registration order. The Anchor layer has real
+    // producer->consumer chains within a single frame, so we make the order EXPLICIT by
+    // driving every Anchor OnGameFrameUpdate tick from ONE hook, in call sequence. All of
+    // these ticks previously shared the exact same registration condition (isConnected),
+    // so this single COND_HOOK(isConnected) dispatcher preserves each tick's condition; the
+    // load-bearing orderings it guarantees are: (1) the packet-queue drain runs FIRST
+    // (applies peer lifeState/wallet/warps), (2) CoopLifeSyncTick (SETS myLifeState) runs
+    // before EnemySync::PerFrameTick (authority election READS myLifeState) and before
+    // BgmSyncTick (spectate restore READS myLifeState). On disconnect this hook unregisters
+    // (condition false), so no tick runs post-disconnect; each module's Reset still ran in
+    // its Register*Hooks(false) call above.
+    COND_HOOK(OnGameFrameUpdate, isConnected, [this]() {
+        ProcessIncomingPacketQueue(); // drain: apply peer lifeState / wallet / warps
+        CoopLifeSyncTick();           // SETS myLifeState
+        EnemySync::PerFrameTick();    // authority election READS myLifeState
+        PuppetFairyTick();            // companion-fairy spawn/reap lifecycle
+        CoopWarpTick();               // drain queued, gated system warps
+        BossEntryTick();              // reconcile boss echo-latch (Fix A)
+        CutsceneSyncTick();           // reconcile cutscene pull-replay
+        BgmSyncTick();                // spectate restore READS myLifeState
+    });
 }

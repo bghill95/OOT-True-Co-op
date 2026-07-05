@@ -1029,8 +1029,10 @@ void IngestEnemyState(const nlohmann::json& payload) {
     }
 }
 
-// Per-game-frame bookkeeping (registered on OnGameFrameUpdate, after Anchor's
-// packet-queue drain): election, authority streaming, cull management, aging.
+// Per-game-frame bookkeeping (driven by the Anchor per-frame dispatcher, which runs
+// this AFTER the packet-queue drain and AFTER CoopLifeSync::Tick so ComputeAuthorityClientId
+// reads this frame's myLifeState — see HookHandlers.cpp): election, authority streaming,
+// cull management, aging.
 static void Tick() {
     tickCounter++;
 
@@ -1586,6 +1588,14 @@ static void OnColliderSetAC(Actor* actor, Collider* collider) {
     AddCollider(actor, it->second, collider);
 }
 
+// Per-frame entry point, called by the Anchor per-frame dispatcher in explicit tick
+// order (see HookHandlers.cpp). Kept separate from RegisterHooks so the order relative
+// to CoopLifeSync (which SETS myLifeState) is guaranteed by call sequence rather than
+// by unordered_map iteration.
+void PerFrameTick() {
+    Tick();
+}
+
 void RegisterHooks(bool isConnected) {
     // The Release logger is async and only durable on flush. Verbose runs flush
     // every INFO line so the test rig can grep logs live (and after taskkill);
@@ -1603,7 +1613,10 @@ void RegisterHooks(bool isConnected) {
 
     RegisterBuiltInAdapters();
 
-    COND_HOOK(OnGameFrameUpdate, isConnected, [] { Tick(); });
+    // NOTE: the per-frame Tick is NOT registered here; it is driven by the Anchor
+    // per-frame dispatcher (EnemySync::PerFrameTick) so its order relative to
+    // CoopLifeSync (myLifeState producer) is guaranteed. The disconnect path above still
+    // runs Reset().
 
     COND_HOOK(OnSceneInit, isConnected, [](int16_t sceneNum) { Reset(); });
 

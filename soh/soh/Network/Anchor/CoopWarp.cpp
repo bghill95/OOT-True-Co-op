@@ -105,6 +105,12 @@ void DrainPendingWarp() {
 
 } // namespace
 
+// Per-frame entry point, called by the Anchor per-frame dispatcher in explicit tick
+// order (see HookHandlers.cpp).
+void CoopWarpTick() {
+    DrainPendingWarp();
+}
+
 void RequestEntranceWarp(s16 entranceIndex, s32 cutsceneIndex) {
     sPending.kind = PendingWarpKind::Entrance;
     sPending.entranceIndex = entranceIndex;
@@ -126,5 +132,7 @@ void RegisterCoopWarpHooks(bool isConnected) {
         sPending.kind = PendingWarpKind::None;
     }
 
-    COND_HOOK(OnGameFrameUpdate, isConnected, [] { DrainPendingWarp(); });
+    // NOTE: the queued-warp drain is NOT registered here; it is driven by the Anchor
+    // per-frame dispatcher (CoopWarpTick) so the Anchor-internal tick order is explicit.
+    // The disconnect path above still clears the pending slot.
 }

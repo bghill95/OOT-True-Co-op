@@ -29,10 +29,15 @@ void RequestEntranceWarp(s16 entranceIndex, s32 cutsceneIndex);
 // scene-follow, where re-triggering a cutscene would be wrong.
 void RequestPositionWarp(s16 entranceIndex, s16 room, PosRot dest);
 
-// Registers the queued-warp drain on OnGameFrameUpdate. Called from
-// Anchor::RegisterHooks with the current connection state (mirrors the
-// PuppetFairy pattern); clears any pending request on disconnect.
+// Registers CoopWarp's connection-state bookkeeping. Called from Anchor::RegisterHooks
+// with the current connection state (mirrors the PuppetFairy pattern); clears any pending
+// request on disconnect. The queued-warp drain itself runs via CoopWarpTick.
 void RegisterCoopWarpHooks(bool isConnected);
+
+// Per-frame queued-warp drain (fires a pending warp only in a safe window). Driven by
+// the Anchor per-frame dispatcher in explicit tick order, not by a self-registered
+// OnGameFrameUpdate hook.
+void CoopWarpTick();
 
 #endif // __cplusplus
 #endif // NETWORK_ANCHOR_COOP_WARP_H

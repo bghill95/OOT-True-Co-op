@@ -6,6 +6,8 @@
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
+#include <chrono>
+
 extern "C" {
 #include "variables.h"
 #include "z64.h"
@@ -75,6 +77,80 @@ const BossEntryInfo* FindBossByScene(s16 sceneNum) {
 // next boss-scene OnSceneInit. Set/consumed only on the game thread, so no lock.
 bool sWarpedInByBossEntry = false;
 
+// --- Pull-warp / latch reconciliation (mirrors CutsceneSync's PendingReplay) -----
+//
+// The latch above is armed at receipt then relies on OUR boss-scene OnSceneInit to
+// consume it. But CoopWarp holds ONE pending slot (latest wins) shared with cutscene
+// sync and spectate follow, so the boss warp can be SUPERSEDED (a later warp overwrites
+// the slot) or EXPIRE (CoopWarp's 30 s WARP_EXPIRY) before it ever loads the boss scene.
+// Either way the OnSceneInit that would consume the latch never fires, so a raw latch
+// would stay armed FOREVER and silently suppress the NEXT legitimate BOSS_ENTRY we try
+// to broadcast. We therefore tie the latch lifetime to the warp: track the in-flight
+// pull and reconcile it every frame, disarming the latch the moment the pull is proven
+// either done (we loaded the boss scene) or dead (superseded / expired).
+struct PendingBossEntry {
+    bool active = false;
+    s16 bossSceneNum = 0;
+    s32 entranceIndex = -1;
+    std::chrono::steady_clock::time_point deadline;
+};
+
+PendingBossEntry sPendingBossEntry; // single in-flight pull (boss co-entry is sequential)
+
+// Longer than CoopWarp's 30 s WARP_EXPIRY plus the (instant) transition + load, so a
+// merely-deferred warp (partner mid-cutscene) is always resolved by the scene-arrival
+// path; the timeout path only fires once the pull warp is provably dead. Same 40-vs-30
+// margin CutsceneSync uses.
+constexpr auto RECONCILE_TIMEOUT = std::chrono::seconds(40);
+
+// Disarm the echo latch and drop the in-flight pull. Called before arming a new pull
+// (latest wins, in lockstep with CoopWarp) and on disconnect, so a stale latch can
+// never orphan.
+void DropPendingBossEntry() {
+    sWarpedInByBossEntry = false;
+    sPendingBossEntry.active = false;
+}
+
+// Arm the echo latch AND record the pull it belongs to. MUST be the sole path that sets
+// sWarpedInByBossEntry so the latch is always tied to a tracked, reconciled pull.
+void ArmPendingBossEntry(s16 sceneNum, s32 entrance) {
+    DropPendingBossEntry(); // flush any prior in-flight pull first (latest wins)
+    sWarpedInByBossEntry = true;
+    sPendingBossEntry.active = true;
+    sPendingBossEntry.bossSceneNum = sceneNum;
+    sPendingBossEntry.entranceIndex = entrance;
+    sPendingBossEntry.deadline = std::chrono::steady_clock::now() + RECONCILE_TIMEOUT;
+}
+
+// Reconcile the in-flight pull each frame, disarming the latch in every terminal branch.
+void ReconcileBossEntry() {
+    if (!sPendingBossEntry.active || gPlayState == nullptr) {
+        return;
+    }
+
+    // (i) Our boss-scene OnSceneInit consumed the latch: the pull landed and suppressed
+    // our echo exactly once. Converged — drop the pending.
+    if (!sWarpedInByBossEntry) {
+        sPendingBossEntry.active = false;
+        return;
+    }
+
+    // (i') We are already in the target boss scene but the latch is somehow still armed
+    // (OnSceneInit normally consumes it first — defensive). Disarm so it cannot wedge.
+    if (gPlayState->sceneNum == sPendingBossEntry.bossSceneNum) {
+        DropPendingBossEntry();
+        return;
+    }
+
+    // (ii) Never reached the boss scene before the deadline: the pull warp expired or was
+    // SUPERSEDED (a cutscene-sync / spectate warp overwrote CoopWarp's single slot).
+    // Disarm the latch so a future legitimate BOSS_ENTRY can broadcast.
+    if (std::chrono::steady_clock::now() >= sPendingBossEntry.deadline) {
+        DropPendingBossEntry();
+        SPDLOG_INFO("[BossEntry] reconcile: pull warp did not land, disarm echo latch");
+    }
+}
+
 } // namespace
 
 void Anchor::SendPacket_BossEntry(s16 sceneNum, s32 entranceIndex) {
@@ -129,20 +205,28 @@ void Anchor::HandlePacket_BossEntry(nlohmann::json payload) {
         return;
     }
 
-    // Guard 3: otherwise ALWAYS pull. Set the echo latch BEFORE queuing the warp so
-    // the boss-scene OnSceneInit this causes stays quiet (breaks the pull loop).
+    // Guard 3: otherwise ALWAYS pull. Arm the echo latch (tracked as a pending pull so
+    // the reconciler can disarm it if the warp is superseded/expired) BEFORE queuing the
+    // warp so the boss-scene OnSceneInit this causes stays quiet (breaks the pull loop).
     // cutsceneIndex -1 leaves the boss intro to play naturally on load.
-    sWarpedInByBossEntry = true;
+    ArmPendingBossEntry(sceneNum, boss->bossEntrance);
     RequestEntranceWarp((s16)boss->bossEntrance, -1);
 
     SPDLOG_INFO("[BossEntry] rx -> pull entrance={}", boss->bossEntrance);
 }
 
+// Per-frame reconcile driver, called by the Anchor per-frame dispatcher (see
+// HookHandlers.cpp) in the documented tick order. Ties the echo-latch lifetime to the
+// pull warp so a superseded/expired pull can never wedge the latch.
+void BossEntryTick() {
+    ReconcileBossEntry();
+}
+
 void RegisterBossEntryHooks(bool isConnected) {
-    // Drop a stale latch on (dis)connect so a reconnect can't suppress the first
-    // legitimate broadcast.
+    // Drop a stale latch + in-flight pull on (dis)connect so a reconnect can't suppress
+    // the first legitimate broadcast.
     if (!isConnected) {
-        sWarpedInByBossEntry = false;
+        DropPendingBossEntry();
     }
 
     // SENDER: detect boss-scene loads. Runs on every scene load; only boss scenes

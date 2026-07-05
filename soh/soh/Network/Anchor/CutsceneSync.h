@@ -14,5 +14,10 @@
 // CoopWarp / BossEntry pattern).
 void RegisterCutsceneSyncHooks(bool isConnected);
 
+// Per-frame reconcile of the in-flight pull replay (converges the cleared guard flag and
+// ties the echo-latch lifetime to the warp). Driven by the Anchor per-frame dispatcher in
+// explicit tick order, not by a self-registered OnGameFrameUpdate hook.
+void CutsceneSyncTick();
+
 #endif // __cplusplus
 #endif // NETWORK_ANCHOR_CUTSCENE_SYNC_H

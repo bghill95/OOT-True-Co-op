@@ -224,6 +224,13 @@ void Tick() {
 
 } // namespace
 
+// Per-frame entry point, called by the Anchor per-frame dispatcher in explicit tick
+// order (see HookHandlers.cpp). Runs after CoopLifeSync so it reads this frame's
+// myLifeState for the DOWNED-entry spectate restore.
+void BgmSyncTick() {
+    Tick();
+}
+
 // MARK: - Senders
 
 void Anchor::SendPacket_BgmPosRequest() {
@@ -441,8 +448,9 @@ void RegisterBgmSyncHooks(bool isConnected) {
         ResetLocal();
     }
 
-    // Per-frame driver: spectate restore, debug gate, arriver requests, heartbeat.
-    COND_HOOK(OnGameFrameUpdate, isConnected, [] { Tick(); });
+    // NOTE: the per-frame driver is NOT registered here; it is driven by the Anchor
+    // per-frame dispatcher (BgmSyncTick) so its order relative to CoopLifeSync (the
+    // myLifeState producer) is explicit. The disconnect path above still runs ResetLocal().
 
     // Scene load = a potential rendezvous. Re-open the request window and clear the
     // per-scene latches so only the ARRIVER (the client that just transitioned) asks a

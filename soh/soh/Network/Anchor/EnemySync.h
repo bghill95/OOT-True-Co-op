@@ -51,6 +51,11 @@ uint64_t PackKey(int16_t roomNum, uint16_t setupIndex, int16_t actorId, uint16_t
 // the current connection state; hooks unregister when disconnected.
 void RegisterHooks(bool isConnected);
 
+// Per-frame bookkeeping (election, streaming, culling, aging). Driven by the Anchor
+// per-frame dispatcher in explicit tick order (runs after CoopLifeSync sets myLifeState),
+// not by a self-registered OnGameFrameUpdate hook.
+void PerFrameTick();
+
 // True when the user has enemy sync enabled (CVar, default on).
 bool SyncEnabled();
 

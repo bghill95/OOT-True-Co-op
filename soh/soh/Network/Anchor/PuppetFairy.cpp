@@ -204,6 +204,12 @@ static void PuppetFairyLifecycle() {
     }
 }
 
+// Per-frame entry point, called by the Anchor per-frame dispatcher in explicit tick
+// order (see HookHandlers.cpp).
+void PuppetFairyTick() {
+    PuppetFairyLifecycle();
+}
+
 void RegisterPuppetFairyHooks(bool isConnected) {
     // On disconnect the OnActorDestroy/OnSceneInit hooks are torn down, so any
     // surviving entries would go stale and a reconnect's first tick could iterate
@@ -215,8 +221,9 @@ void RegisterPuppetFairyHooks(bool isConnected) {
         sFairies.clear();
     }
 
-    // Lifecycle: spawn/reap fairies alongside the puppets.
-    COND_HOOK(OnGameFrameUpdate, isConnected, [] { PuppetFairyLifecycle(); });
+    // NOTE: the spawn/reap lifecycle is NOT registered here; it is driven by the Anchor
+    // per-frame dispatcher (PuppetFairyTick) so the Anchor-internal tick order is explicit.
+    // The disconnect path above still drops the tracking map.
 
     // Follow override: suppress each of our fairies' own update and drive it. Any
     // En_Elf NOT in sFairies (local Navi, forest fairies, healing fairies) falls

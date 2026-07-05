@@ -28,5 +28,10 @@
 // CoopLifeSync / CutsceneSync pattern). Implementation in Packets/BgmSync.cpp.
 void RegisterBgmSyncHooks(bool isConnected);
 
+// Per-frame BGM driver (spectate restore, rendezvous request, drift heartbeat). Driven by
+// the Anchor per-frame dispatcher in explicit tick order (runs after CoopLifeSync sets
+// myLifeState), not by a self-registered OnGameFrameUpdate hook.
+void BgmSyncTick();
+
 #endif // __cplusplus
 #endif // NETWORK_ANCHOR_BGM_SYNC_H

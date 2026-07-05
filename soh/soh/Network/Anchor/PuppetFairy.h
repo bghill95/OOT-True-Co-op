@@ -7,5 +7,9 @@
 // hooks unregister and the tracking map is dropped when disconnected.
 void RegisterPuppetFairyHooks(bool isConnected);
 
+// Per-frame fairy spawn/reap lifecycle. Driven by the Anchor per-frame dispatcher in
+// explicit tick order, not by a self-registered OnGameFrameUpdate hook.
+void PuppetFairyTick();
+
 #endif // __cplusplus
 #endif // NETWORK_ANCHOR_PUPPET_FAIRY_H

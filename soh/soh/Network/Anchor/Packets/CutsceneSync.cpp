@@ -201,6 +201,12 @@ void ReconcilePendingReplay() {
 
 } // namespace
 
+// Per-frame entry point, called by the Anchor per-frame dispatcher in explicit tick
+// order (see HookHandlers.cpp).
+void CutsceneSyncTick() {
+    ReconcilePendingReplay();
+}
+
 void Anchor::SendPacket_CutsceneSync(u8 kind, s16 sceneNum, s32 entranceIndex, s32 cutsceneIndex, s16 csFlag) {
     if (!IsSaveLoaded()) {
         return;
@@ -287,10 +293,9 @@ void RegisterCutsceneSyncHooks(bool isConnected) {
         sPendingReplay = {};
     }
 
-    // Reconcile the in-flight pull replay each frame: guarantees the guard bit we
-    // cleared ends up SET again (converged) whether or not the replay actually fired,
-    // and ties the echo-latch lifetime to the warp.
-    COND_HOOK(OnGameFrameUpdate, isConnected, [] { ReconcilePendingReplay(); });
+    // NOTE: the per-frame reconcile is NOT registered here; it is driven by the Anchor
+    // per-frame dispatcher (CutsceneSyncTick) so the Anchor-internal tick order is explicit.
+    // The disconnect path above still drops the latches / pending replay.
 
     // SENDER kind 0: the entrance-CS trigger armed locally (z_demo.c:2202). Args are
     // (flag, entrance) per the engine call site, read as s32 (default arg promotion),
