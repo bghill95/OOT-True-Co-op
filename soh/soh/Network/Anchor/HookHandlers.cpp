@@ -4,6 +4,7 @@
 #include "CoopWarp.h"
 #include "CoopLifeSync.h"
 #include "BossEntry.h"
+#include "CutsceneSync.h"
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
@@ -380,4 +381,8 @@ void Anchor::RegisterHooks() {
 
     // Boss-room co-entry: pull the partner into the boss fight (see Packets/BossEntry.cpp)
     RegisterBossEntryHooks(isConnected);
+
+    // Story-cutscene sync: pull the partner into entrance / scene-layer cutscenes,
+    // replayed locally (see Packets/CutsceneSync.cpp)
+    RegisterCutsceneSyncHooks(isConnected);
 }

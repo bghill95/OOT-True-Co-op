@@ -20,7 +20,7 @@ enum class PendingWarpKind { None, Entrance, Position };
 struct PendingWarp {
     PendingWarpKind kind = PendingWarpKind::None;
     s16 entranceIndex = 0;
-    s16 cutsceneIndex = -1; // Entrance warp only
+    s32 cutsceneIndex = -1; // Entrance warp only (s32: scene-layer indices are 0xFFF0+, which do not fit s16)
     s16 room = 0;           // Position warp only
     PosRot dest = {};       // Position warp only
     std::chrono::steady_clock::time_point queuedAt;
@@ -105,7 +105,7 @@ void DrainPendingWarp() {
 
 } // namespace
 
-void RequestEntranceWarp(s16 entranceIndex, s16 cutsceneIndex) {
+void RequestEntranceWarp(s16 entranceIndex, s32 cutsceneIndex) {
     sPending.kind = PendingWarpKind::Entrance;
     sPending.entranceIndex = entranceIndex;
     sPending.cutsceneIndex = cutsceneIndex;

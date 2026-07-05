@@ -19,8 +19,10 @@ extern "C" {
 // Plain entrance warp (models EnemySyncTestBoot.cpp). Entrance-CS triggers stay
 // ARMED (respawnFlag is left untouched) so a synced cutscene can replay on load.
 // cutsceneIndex >= 0 primes gSaveContext.cutsceneIndex (e.g. 0xFFF0+ scene-layer
-// cutscenes); pass -1 to leave it untouched.
-void RequestEntranceWarp(s16 entranceIndex, s16 cutsceneIndex);
+// cutscenes); pass -1 to leave it untouched. cutsceneIndex is s32 because
+// gSaveContext.cutsceneIndex is s32 and the scene-layer slots (0xFFF0..0xFFFF) do
+// not fit an s16 as positive values.
+void RequestEntranceWarp(s16 entranceIndex, s32 cutsceneIndex);
 
 // Exact-position warp (models TeleportTo.cpp): RESPAWN_MODE_DOWN + respawnFlag=1,
 // which SUPPRESSES entrance-CS triggers (z_demo.c:2200) — correct for spectate

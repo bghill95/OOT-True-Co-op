@@ -101,6 +101,8 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_AllClientState(payload);
         else if (packetType == BOSS_ENTRY)
             HandlePacket_BossEntry(payload);
+        else if (packetType == CUTSCENE_SYNC)
+            HandlePacket_CutsceneSync(payload);
         else if (packetType == DAMAGE_PLAYER)
             HandlePacket_DamagePlayer(payload);
         else if (packetType == DISABLE_ANCHOR)

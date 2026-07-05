@@ -93,6 +93,7 @@ class Anchor : public Network {
     void HandlePacket_AllClientState(nlohmann::json payload);
     void HandlePacket_BossEntry(nlohmann::json payload);
     void HandlePacket_ConsumeAdultTradeItem(nlohmann::json payload);
+    void HandlePacket_CutsceneSync(nlohmann::json payload);
     void HandlePacket_DamagePlayer(nlohmann::json payload);
     void HandlePacket_DisableAnchor(nlohmann::json payload);
     void HandlePacket_EnemyDespawn(nlohmann::json payload);
@@ -129,6 +130,7 @@ class Anchor : public Network {
     // Packet types //
     inline static const std::string ALL_CLIENT_STATE = "ALL_CLIENT_STATE";
     inline static const std::string BOSS_ENTRY = "BOSS_ENTRY";
+    inline static const std::string CUTSCENE_SYNC = "CUTSCENE_SYNC";
     inline static const std::string DAMAGE_PLAYER = "DAMAGE_PLAYER";
     inline static const std::string DISABLE_ANCHOR = "DISABLE_ANCHOR";
     inline static const std::string ENEMY_DESPAWN = "ENEMY_DESPAWN";
@@ -176,6 +178,7 @@ class Anchor : public Network {
 
     void SendPacket_BossEntry(s16 sceneNum, s32 entranceIndex);
     void SendPacket_ClearTeamState(std::string teamId);
+    void SendPacket_CutsceneSync(u8 kind, s16 sceneNum, s32 entranceIndex, s32 cutsceneIndex, s16 csFlag);
     void SendPacket_DamagePlayer(u32 clientId, u8 damageEffect, u8 damage);
     void SendPacket_EnemyDespawn(uint64_t enemyKey);
     void SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanent);
