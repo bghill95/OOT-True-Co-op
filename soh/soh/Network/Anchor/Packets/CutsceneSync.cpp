@@ -6,6 +6,8 @@
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
+#include <chrono>
+
 extern "C" {
 #include "macros.h"
 #include "variables.h"
@@ -81,6 +83,122 @@ bool ConsumeLatch(ReplayLatch& latch, s32 entrance) {
     return false;
 }
 
+// --- Pull-replay reconciliation --------------------------------------------------
+//
+// Clearing the guard bit at receipt (kind 0) only stays convergent if the partner's
+// Cutscene_HandleEntranceTriggers actually re-SETs it on load (z_demo.c:2201). That
+// re-SET can fail to happen, leaving the bit CLEAR here while the sender keeps it SET
+// (a recurring desync that re-triggers the CS on every future entry), and leaving the
+// armed latch to silently suppress the next legitimate same-entrance broadcast:
+//   (a) age mismatch  - z_demo.c:2199 requires linkAge == requiredAge; a child-only
+//                       entrance CS pulled onto an adult partner never re-arms;
+//   (b) stale cutsceneIndex >= 0xFFF0 fails the same precondition;
+//   (c) the queued pull warp EXPIRES (30 s) or is SUPERSEDED (boss-entry / spectate
+//                       follow) before it ever loads the scene.
+//
+// We therefore track the in-flight replay and reconcile it each frame. The entrance
+// CS trigger runs EXACTLY ONCE per load, synchronously in Play_Init (z_play.c:512),
+// strictly before the first post-load frame update. So the first frame we observe
+// ourselves at the target scene+entrance the outcome is already final: if the CS
+// fired the VB consumed the latch and z_demo.c:2201 SET the bit; if the latch is
+// still armed the CS did NOT fire and the bit is still CLEAR. Either way we force
+// convergence with a RAW SET_EVENTCHKINF (no OnFlagSet -> no SET_FLAG echo, mirroring
+// the raw CLEAR at receipt) and disarm the latch, tying the latch lifetime to the warp.
+struct PendingReplay {
+    bool active = false;
+    u8 kind = 0;
+    s32 csFlag = -1; // kind 0: the eventChkInf bit we cleared; -1 for kind 1
+    s32 entrance = -1;
+    s16 sceneNum = 0;
+    std::chrono::steady_clock::time_point deadline;
+};
+
+PendingReplay sPendingReplay; // single in-flight replay (story cutscenes are sequential)
+
+// Longer than CoopWarp's 30 s WARP_EXPIRY plus the (instant) transition + load, so a
+// merely-deferred warp (partner mid-dialog) is always resolved by the scene-arrival
+// path; the timeout path only fires once the warp is provably dead.
+constexpr auto RECONCILE_TIMEOUT = std::chrono::seconds(40);
+
+ReplayLatch& LatchForKind(u8 kind) {
+    return (kind == 0) ? sEntranceCsReplay : sSceneLayerCsReplay;
+}
+
+// Force an in-flight replay to converge: re-SET the guard bit it cleared (kind 0) if
+// its latch is still armed, then disarm. Called on timeout and before arming a new
+// replay, so an unfired replay can never leave a desynced flag or a wedged latch.
+void ResolvePendingReplay() {
+    if (!sPendingReplay.active) {
+        return;
+    }
+    ReplayLatch& latch = LatchForKind(sPendingReplay.kind);
+    if (latch.armed) {
+        if (sPendingReplay.kind == 0 && sPendingReplay.csFlag >= 0 &&
+            !GET_EVENTCHKINF(sPendingReplay.csFlag)) {
+            SET_EVENTCHKINF(sPendingReplay.csFlag);
+        }
+        latch.armed = false;
+    }
+    sPendingReplay.active = false;
+}
+
+// Track a freshly-issued replay. Flushes any prior in-flight replay first (latest
+// wins, mirroring CoopWarp's single pending warp) so no earlier latch/flag is orphaned.
+// MUST be called BEFORE (re-)arming this replay's latch, since the flush inspects the
+// current latch state.
+void ArmPendingReplay(u8 kind, s32 csFlag, s32 entrance, s16 sceneNum) {
+    ResolvePendingReplay();
+    sPendingReplay.active = true;
+    sPendingReplay.kind = kind;
+    sPendingReplay.csFlag = csFlag;
+    sPendingReplay.entrance = entrance;
+    sPendingReplay.sceneNum = sceneNum;
+    sPendingReplay.deadline = std::chrono::steady_clock::now() + RECONCILE_TIMEOUT;
+}
+
+void ReconcilePendingReplay() {
+    if (!sPendingReplay.active || gPlayState == nullptr) {
+        return;
+    }
+    ReplayLatch& latch = LatchForKind(sPendingReplay.kind);
+
+    // The self-replay detector consumed the latch: the cutscene fired and (kind 0)
+    // z_demo.c:2201 re-SET the guard bit. Converged.
+    if (!latch.armed) {
+        sPendingReplay.active = false;
+        return;
+    }
+
+    // We are at the target scene + entrance. Play_Init already ran the entrance-CS
+    // trigger (z_play.c:512) this load, so a still-armed latch means the CS did NOT
+    // fire (age mismatch / stale cutsceneIndex). Re-SET the bit we cleared.
+    if (gPlayState->sceneNum == sPendingReplay.sceneNum &&
+        gSaveContext.entranceIndex == sPendingReplay.entrance) {
+        if (sPendingReplay.kind == 0 && sPendingReplay.csFlag >= 0 &&
+            !GET_EVENTCHKINF(sPendingReplay.csFlag)) {
+            SET_EVENTCHKINF(sPendingReplay.csFlag);
+            SPDLOG_INFO("[CutsceneSync] reconcile: CS did not fire on load, re-SET guard flag {}",
+                        sPendingReplay.csFlag);
+        }
+        latch.armed = false;
+        sPendingReplay.active = false;
+        return;
+    }
+
+    // Never reached the target scene before the deadline: the pull warp expired or was
+    // superseded. Undo the clear and disarm the latch so it cannot wedge.
+    if (std::chrono::steady_clock::now() >= sPendingReplay.deadline) {
+        if (sPendingReplay.kind == 0 && sPendingReplay.csFlag >= 0 &&
+            !GET_EVENTCHKINF(sPendingReplay.csFlag)) {
+            SET_EVENTCHKINF(sPendingReplay.csFlag);
+            SPDLOG_INFO("[CutsceneSync] reconcile: pull warp did not land, re-SET guard flag {}",
+                        sPendingReplay.csFlag);
+        }
+        latch.armed = false;
+        sPendingReplay.active = false;
+    }
+}
+
 } // namespace
 
 void Anchor::SendPacket_CutsceneSync(u8 kind, s16 sceneNum, s32 entranceIndex, s32 cutsceneIndex, s16 csFlag) {
@@ -130,6 +248,10 @@ void Anchor::HandlePacket_CutsceneSync(nlohmann::json payload) {
     }
 
     if (kind == 0) {
+        // Track this replay first (flushes any prior one before we touch the latch),
+        // so the reconciler guarantees the guard bit ends up SET again even if the
+        // replay never fires (age/stale/expired/superseded).
+        ArmPendingReplay(0, csFlag, entranceIndex, sceneNum);
         // Clear the entrance-CS guard bit DIRECTLY (no Flags_UnsetEventChkInf -> no
         // UNSET_FLAG echo). The flag was SET on the sender before the VB and rode
         // SET_FLAG to us, so it is (or is about to be, over the ordered stream) set
@@ -145,6 +267,7 @@ void Anchor::HandlePacket_CutsceneSync(nlohmann::json payload) {
         RequestEntranceWarp((s16)entranceIndex, -1); // -1: entrance CS re-arms & plays naturally
         SPDLOG_INFO("[CutsceneSync] rx -> replay entrance={}", entranceIndex);
     } else if (kind == 1) {
+        ArmPendingReplay(1, -1, entranceIndex, sceneNum);
         // Arm the echo latch BEFORE queuing the warp so our own OnSceneInit on load
         // does not re-broadcast the scene-layer CS.
         sSceneLayerCsReplay = { true, entranceIndex };
@@ -156,12 +279,18 @@ void Anchor::HandlePacket_CutsceneSync(nlohmann::json payload) {
 }
 
 void RegisterCutsceneSyncHooks(bool isConnected) {
-    // Drop stale latches on (dis)connect so a reconnect can't suppress the first
-    // legitimate broadcast.
+    // Drop stale latches / pending replay on (dis)connect so a reconnect can't suppress
+    // the first legitimate broadcast or reconcile against a stale scene.
     if (!isConnected) {
         sEntranceCsReplay = {};
         sSceneLayerCsReplay = {};
+        sPendingReplay = {};
     }
+
+    // Reconcile the in-flight pull replay each frame: guarantees the guard bit we
+    // cleared ends up SET again (converged) whether or not the replay actually fired,
+    // and ties the echo-latch lifetime to the warp.
+    COND_HOOK(OnGameFrameUpdate, isConnected, [] { ReconcilePendingReplay(); });
 
     // SENDER kind 0: the entrance-CS trigger armed locally (z_demo.c:2202). Args are
     // (flag, entrance) per the engine call site, read as s32 (default arg promotion),
