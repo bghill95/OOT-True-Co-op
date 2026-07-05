@@ -404,6 +404,80 @@ u16 func_800FA0B4(u8 playerIdx) {
     return gActiveSeqs[playerIdx].seqId;
 }
 
+// ---------------------------------------------------------------------------
+// Co-op BGM rendezvous-seek helpers (Anchor Task 11 / M4 W3).
+//
+// Audio_StartSeqSkipTicks starts `seqId` on `playerIdx` and fast-forwards it by
+// `skipTicks` sequence-player updates, so scriptCounter lands at exactly skipTicks:
+// a fresh SequencePlayer init resets scriptCounter to 0 (AudioSeq_ResetSequencePlayer,
+// audio_load.c:610) and AudioSeq_SkipForwardSequence (audio_seqplayer.c:1797) then
+// advances it once per update (audio_seqplayer.c:1523) with note emission suppressed
+// (audio_seqplayer.c:922-925). skipTicks is therefore the SAME unit that
+// Audio_GetBgmPlaybackInfo reports, letting an arriving co-op client seek its BGM to a
+// resident peer's scriptCounter and phase-lock the track without an audible replay.
+//
+// It reproduces the two things the vanilla start path does that a raw 0x85 audio
+// command alone does NOT:
+//   (1) the AudioEditor sequence-replacement mapping Audio_QueueSeqCmd applies for op
+//       0/2/12 (see :374-386) — required so an HD-audio replacement sequence swaps in
+//       via seqReplaced[]/seqToPlay[] instead of a stale prior mapping;
+//   (2) the gActiveSeqs bookkeeping func_800F9280 performs (see :54-73) so later
+//       vol/tempo/channel commands and func_800FA0B4 observe the new active seqId.
+void Audio_StartSeqSkipTicks(u8 playerIdx, u16 seqId, u32 skipTicks) {
+    u8 i;
+    u8 seqId8 = seqId & 0xFF;
+    u16 newSeqId;
+
+    // (1) AudioEditor replacement mapping (mirrors Audio_QueueSeqCmd op-0 preamble).
+    newSeqId = AudioEditor_GetReplacementSeq(seqId8);
+    gAudioContext.seqReplaced[playerIdx] = (seqId8 != newSeqId);
+    gAudioContext.seqToPlay[playerIdx] = newSeqId;
+
+    // (2) Emit the exact-tick skip-start audio command: op 0x85 ->
+    // AudioLoad_SyncInitSeqPlayerSkipTicks (audio_load.c:565) -> AudioSeq_SkipForwardSequence.
+    Audio_QueueCmdS32(0x85000000 | _SHIFTL(playerIdx, 16, 8) | _SHIFTL(seqId8, 8, 8), (s32)skipTicks);
+
+    // (3) gActiveSeqs bookkeeping (mirrors func_800F9280:54-73; started with seqArgs 0).
+    gActiveSeqs[playerIdx].seqId = seqId8;
+    gActiveSeqs[playerIdx].prevSeqId = seqId8;
+
+    if (gActiveSeqs[playerIdx].volCur != 1.0f) {
+        Audio_QueueCmdF32(0x41000000 | _SHIFTL(playerIdx, 16, 8), gActiveSeqs[playerIdx].volCur);
+    }
+
+    gActiveSeqs[playerIdx].tempoTimer = 0;
+    gActiveSeqs[playerIdx].tempoOriginal = 0;
+    gActiveSeqs[playerIdx].tempoCmd = 0;
+
+    for (i = 0; i < 0x10; i++) {
+        gActiveSeqs[playerIdx].channelData[i].volCur = 1.0f;
+        gActiveSeqs[playerIdx].channelData[i].volTimer = 0;
+        gActiveSeqs[playerIdx].channelData[i].freqScaleCur = 1.0f;
+        gActiveSeqs[playerIdx].channelData[i].freqScaleTimer = 0;
+    }
+
+    gActiveSeqs[playerIdx].freqScaleChannelFlags = 0;
+    gActiveSeqs[playerIdx].volChannelFlags = 0;
+}
+
+// Reports the MAIN-BGM playback position for the co-op drift heartbeat / rendezvous.
+// Returns the SequencePlayer scriptCounter (a monotonic per-update tick counter, the
+// same unit as Audio_StartSeqSkipTicks' skipTicks) and writes the active seqId to
+// *outSeqId. When MAIN BGM is not enabled, *outSeqId is set to NA_BGM_DISABLED and the
+// return value is 0. (Cross-thread u32 read of scriptCounter; a torn read costs at most
+// one bad heartbeat sample.)
+u32 Audio_GetBgmPlaybackInfo(u16* outSeqId) {
+    u16 seqId = func_800FA0B4(SEQ_PLAYER_BGM_MAIN);
+
+    if (outSeqId != NULL) {
+        *outSeqId = seqId;
+    }
+    if (seqId == NA_BGM_DISABLED) {
+        return 0;
+    }
+    return gAudioContext.seqPlayers[SEQ_PLAYER_BGM_MAIN].scriptCounter;
+}
+
 s32 func_800FA11C(u32 arg0, u32 arg1) {
     u8 i;
 

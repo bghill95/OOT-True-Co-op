@@ -5,6 +5,7 @@
 #include "CoopLifeSync.h"
 #include "BossEntry.h"
 #include "CutsceneSync.h"
+#include "BgmSync.h"
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
@@ -402,4 +403,10 @@ void Anchor::RegisterHooks() {
     // Story-cutscene sync: pull the partner into entrance / scene-layer cutscenes,
     // replayed locally (see Packets/CutsceneSync.cpp)
     RegisterCutsceneSyncHooks(isConnected);
+
+    // BGM rendezvous-seek sync: phase-lock the MAIN track when both players share an
+    // area (arriver seeks to the resident) + spectate game-over-music suppression
+    // (see Packets/BgmSync.cpp). Registered after CoopLifeSync so the tick reads this
+    // frame's myLifeState for the DOWNED-entry spectate restore.
+    RegisterBgmSyncHooks(isConnected);
 }

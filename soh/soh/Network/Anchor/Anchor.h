@@ -95,6 +95,10 @@ class Anchor : public Network {
     void RegisterHooks();
     void RefreshClientActors();
     void HandlePacket_AllClientState(nlohmann::json payload);
+    void HandlePacket_BgmPos(nlohmann::json payload);
+    void HandlePacket_BgmPosRequest(nlohmann::json payload);
+    void HandlePacket_BgmRestart(nlohmann::json payload);
+    void HandlePacket_BgmState(nlohmann::json payload);
     void HandlePacket_BossEntry(nlohmann::json payload);
     void HandlePacket_ConsumeAdultTradeItem(nlohmann::json payload);
     void HandlePacket_CutsceneSync(nlohmann::json payload);
@@ -134,6 +138,10 @@ class Anchor : public Network {
 
     // Packet types //
     inline static const std::string ALL_CLIENT_STATE = "ALL_CLIENT_STATE";
+    inline static const std::string BGM_POS = "BGM_POS";
+    inline static const std::string BGM_POS_REQUEST = "BGM_POS_REQUEST";
+    inline static const std::string BGM_RESTART = "BGM_RESTART";
+    inline static const std::string BGM_STATE = "BGM_STATE";
     inline static const std::string BOSS_ENTRY = "BOSS_ENTRY";
     inline static const std::string CUTSCENE_SYNC = "CUTSCENE_SYNC";
     inline static const std::string DAMAGE_PLAYER = "DAMAGE_PLAYER";
@@ -182,6 +190,10 @@ class Anchor : public Network {
     bool IsSaveLoaded();
     bool CanTeleportTo(uint32_t clientId);
 
+    void SendPacket_BgmPosRequest();
+    void SendPacket_BgmPos(uint32_t targetClientId, u16 seqId, u32 scriptCounter, s16 sceneNum);
+    void SendPacket_BgmRestart(u16 seqId);
+    void SendPacket_BgmState();
     void SendPacket_BossEntry(s16 sceneNum, s32 entranceIndex);
     void SendPacket_ClearTeamState(std::string teamId);
     void SendPacket_CutsceneSync(u8 kind, s16 sceneNum, s32 entranceIndex, s32 cutsceneIndex, s16 csFlag);

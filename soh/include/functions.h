@@ -2152,6 +2152,9 @@ void func_800F94FC(u32);
 void Audio_ProcessSeqCmd(u32);
 void Audio_ProcessSeqCmds(void);
 u16 func_800FA0B4(u8 a0);
+// Co-op BGM rendezvous-seek helpers (Anchor Task 11) — see code_800F9280.c.
+void Audio_StartSeqSkipTicks(u8 playerIdx, u16 seqId, u32 skipTicks);
+u32 Audio_GetBgmPlaybackInfo(u16* outSeqId);
 s32 func_800FA11C(u32 arg0, u32 arg1);
 void func_800FA174(u8);
 void func_800FA18C(u8, u8);

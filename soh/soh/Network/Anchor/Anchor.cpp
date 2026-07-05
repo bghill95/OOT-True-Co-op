@@ -99,6 +99,14 @@ void Anchor::ProcessIncomingPacketQueue() {
         // packetType here is a string so we can't use a switch statement
         if (packetType == ALL_CLIENT_STATE)
             HandlePacket_AllClientState(payload);
+        else if (packetType == BGM_POS)
+            HandlePacket_BgmPos(payload);
+        else if (packetType == BGM_POS_REQUEST)
+            HandlePacket_BgmPosRequest(payload);
+        else if (packetType == BGM_RESTART)
+            HandlePacket_BgmRestart(payload);
+        else if (packetType == BGM_STATE)
+            HandlePacket_BgmState(payload);
         else if (packetType == BOSS_ENTRY)
             HandlePacket_BossEntry(payload);
         else if (packetType == CUTSCENE_SYNC)
