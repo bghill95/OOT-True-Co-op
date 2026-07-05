@@ -1337,7 +1337,11 @@ void Play_DrawOverlayElements(PlayState* play) {
     Message_Draw(play);
 
     if (play->gameOverCtx.state != GAMEOVER_INACTIVE) {
-        GameOver_FadeInLights(play);
+        // Co-op (Anchor): a false here suppresses the game-over screen dim while a player
+        // is DOWNED/spectating a solo death. Vanilla (single player) always returns true.
+        if (GameInteractor_Should(VB_FADE_IN_GAME_OVER_LIGHTS, true)) {
+            GameOver_FadeInLights(play);
+        }
     }
 }
 

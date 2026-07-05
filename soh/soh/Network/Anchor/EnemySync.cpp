@@ -277,11 +277,17 @@ static void Reset() {
 // Authority election & culling control
 // ---------------------------------------------------------------------------
 
-static uint32_t ComputeAuthorityClientId() {
-    if (Anchor::Instance == nullptr || !Anchor::Instance->IsSaveLoaded() || gPlayState == NULL) {
-        return UINT32_MAX;
+// Lowest clientId among same-scene, save-loaded clients (self included). When
+// requireAlive is set, only ALIVE/REVIVING clients are eligible and our own id is
+// seeded only if we are alive — a downed enemy-authority hands off to the survivor
+// within ~1 tick. Returns UINT32_MAX when nobody qualifies.
+static uint32_t ElectAuthority(bool requireAlive) {
+    uint32_t best = UINT32_MAX;
+    bool ownAlive =
+        Anchor::Instance->myLifeState == LIFE_STATE_ALIVE || Anchor::Instance->myLifeState == LIFE_STATE_REVIVING;
+    if (!requireAlive || ownAlive) {
+        best = Anchor::Instance->ownClientId;
     }
-    uint32_t best = Anchor::Instance->ownClientId;
     for (auto& [clientId, client] : Anchor::Instance->clients) {
         if (client.self || !client.online || !client.isSaveLoaded) {
             continue;
@@ -289,9 +295,27 @@ static uint32_t ComputeAuthorityClientId() {
         if (client.sceneNum != gPlayState->sceneNum) {
             continue;
         }
+        if (requireAlive && !IsClientAlive(client)) {
+            continue;
+        }
         best = std::min(best, clientId);
     }
     return best;
+}
+
+static uint32_t ComputeAuthorityClientId() {
+    if (Anchor::Instance == nullptr || !Anchor::Instance->IsSaveLoaded() || gPlayState == NULL) {
+        return UINT32_MAX;
+    }
+    // Prefer the alive-eligible election so a dead player never keeps enemy authority.
+    uint32_t alive = ElectAuthority(true);
+    if (alive != UINT32_MAX) {
+        return alive;
+    }
+    // Nobody in-scene is alive (both dead): fall back to the aliveness-agnostic
+    // election so the authority id stays put — no flapping while the shared
+    // game-over sequence runs. The 30-tick stale stream fallback remains the crash net.
+    return ElectAuthority(false);
 }
 
 static bool AnySameScenePeer() {

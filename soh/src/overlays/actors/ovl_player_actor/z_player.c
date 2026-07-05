@@ -9519,9 +9519,14 @@ void func_80843AE8(PlayState* play, Player* this) {
         Player_PlaySfx(this, NA_SE_EV_FIATY_HEAL - SFX_FLAG);
         OnePointCutscene_Init(play, 9908, 125, &this->actor, MAIN_CAM);
     } else if (play->gameOverCtx.state == GAMEOVER_DEATH_WAIT_GROUND) {
-        play->gameOverCtx.state = GAMEOVER_DEATH_DELAY_MENU;
-        if (!CVarGetInteger(CVAR_ENHANCEMENT("PersistentMasks"), 0)) {
-            gSaveContext.ship.maskMemory = PLAYER_MASK_NONE;
+        // Co-op (Anchor): a false here parks the dead player in WAIT_GROUND (world keeps
+        // running, pause blocked) so a solo death spectates instead of freezing both
+        // screens. Vanilla (single player) always returns true.
+        if (GameInteractor_Should(VB_ADVANCE_TO_GAME_OVER_MENU, true, this)) {
+            play->gameOverCtx.state = GAMEOVER_DEATH_DELAY_MENU;
+            if (!CVarGetInteger(CVAR_ENHANCEMENT("PersistentMasks"), 0)) {
+                gSaveContext.ship.maskMemory = PLAYER_MASK_NONE;
+            }
         }
     }
 }

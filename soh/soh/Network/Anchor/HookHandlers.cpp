@@ -2,6 +2,7 @@
 #include "EnemySync.h"
 #include "PuppetFairy.h"
 #include "CoopWarp.h"
+#include "CoopLifeSync.h"
 #include "BossEntry.h"
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -362,6 +363,11 @@ void Anchor::RegisterHooks() {
     });
 
     // #endregion
+
+    // Co-op death / spectate / revival life-state machine + the two death-flow VBs
+    // (see CoopLifeSync.cpp). Registered BEFORE EnemySync so the tick refreshes
+    // myLifeState in the same frame ComputeAuthorityClientId reads it for handoff.
+    RegisterCoopLifeSyncHooks(isConnected);
 
     // Shared enemy/boss HP + synced deaths (see EnemySync.cpp)
     EnemySync::RegisterHooks(isConnected);

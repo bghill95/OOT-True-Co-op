@@ -2335,6 +2335,32 @@ typedef enum {
     // - `*BgHidanKowarerukabe`
     VB_FIRE_TEMPLE_BOMBABLE_WALL_BREAK,
 
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // #### `args`
+    // - `*Player`
+    //
+    // Co-op (Anchor): gates the GAMEOVER_DEATH_WAIT_GROUND -> GAMEOVER_DEATH_DELAY_MENU
+    // advance in func_80843AE8 (z_player.c). Returning false parks the dead player in
+    // WAIT_GROUND — pauseCtx never reaches 8, so the world keeps running and a solo death
+    // spectates instead of freezing both screens; returns true (vanilla) once the partner
+    // is also down/disconnected, so both run game-over and respawn together.
+    VB_ADVANCE_TO_GAME_OVER_MENU,
+
+    // #### `result`
+    // ```c
+    // true
+    // ```
+    // #### `args`
+    // - None
+    //
+    // Co-op (Anchor): gates GameOver_FadeInLights in Play_Draw (z_play.c). Returning false
+    // suppresses the game-over screen dim while a co-op player is DOWNED/spectating a
+    // solo death (left untouched for fairy revives and real both-dead game-overs).
+    VB_FADE_IN_GAME_OVER_LIGHTS,
+
 } GIVanillaBehavior;
 
 #endif

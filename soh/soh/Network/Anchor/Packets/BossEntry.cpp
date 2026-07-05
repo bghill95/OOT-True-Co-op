@@ -121,11 +121,11 @@ void Anchor::HandlePacket_BossEntry(nlohmann::json payload) {
         return;
     }
 
-    // Guard 2: we are downed / spectating -> ignore. Task 8's scene-follow owns the
-    // dead player's camera; do not fight the follow logic. (lifeState defaults ALIVE
-    // and is maintained by Task 6, so this reads correctly today.)
-    if (myLifeState == LIFE_STATE_DOWNED) {
-        SPDLOG_INFO("[BossEntry] rx ignored (downed)");
+    // Guard 2: we are downed / spectating / game-over -> ignore. Task 8's scene-follow
+    // owns the dead player's camera; a fully-dead or game-over player must not be yanked
+    // into a boss fight either. >= LIFE_STATE_DOWNED covers DOWNED and GAME_OVER.
+    if (myLifeState >= LIFE_STATE_DOWNED) {
+        SPDLOG_INFO("[BossEntry] rx ignored (downed/game-over)");
         return;
     }
 
