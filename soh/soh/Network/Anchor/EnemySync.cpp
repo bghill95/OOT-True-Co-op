@@ -39,9 +39,12 @@ static constexpr uint64_t STREAM_STALE_TICKS = 30;
 static constexpr uint64_t STREAM_PRUNE_TICKS = 100;
 // Upper bound for streamed skeletons (BossGoma is 87 including the root row).
 static constexpr int32_t MAX_STREAM_LIMBS = 128;
-// Colliders captured per tracked actor (body + weapon + shield covers everyone
-// seen so far; overflow logs a canary).
-static constexpr size_t MAX_TRACKED_COLLIDERS = 6;
+// Colliders captured per tracked actor. Must cover the worst real enemy: En_St
+// (Skulltula) carries 6 ColliderCylinders + 1 ColliderJntSph = 7 distinct
+// persistent colliders, all submitted over its life (AC on cyl 0-2, OC on cyl
+// 3-5), so a cap of 6 dropped its 7th every frame. 12 leaves headroom; overflow
+// still logs a canary.
+static constexpr size_t MAX_TRACKED_COLLIDERS = 12;
 // High bit marks host-assigned dynamic-spawn keys (bit 63 is provably free:
 // PackKey's roomNum passes through uint8_t into bits 48-55).
 static constexpr uint64_t DYNAMIC_KEY_BIT = 1ULL << 63;
@@ -94,6 +97,8 @@ struct RemoteEnemyState {
     Vec3f pos{};
     Vec3s rot{};
     Vec3f focusPos{};
+    Vec3f scale{};
+    bool hasScale = false;
     uint8_t health = 0;
     uint8_t mask = 0;
     uint8_t phase = 0;
@@ -719,6 +724,9 @@ static void ApplyPose(Actor* actor, TrackedState& st, RemoteEnemyState& r) {
     actor->world.pos = r.pos;
     actor->shape.rot = r.rot;
     actor->focus.pos = r.focusPos;
+    if (r.hasScale) {
+        actor->scale = r.scale;
+    }
     actor->colChkInfo.health = r.health;
     st.prevHealth = r.health;
 
@@ -906,6 +914,11 @@ static nlohmann::json SnapshotEnemy(Actor* actor, TrackedState& st) {
     e["rot"] = actor->shape.rot;
     e["fpos"] = actor->focus.pos;
     e["hp"] = actor->colChkInfo.health;
+    // actor.scale is animated in Update (e.g. Deku Baba emerge 0.5x->1x); the
+    // suppressed mirror never recomputes it, so the head skeleton would inherit
+    // the frozen buried scale. Base-Actor field → base stream, applied to every
+    // mirrored enemy.
+    e["scale"] = actor->scale;
     e["mask"] = st.submitMask;
     SkelAnime* skel = st.skelAnime;
     if (skel != nullptr && skel->jointTable != nullptr && skel->limbCount > 0 && skel->limbCount <= MAX_STREAM_LIMBS) {
@@ -978,6 +991,10 @@ void IngestEnemyState(const nlohmann::json& payload) {
             r.pos = e["pos"].get<Vec3f>();
             r.rot = e["rot"].get<Vec3s>();
             r.focusPos = e.contains("fpos") ? e["fpos"].get<Vec3f>() : r.pos;
+            if (e.contains("scale")) {
+                r.scale = e["scale"].get<Vec3f>();
+                r.hasScale = true;
+            }
             r.health = e["hp"].get<uint8_t>();
             r.mask = e.contains("mask") ? e["mask"].get<uint8_t>() : 0;
             r.phase = e.contains("phase") ? e["phase"].get<uint8_t>() : 0;
@@ -1501,11 +1518,20 @@ static void OnEnemyActorUpdate(Actor* actor) {
     if (state.expectedRemoteDamage > 0 && state.expectedRemoteDamageTimer > 0) {
         state.expectedRemoteDamageTimer--;
         if (state.expectedRemoteDamageTimer == 0) {
-            // A remote hit's synthetic damage was never consumed by the enemy's
-            // update (custom damage path / i-frame swallow) — telemetry canary so
-            // dropped-hit regressions surface in the logs instead of silently.
-            SPDLOG_WARN("[EnemySync] HITREQ/HIT expired unconsumed id={} key={:#x} dmg={}", actor->id, state.key,
-                        state.expectedRemoteDamage);
+            // The synthetic collider hit was never consumed by the enemy's update
+            // (custom damage path / i-frame swallow). Converge HP directly so a
+            // forwarded hit is never silently lost — same fallback ApplyRemoteHit
+            // uses when no collider is seen. Health-only: let the enemy's own
+            // update / defeat hook react to reaching 0. We deliberately do NOT
+            // force Actor_Kill here — that would permanently despawn a regrower
+            // (En_Karebaba) the sender's copy regrows (review finding #2). The
+            // lethal case is already covered by the permanent-death force-kill net
+            // (pendingKillFrames, above). prevHealth is set alongside health so the
+            // HP-drop detector doesn't re-broadcast a spurious ENEMY_HIT echo.
+            uint8_t resid = state.expectedRemoteDamage;
+            ESYNC_LOG("[EnemySync] expired debt force-applied id={} key={:#x} dmg={}", actor->id, state.key, resid);
+            actor->colChkInfo.health = (actor->colChkInfo.health > resid) ? actor->colChkInfo.health - resid : 0;
+            state.prevHealth = actor->colChkInfo.health;
             state.expectedRemoteDamage = 0;
         }
     }

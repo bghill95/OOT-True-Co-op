@@ -1032,6 +1032,57 @@ void EnDekubaba_DeadStickDrop(EnDekubaba* this, PlayState* play) {
     Actor_OfferGetItemNearby(&this->actor, play, GI_STICKS_1);
 }
 
+// --- Co-op enemy-sync (Anchor) mirror helpers -------------------------------
+// On a mirror client the Deku Baba's Update is suppressed, so actionFunc and the
+// procedural-stem scalars freeze at their Init state. The EnemySync EnDekubaba
+// adapter uses these to drive the draw-relevant state from the authority's
+// stream. Because Update is suppressed, actionFunc set here is only ever READ by
+// EnDekubaba_Draw (stem branch select), never executed.
+
+// Authority: collapse actionFunc to the draw-branch category the mirror needs.
+// 0 = retracted stub (Wait), 1 = extended stalk (any active state), 2 = dead
+// stick-drop.
+u8 EnDekubaba_MirrorGetStemMode(EnDekubaba* this) {
+    if (this->actionFunc == EnDekubaba_Wait) {
+        return 0;
+    }
+    if (this->actionFunc == EnDekubaba_DeadStickDrop) {
+        return 2;
+    }
+    return 1;
+}
+
+// Mirror: pick the stem draw branch + apply the streamed procedural-stem state.
+void EnDekubaba_MirrorApplyDraw(EnDekubaba* this, u8 stemMode, s16 stemAngle0, s16 stemAngle1, s16 stemAngle2,
+                                s16 timer) {
+    switch (stemMode) {
+        case 0:
+            this->actionFunc = EnDekubaba_Wait; // DrawStemRetracted
+            break;
+        case 2:
+            this->actionFunc = EnDekubaba_DeadStickDrop; // stick-drop blink (uses timer)
+            break;
+        default:
+            this->actionFunc = EnDekubaba_DecideLunge; // any non-Wait/non-DeadStickDrop -> DrawStemExtended (3 sections)
+            break;
+    }
+    this->stemSectionAngle[0] = stemAngle0;
+    this->stemSectionAngle[1] = stemAngle1;
+    this->stemSectionAngle[2] = stemAngle2;
+    this->timer = timer;
+}
+
+// Mirror: play the death locally when the authority's HP hits 0. Replicates
+// EnDekubaba_SetupShrinkDie WITHOUT the GameInteractor defeat hook (the authority
+// already broadcast this death; re-firing it here would echo a second ENEMY_DIED).
+// EnDekubaba_ShrinkDie then shrinks the actor and Actor_Kills it on its own.
+void EnDekubaba_MirrorSetupDeath(EnDekubaba* this) {
+    Animation_Change(&this->skelAnime, &gDekuBabaFastChompAnim, -1.5f, Animation_GetLastFrame(&gDekuBabaFastChompAnim),
+                     0.0f, ANIMMODE_ONCE, -3.0f);
+    this->collider.base.acFlags &= ~AC_ON;
+    this->actionFunc = EnDekubaba_ShrinkDie;
+}
+
 // Update and associated functions
 
 void EnDekubaba_UpdateDamage(EnDekubaba* this, PlayState* play) {

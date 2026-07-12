@@ -3,6 +3,7 @@
 
 void RegisterGohmaAdapter();
 void RegisterEnGomaAdapter();
+void RegisterEnDekubabaAdapter();
 
 namespace EnemySync {
 
@@ -25,6 +26,7 @@ void RegisterBuiltInAdapters() {
     registered = true;
     RegisterGohmaAdapter();
     RegisterEnGomaAdapter();
+    RegisterEnDekubabaAdapter();
 }
 
 } // namespace EnemySync

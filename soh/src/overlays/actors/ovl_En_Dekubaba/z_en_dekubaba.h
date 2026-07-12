@@ -30,4 +30,11 @@ typedef struct EnDekubaba {
     /* 0x0258 */ ColliderJntSphElement colliderElements[7];
 } EnDekubaba; // size = 0x0418
 
+// Co-op enemy-sync (Anchor) mirror helpers — see z_en_dekubaba.c.
+// (Param named `en`, not `this`, so this header is includable from C++ adapters.)
+u8 EnDekubaba_MirrorGetStemMode(EnDekubaba* en);
+void EnDekubaba_MirrorApplyDraw(EnDekubaba* en, u8 stemMode, s16 stemAngle0, s16 stemAngle1, s16 stemAngle2,
+                                s16 timer);
+void EnDekubaba_MirrorSetupDeath(EnDekubaba* en);
+
 #endif
