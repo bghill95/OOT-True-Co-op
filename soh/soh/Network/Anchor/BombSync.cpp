@@ -45,6 +45,7 @@ struct BodyState {
     bool announcedInit = false;
     bool hadParent = false;
     bool detonated = false;
+    bool chuLaunched = false; // chu only: THROW already sent (from Move entry)
 };
 
 // Mirror side: one cosmetic replica.
@@ -63,6 +64,7 @@ static bool sSpawningReplica = false;
 // spawns must become a mute replica, not a tracked local body (echo!).
 static bool sAbsorbNextBomb = false;
 static uint32_t sAbsorbOwnerId = 0;
+static uint32_t sAbsorbFrame = 0; // only valid the frame it was armed (the chu's own update)
 
 bool SyncEnabled() {
     return CVarGetInteger(CVAR_REMOTE_ANCHOR("BombSync"), 1);
@@ -119,7 +121,8 @@ static void OnBodyInit(Actor* actor) {
     if (actor->id == ACTOR_EN_BOM && actor->params != BOMB_BODY) {
         return;
     }
-    if (sAbsorbNextBomb && actor->id == ACTOR_EN_BOM) {
+    if (sAbsorbNextBomb && actor->id == ACTOR_EN_BOM && gPlayState != NULL &&
+        gPlayState->gameplayFrames == sAbsorbFrame) {
         // A chu replica's own crash/fuse just spawned this bomb: keep it as a
         // mute replica so it neither deals damage nor echoes back to the owner.
         sAbsorbNextBomb = false;
@@ -191,6 +194,7 @@ static void ReplicaPreUpdate(Actor* actor, ReplicaState& rs, bool* should) {
         }
         sAbsorbNextBomb = true; // the chu may crash-explode inside this very update
         sAbsorbOwnerId = rs.ownerClientId;
+        sAbsorbFrame = gPlayState->gameplayFrames;
         return;
     }
 
@@ -227,18 +231,31 @@ static void OnBodyPreUpdate(Actor* actor, bool* should) {
         ReplicaPreUpdate(actor, rep->second, should);
         return;
     }
-    // A chu replica did not crash this frame after all: disarm the absorber so
-    // it cannot swallow a legitimate local bomb later.
-    if (sAbsorbNextBomb && actor->id == ACTOR_EN_BOM_CHU) {
-        sAbsorbNextBomb = false;
-    }
-
     auto body = sBodies.find(actor);
     if (body == sBodies.end()) {
         return;
     }
     BodyState& st = body->second;
     bool hasParent = actor->parent != NULL;
+
+    if (actor->id == ACTOR_EN_BOM_CHU) {
+        // The release snaps the chu to the floor and computes its axes DURING
+        // its own update (WaitForRelease -> Move), one step after the parent
+        // clears — announcing on the parent edge would ship the still-carried
+        // in-air position and the peer's crawl init would find no floor and
+        // blow up instantly. Announce THROW only once Move is live.
+        if (!st.announcedInit) {
+            st.announcedInit = true;
+            st.hadParent = hasParent;
+            if (hasParent) {
+                SendBodyEvent(actor, st, BOMB_EV_CARRY);
+            }
+        } else if (!st.chuLaunched && ((EnBomChu*)actor)->actionFunc == EnBomChu_Move) {
+            st.chuLaunched = true;
+            SendBodyEvent(actor, st, BOMB_EV_THROW); // pos/rotY now floor-snapped
+        }
+        return;
+    }
 
     if (!st.detonated && actor->id == ACTOR_EN_BOM && actor->params == BOMB_EXPLOSION) {
         // Early (fire, chain, chu-spawned timer=0) or on-time detonation.
