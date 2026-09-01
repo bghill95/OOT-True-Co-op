@@ -18,6 +18,7 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_Ishi/z_en_ishi.h"
 #include "src/overlays/actors/ovl_Obj_Comb/z_obj_comb.h"
 #include "src/overlays/actors/ovl_En_Wood02/z_en_wood02.h"
+#include "src/overlays/actors/ovl_En_Kanban/z_en_kanban.h"
 extern PlayState* gPlayState;
 }
 
@@ -46,6 +47,16 @@ namespace BreakSync {
 
 static constexpr uint32_t SPOOF_DMG_FLAGS = 0x00000008; // explosive
 
+// EnKanbanCutType lives in z_en_kanban.c only; values verified there.
+enum KanbanCut : uint8_t {
+    KCUT_POST = 0,
+    KCUT_VERT_L = 1,
+    KCUT_HORIZ = 2,
+    KCUT_DIAG_L = 3,
+    KCUT_DIAG_R = 4,
+    KCUT_VERT_R = 5,
+};
+
 static bool IsSyncedBreakable(int16_t id) {
     switch (id) {
         case ACTOR_EN_KUSA:
@@ -55,6 +66,7 @@ static bool IsSyncedBreakable(int16_t id) {
         case ACTOR_EN_ISHI:
         case ACTOR_OBJ_COMB:
         case ACTOR_EN_WOOD02:
+        case ACTOR_EN_KANBAN:
             return true;
         default:
             return false;
@@ -65,6 +77,7 @@ struct BreakState {
     uint64_t key = 0;
     bool announced = false;      // we already sent BREAK for this actor
     bool remoteBreaking = false; // break was remote-triggered: never echo it
+    uint16_t kanbanPrevParts = 0; // signposts break piece by piece, not once
 };
 
 static std::unordered_map<Actor*, BreakState> sTracked;
@@ -95,6 +108,9 @@ static void OnBreakableInit(Actor* actor) {
     if (!SyncEnabled() || sTracked.contains(actor)) {
         return;
     }
+    if (actor->id == ACTOR_EN_KANBAN && actor->params == ENKANBAN_PIECE) {
+        return; // flying sign pieces are dynamic children, not identities
+    }
     BreakState st;
     st.key = PosKey(actor);
     sTracked[actor] = st;
@@ -120,6 +136,44 @@ static void OnKusaPreUpdate(Actor* actor) {
     }
     if (actor->flags & ACTOR_FLAG_GRASS_DESTROYED) {
         SendBreak(actor, it->second);
+    }
+}
+
+// Signposts: multiple cuts per post — announce every partFlags shrink with the
+// cutType the cutter actually computed (post-adjustment). The mirror replays
+// the cut through the vanilla path; the receiver's own spoofed cut shrinks its
+// partFlags too, so the remoteBreaking latch absorbs the echo edge.
+static void OnKanbanPreUpdate(Actor* actor) {
+    auto it = sTracked.find(actor);
+    if (it == sTracked.end() || !SyncEnabled()) {
+        return;
+    }
+    BreakState& st = it->second;
+    EnKanban* sign = (EnKanban*)actor;
+    if (sign->partFlags < st.kanbanPrevParts) {
+        if (st.remoteBreaking) {
+            st.remoteBreaking = false;
+        } else {
+            nlohmann::json payload;
+            payload["key"] = st.key;
+            payload["cut"] = sign->cutType;
+            Anchor::Instance->SendPacket_BreakEvent(payload);
+            ESYNC_LOG("[BreakSync] kanban cut tx key={:#x} cut={}", st.key, sign->cutType);
+        }
+    }
+    st.kanbanPrevParts = sign->partFlags;
+}
+
+// While the receiver's spoofed cut runs, the local player's sword-animation
+// field is borrowed so sCutTypes[] resolves to the sender's cut style, then
+// restored right after the sign's update (OnActorUpdate window only).
+static bool sKanbanAnimOverride = false;
+static s8 sKanbanSavedAnim = 0;
+
+static void OnKanbanPostUpdate(Actor* actor) {
+    if (sKanbanAnimOverride && gPlayState != NULL) {
+        GET_PLAYER(gPlayState)->meleeWeaponAnimation = sKanbanSavedAnim;
+        sKanbanAnimOverride = false;
     }
 }
 
@@ -149,6 +203,45 @@ void Ingest(const nlohmann::json& payload) {
         st->second.remoteBreaking = true;
 
         sSpoofHitInfo.toucher.dmgFlags = SPOOF_DMG_FLAGS;
+
+        if (actor->id == ACTOR_EN_KANBAN) {
+            // Replay the cut through the vanilla path. cutType is derived from
+            // dmgFlags + the LOCAL player's sword anim, then flipped when the
+            // local player stands behind the sign — pick the base so the local
+            // flip lands on the sender's cut when reachable (mirror otherwise,
+            // cosmetic only). sCutTypes anim indices: 0=VERT_L, 2=DIAG_R, 4=HORIZ.
+            EnKanban* sign = (EnKanban*)actor;
+            uint8_t cut = payload.value("cut", (uint8_t)0);
+            Player* localPlayer = GET_PLAYER(gPlayState);
+            int16_t yawDiff = (int16_t)(actor->yawTowardsPlayer - actor->shape.rot.y);
+            bool localFlip = yawDiff > 0x4000 || yawDiff < -0x4000;
+            if (cut == KCUT_POST) {
+                sSpoofHitInfo.toucher.dmgFlags = 0x8; // outside 0x700: post cut
+            } else {
+                sSpoofHitInfo.toucher.dmgFlags = 0x100; // inside 0x700: styled cut
+                s8 anim;
+                switch (cut) {
+                    case KCUT_HORIZ:
+                        anim = 4;
+                        break;
+                    case KCUT_DIAG_R:
+                    case KCUT_DIAG_L:
+                        anim = 2; // DIAG_R base; local flip may mirror
+                        break;
+                    default: // CUT_VERT_L / CUT_VERT_R
+                        anim = 0; // VERT_L base; local flip may mirror
+                        break;
+                }
+                sKanbanSavedAnim = localPlayer->meleeWeaponAnimation;
+                sKanbanAnimOverride = true;
+                localPlayer->meleeWeaponAnimation = anim;
+            }
+            sign->collider.info.acHitInfo = &sSpoofHitInfo;
+            sign->collider.base.acFlags |= AC_HIT;
+            sign->invincibilityTimer = 0; // a fresh remote cut must not be i-framed away
+            ESYNC_LOG("[BreakSync] kanban cut rx key={:#x} cut={} flip={}", key, cut, localFlip);
+            return;
+        }
 
         switch (actor->id) {
             case ACTOR_EN_KUSA:
@@ -208,11 +301,15 @@ void RegisterHooks(bool isConnected) {
     COND_ID_HOOK(OnActorInit, ACTOR_EN_ISHI, isConnected, [](void* actor) { OnBreakableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_OBJ_COMB, isConnected, [](void* actor) { OnBreakableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_EN_WOOD02, isConnected, [](void* actor) { OnBreakableInit((Actor*)actor); });
+    COND_ID_HOOK(OnActorInit, ACTOR_EN_KANBAN, isConnected, [](void* actor) { OnBreakableInit((Actor*)actor); });
 
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_KUSA, isConnected,
                  [](void* actor, bool* should) { OnKusaPreUpdate((Actor*)actor); });
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_WOOD02, isConnected,
                  [](void* actor, bool* should) { OnWoodPreUpdate((Actor*)actor); });
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_KANBAN, isConnected,
+                 [](void* actor, bool* should) { OnKanbanPreUpdate((Actor*)actor); });
+    COND_ID_HOOK(OnActorUpdate, ACTOR_EN_KANBAN, isConnected, [](void* actor) { OnKanbanPostUpdate((Actor*)actor); });
 
     COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
         Actor* a = (Actor*)actorRef;
