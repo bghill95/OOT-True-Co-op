@@ -100,17 +100,24 @@ void Anchor::HandlePacket_TimeSync(nlohmann::json payload) {
     // (Kakariko, graveyard...) never repaint at all. Replay the exact vanilla
     // recipe the time-frozen-area Sun's Song uses: fade + nextDayTime + reload.
     if (force && IsDaytimeValue(t) != IsDaytimeValue(gSaveContext.dayTime) &&
-        gSaveContext.sunsSongState == SUNSSONG_INACTIVE) {
+        gSaveContext.sunsSongState == SUNSSONG_INACTIVE &&
+        // No local respawn point exists in these scenes (SetupRespawnPoint
+        // skips them) and no sky is visible there: silent snap below instead.
+        gPlayState->sceneNum != SCENE_FAIRYS_FOUNTAIN && gPlayState->sceneNum != SCENE_GROTTOS) {
         bool toDay = IsDaytimeValue(t);
         gSaveContext.nextDayTime = t;
         gPlayState->transitionType = toDay ? TRANS_TYPE_FADE_WHITE_FAST : TRANS_TYPE_FADE_BLACK_FAST;
         gSaveContext.nextTransitionType = toDay ? TRANS_TYPE_FADE_WHITE : TRANS_TYPE_FADE_BLACK;
         gPlayState->unk_11DE9 = 1;
-        // Second half of the vanilla recipe (z_parameter, Sun's Song in a
-        // time-frozen area): without the trigger, unk_11DE9 freezes every actor
-        // update but the transition never starts — a soft-lock.
-        gSaveContext.respawnFlag = -2;
-        gPlayState->nextEntranceIndex = gSaveContext.entranceIndex;
+        // Unlike the singer (vanilla warps them to the zone entrance,
+        // respawnFlag -2), the receiver did not ask for this: reload them AT
+        // THEIR EXACT SPOT via the void-out machinery — snapshot pos/yaw/room
+        // now, restore the room's temp flags, respawnFlag 1.
+        Play_SetupRespawnPoint(gPlayState, RESPAWN_MODE_DOWN, 0xDFF);
+        gSaveContext.respawn[RESPAWN_MODE_DOWN].tempSwchFlags = gPlayState->actorCtx.flags.tempSwch;
+        gSaveContext.respawn[RESPAWN_MODE_DOWN].tempCollectFlags = gPlayState->actorCtx.flags.tempCollect;
+        gSaveContext.respawnFlag = 1;
+        gPlayState->nextEntranceIndex = gSaveContext.respawn[RESPAWN_MODE_DOWN].entranceIndex;
         gPlayState->transitionTrigger = TRANS_TRIGGER_START;
         func_800F6964(30); // audio fade, same as vanilla
         gSaveContext.seqId = (u8)NA_BGM_DISABLED;
@@ -118,7 +125,7 @@ void Anchor::HandlePacket_TimeSync(nlohmann::json payload) {
         gSaveContext.totalDays = payload.value("d", gSaveContext.totalDays);
         gSaveContext.bgsDayCount = payload.value("bgs", gSaveContext.bgsDayCount);
         sSuppressJumpBroadcast = true; // the reload's own jump is this apply, not a new local event
-        ESYNC_LOG("[TimeSync] remote day/night flip: fading to t={:#x}", t);
+        ESYNC_LOG("[TimeSync] remote day/night flip: fading in place to t={:#x}", t);
         return;
     }
 
