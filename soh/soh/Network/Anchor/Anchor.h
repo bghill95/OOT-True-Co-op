@@ -58,6 +58,7 @@ typedef struct {
     s8 invincibilityTimer;
     s16 unk_862;
     s16 dekuStickFlame; // player->unk_860: burning deku stick timer
+    f32 dekuStickLength; // player->unk_85C: remaining stick fraction (draw scale + tip reach)
     s8 actionVar1;
 
     // Ptr to the dummy player
