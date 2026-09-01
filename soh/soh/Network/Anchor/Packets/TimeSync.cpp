@@ -28,9 +28,19 @@ extern PlayState* gPlayState;
 static constexpr uint64_t BROADCAST_TICKS = 20;   // once a second
 static constexpr int16_t APPLY_THRESHOLD = 0x100; // ~1.3 in-game minutes: don't fight local increment
 
+// dayTime jump (in one frame) that counts as a direct set rather than natural
+// flow: indoor-style Sun's Song (fade + reload), sleeping, debug-warp time
+// override. SPEED_TIME advances 400/frame, far below this.
+static constexpr int16_t JUMP_THRESHOLD = 0x2000;
+
+static bool IsDaytimeValue(uint16_t t) {
+    return t >= 0x4555 && t < 0xC001; // the boundaries z_parameter uses
+}
+
 static uint64_t sTick = 0;
 static bool sWasSpeedingTime = false;
-static bool sRemoteFastForward = false; // our ride was remote-triggered: don't re-broadcast the landing
+static uint16_t sPrevDayTime = 0;
+static bool sSuppressJumpBroadcast = false; // the jump we're about to see is a remote apply, not ours
 
 static bool IsTimeAuthority() {
     for (auto& [id, client] : Anchor::Instance->clients) {
@@ -83,17 +93,22 @@ void Anchor::HandlePacket_TimeSync(nlohmann::json payload) {
     uint16_t t = payload["t"].get<uint16_t>();
     int16_t diff = (int16_t)(t - gSaveContext.dayTime); // u16 wrap-aware
 
-    // A peer's Sun's Song: a hard dayTime snap skips every day/night transition
-    // trigger — the sky, ambience and spawns stay stale until the next scene
-    // load (looked like "sync didn't happen"). Outdoors, ride the exact same
-    // engine fast-forward the singer rode (z_parameter picks it up from
-    // SUNSSONG_START and lands on the same dawn/dusk boundary). Indoors the sky
-    // is not visible: silent snap below, and the next scene load repaints.
-    if (force && gPlayState->envCtx.timeIncrement != 0 && gSaveContext.sunsSongState == SUNSSONG_INACTIVE &&
-        (diff > APPLY_THRESHOLD || diff < -APPLY_THRESHOLD)) {
-        gSaveContext.sunsSongState = SUNSSONG_START;
-        sRemoteFastForward = true;
-        ESYNC_LOG("[TimeSync] remote suns song: riding local fast-forward");
+    // A peer force-set the clock across day/night (Sun's Song, sleep, debug
+    // warp). A bare dayTime snap skips every transition trigger — sky, ambience
+    // and spawns stay stale until the next scene load, and time-frozen areas
+    // (Kakariko, graveyard...) never repaint at all. Replay the exact vanilla
+    // recipe the time-frozen-area Sun's Song uses: fade + nextDayTime + reload.
+    if (force && IsDaytimeValue(t) != IsDaytimeValue(gSaveContext.dayTime) &&
+        gSaveContext.sunsSongState == SUNSSONG_INACTIVE) {
+        bool toDay = IsDaytimeValue(t);
+        gSaveContext.nextDayTime = t;
+        gPlayState->transitionType = toDay ? TRANS_TYPE_FADE_WHITE_FAST : TRANS_TYPE_FADE_BLACK_FAST;
+        gSaveContext.nextTransitionType = toDay ? TRANS_TYPE_FADE_WHITE : TRANS_TYPE_FADE_BLACK;
+        gPlayState->unk_11DE9 = 1;
+        gSaveContext.totalDays = payload.value("d", gSaveContext.totalDays);
+        gSaveContext.bgsDayCount = payload.value("bgs", gSaveContext.bgsDayCount);
+        sSuppressJumpBroadcast = true; // the reload's own jump is this apply, not a new local event
+        ESYNC_LOG("[TimeSync] remote day/night flip: fading to t={:#x}", t);
         return;
     }
 
@@ -107,21 +122,33 @@ void Anchor::HandlePacket_TimeSync(nlohmann::json payload) {
 
 void TimeSyncTick() {
     if (!Anchor::Instance->IsSaveLoaded() || gPlayState == NULL) {
+        sPrevDayTime = gSaveContext.dayTime; // no jump detection across save load
         return;
     }
     sTick++;
 
     bool speeding = gSaveContext.sunsSongState == SUNSSONG_SPEED_TIME;
     if (sWasSpeedingTime && !speeding) {
-        if (sRemoteFastForward) {
-            sRemoteFastForward = false; // a peer's song we replayed: no echo
-        } else {
-            // Our Sun's Song fast-forward just landed: everyone adopts it.
-            Anchor::Instance->SendPacket_TimeSync(true);
-            ESYNC_LOG("[TimeSync] suns song landed, forcing t={:#x}", (uint16_t)gSaveContext.dayTime);
-        }
+        // Our Sun's Song fast-forward just landed: everyone adopts it.
+        Anchor::Instance->SendPacket_TimeSync(true);
+        ESYNC_LOG("[TimeSync] suns song landed, forcing t={:#x}", (uint16_t)gSaveContext.dayTime);
     }
     sWasSpeedingTime = speeding;
+
+    // Direct clock set outside a fast-forward: Sun's Song in a time-frozen area
+    // (fade + reload lands at 0x0/0x8001 with no SPEED_TIME phase), sleeping,
+    // debug-warp overrides... Broadcast it whoever we are — a force outranks
+    // the periodic stream everywhere.
+    int16_t jump = (int16_t)((uint16_t)gSaveContext.dayTime - sPrevDayTime);
+    if (!speeding && (jump > JUMP_THRESHOLD || jump < -JUMP_THRESHOLD)) {
+        if (sSuppressJumpBroadcast) {
+            sSuppressJumpBroadcast = false; // this jump was a remote apply
+        } else {
+            Anchor::Instance->SendPacket_TimeSync(true);
+            ESYNC_LOG("[TimeSync] direct time set detected, forcing t={:#x}", (uint16_t)gSaveContext.dayTime);
+        }
+    }
+    sPrevDayTime = gSaveContext.dayTime;
 
     if (!speeding && IsTimeAuthority() && (sTick % BROADCAST_TICKS) == 0) {
         Anchor::Instance->SendPacket_TimeSync(false);
