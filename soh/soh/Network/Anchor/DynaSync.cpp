@@ -59,6 +59,12 @@ static bool IsSyncedDynaActor(const Actor* actor) {
                                       // cosmetic, NO DynaPoly, so it is fed to
                                       // OnDynaRegistered by an OnActorInit hook instead
         case ACTOR_BG_SPOT18_BASKET:  // Goron City: spinning vase
+        case ACTOR_BG_MIZU_UZU:       // Water Temple: free-phase spinner (rot.y += 0x1C0/frame)
+        case ACTOR_BG_MIZU_MOVEBG:    // Water Temple: moving platforms (flag + path)
+        case ACTOR_BG_HAKA_SHIP:      // Shadow Temple: boat (flag then scripted sail — flag
+                                      // replay times differ, the hull must not)
+        case ACTOR_EN_SIOFUKI:        // Jabu: water-spout platforms (flag + timer + oscillation)
+        case ACTOR_EN_BROB:           // Jabu: wobbling blob platform (timers + proximity)
             // NOT one-shot switch-flag movers (Bg_Ddan_Kd stairs, Hamsteps, gates,
             // shutters...): Anchor's flag sync already replays those on both
             // clients. NOT the SetFlag.cpp exclusions (water level, forest
@@ -75,8 +81,16 @@ static bool IsSyncedDynaActor(const Actor* actor) {
 // by the claimant instead of the scene authority while a claim is fresh.
 static bool IsClaimableDynaActor(const Actor* actor) {
     switch (actor->id) {
-        case ACTOR_OBJ_OSHIHIKI:  // push blocks (every dungeon)
-        case ACTOR_BG_HIDAN_ROCK: // Fire Temple push stone
+        case ACTOR_OBJ_OSHIHIKI:       // push blocks (every dungeon)
+        case ACTOR_BG_HIDAN_ROCK:      // Fire Temple push stone
+        case ACTOR_BG_MORI_KAITENKABE: // Forest Temple: push-rotated basement wall
+        case ACTOR_BG_JYA_COBRA:       // Spirit Temple: push-rotated cobra mirror
+        case ACTOR_BG_ICE_OBJECTS:     // Ice Cavern: sliding ice blocks
+        case ACTOR_BG_GND_ICEBLOCK:    // Ganon's Castle: sliding ice blocks
+        case ACTOR_BG_PUSHBOX:         // generic push crate
+        case ACTOR_BG_SPOT15_RRBOX:    // Lon Lon Ranch: push crate
+        case ACTOR_BG_HAKA:            // Graveyard/tombs: pushable gravestones
+        case ACTOR_BG_SPOT18_OBJ:      // Goron City: push statue (latches a flag once placed)
             return true;
         default:
             return false;
@@ -93,6 +107,7 @@ struct TrackedDyna {
     bool hadUncullFlag = false; // actor's own culling setting, restored on release
     uint64_t localClaimTick = 0; // last tick our player pushed/moved it
     Vec3f prevPos{};             // motion detection for claim upkeep
+    Vec3s prevRot{};             // idem — push-rotated walls/mirrors move rot only
 };
 
 // Latest streamed state per key (game-thread only: written by the queued
@@ -191,8 +206,11 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
         // keep the claim while it still slides after release.
         bool moved = fabsf(actor->world.pos.x - st.prevPos.x) > POS_EPSILON ||
                      fabsf(actor->world.pos.y - st.prevPos.y) > POS_EPSILON ||
-                     fabsf(actor->world.pos.z - st.prevPos.z) > POS_EPSILON;
+                     fabsf(actor->world.pos.z - st.prevPos.z) > POS_EPSILON ||
+                     actor->shape.rot.x != st.prevRot.x || actor->shape.rot.y != st.prevRot.y ||
+                     actor->shape.rot.z != st.prevRot.z;
         st.prevPos = actor->world.pos;
+        st.prevRot = actor->shape.rot;
         if (fabsf(((DynaPolyActor*)actor)->unk_150) > 0.001f ||
             (Fresh(st.localClaimTick, CLAIM_TICKS) && moved && !st.suppressed)) {
             st.localClaimTick = sTick;
