@@ -1,5 +1,8 @@
 #include "Anchor.h"
 #include "EnemySync.h"
+#include "DynaSync.h"
+#include "BombfSync.h"
+#include "CarrySync.h"
 #include "PuppetFairy.h"
 #include "CoopWarp.h"
 #include "CoopLifeSync.h"
@@ -399,6 +402,15 @@ void Anchor::RegisterHooks() {
     // Shared enemy/boss HP + synced deaths (see EnemySync.cpp)
     EnemySync::RegisterHooks(isConnected);
 
+    // Mirrored motion for whitelisted DynaPoly platforms/elevators (see DynaSync.cpp)
+    DynaSync::RegisterHooks(isConnected);
+
+    // Bomb Flower throw/pluck replication (see BombfSync.cpp)
+    BombfSync::RegisterHooks(isConnected);
+
+    // Scene-placed carryable props: rocks, pots (see CarrySync.cpp)
+    CarrySync::RegisterHooks(isConnected);
+
     // Cosmetic companion fairy per remote-player puppet (see PuppetFairy.cpp)
     RegisterPuppetFairyHooks(isConnected);
 
@@ -434,6 +446,7 @@ void Anchor::RegisterHooks() {
         ProcessIncomingPacketQueue(); // drain: apply peer lifeState / wallet / warps
         CoopLifeSyncTick();           // SETS myLifeState
         EnemySync::PerFrameTick();    // authority election READS myLifeState
+        DynaSync::PerFrameTick();     // platform streaming READS EnemySync's election
         PuppetFairyTick();            // companion-fairy spawn/reap lifecycle
         CoopWarpTick();               // drain queued, gated system warps
         BossEntryTick();              // reconcile boss echo-latch (Fix A)

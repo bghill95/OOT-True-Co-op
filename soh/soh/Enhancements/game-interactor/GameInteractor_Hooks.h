@@ -40,6 +40,7 @@ void GameInteractor_ExecuteOnCollisionCheckSetAC(void* actor, void* collider);
 void GameInteractor_ExecuteOnCollisionCheckSetAT(void* actor, void* collider);
 void GameInteractor_ExecuteOnCollisionCheckSetOC(void* actor, void* collider);
 void GameInteractor_ExecuteOnColliderSetup(void* actor, void* collider);
+void GameInteractor_ExecuteOnDynaPolySetBgActor(void* actor, int32_t bgId);
 void GameInteractor_ExecuteOnSkelAnimeInit(void* skelAnime);
 void GameInteractor_ExecuteOnEnemyDefeat(void* actor);
 void GameInteractor_ExecuteOnBossDefeat(void* actor);

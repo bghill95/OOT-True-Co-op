@@ -3,6 +3,7 @@
 
 #include "soh/OTRGlobals.h"
 #include "soh/ResourceManagerHelpers.h"
+#include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include <assert.h>
 
 #define SS_NULL 0xFFFF
@@ -2676,6 +2677,8 @@ s32 DynaPoly_SetBgActor(PlayState* play, DynaCollisionContext* dyna, Actor* acto
     osSyncPrintf(VT_FGCOL(GREEN));
     osSyncPrintf("DynaPolyInfo_setActor():index %d\n", bgId);
     osSyncPrintf(VT_RST);
+    // SOH [Anchor] DynaSync registers whitelisted platform actors here
+    GameInteractor_ExecuteOnDynaPolySetBgActor(actor, bgId);
     return bgId;
 }
 

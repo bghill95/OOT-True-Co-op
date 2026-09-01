@@ -105,6 +105,9 @@ class Anchor : public Network {
     void HandlePacket_DamagePlayer(nlohmann::json payload);
     void HandlePacket_DisableAnchor(nlohmann::json payload);
     void HandlePacket_EnemyDespawn(nlohmann::json payload);
+    void HandlePacket_BombfEvent(nlohmann::json payload);
+    void HandlePacket_CarryEvent(nlohmann::json payload);
+    void HandlePacket_DynaState(nlohmann::json payload);
     void HandlePacket_EnemyDied(nlohmann::json payload);
     void HandlePacket_EnemyHit(nlohmann::json payload);
     void HandlePacket_EnemyHitRequest(nlohmann::json payload);
@@ -142,10 +145,13 @@ class Anchor : public Network {
     inline static const std::string BGM_POS_REQUEST = "BGM_POS_REQUEST";
     inline static const std::string BGM_RESTART = "BGM_RESTART";
     inline static const std::string BGM_STATE = "BGM_STATE";
+    inline static const std::string BOMBF_EVENT = "BOMBF_EVENT";
     inline static const std::string BOSS_ENTRY = "BOSS_ENTRY";
+    inline static const std::string CARRY_EVENT = "CARRY_EVENT";
     inline static const std::string CUTSCENE_SYNC = "CUTSCENE_SYNC";
     inline static const std::string DAMAGE_PLAYER = "DAMAGE_PLAYER";
     inline static const std::string DISABLE_ANCHOR = "DISABLE_ANCHOR";
+    inline static const std::string DYNA_STATE = "DYNA_STATE";
     inline static const std::string ENEMY_DESPAWN = "ENEMY_DESPAWN";
     inline static const std::string ENEMY_DIED = "ENEMY_DIED";
     inline static const std::string ENEMY_HIT = "ENEMY_HIT";
@@ -195,6 +201,8 @@ class Anchor : public Network {
     void SendPacket_BgmRestart(u16 seqId);
     void SendPacket_BgmState();
     void SendPacket_BossEntry(s16 sceneNum, s32 entranceIndex);
+    void SendPacket_BombfEvent(nlohmann::json& event);
+    void SendPacket_CarryEvent(nlohmann::json& event);
     void SendPacket_ClearTeamState(std::string teamId);
     void SendPacket_CutsceneSync(u8 kind, s16 sceneNum, s32 entranceIndex, s32 cutsceneIndex, s16 csFlag);
     void SendPacket_DamagePlayer(u32 clientId, u8 damageEffect, u8 damage);
@@ -205,6 +213,7 @@ class Anchor : public Network {
     void SendPacket_EnemyRosterRequest(int16_t roomNum);
     void SendPacket_EnemySpawn(uint64_t enemyKey, int16_t actorId, uint16_t params, Vec3f pos, Vec3s rot,
                                int16_t roomNum, uint64_t parentKey);
+    void SendPacket_DynaState(nlohmann::json& dynas);
     void SendPacket_EnemyState(nlohmann::json& enemies);
     void SendPacket_EntranceDiscovered(u16 entranceIndex);
     void SendPacket_GameComplete();

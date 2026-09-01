@@ -43,9 +43,22 @@ void Anchor::SendPacket_PlayerUpdate() {
     payload["linkAge"] = gSaveContext.linkAge;
     payload["posRot"]["pos"] = player->actor.world.pos;
     payload["posRot"]["rot"] = player->actor.shape.rot;
+    // While carrying an actor overhead, the arms-up pose lives in
+    // upperSkelAnime and only reaches skelAnime.jointTable via a deferred
+    // AnimationContext copy task that runs AFTER this snapshot — so the
+    // streamed table would always show the pre-blend (arms down) pose.
+    // Re-apply the blend here, using z_player.c's sUpperBodyLimbCopyMap
+    // (upper body + head + arms limbs).
+    static const uint8_t upperLimbCopyMap[24] = {
+        false, false, false, false, false, false, false, false, false, false, // none/root/waist/legs
+        true,  true,  true,  true,  true,  true,  true,  true,  true,  true,  // upper/head/hat/collar/arms
+        true,  true,  false, false                                            // sheath/torso
+    };
+    bool upperOverride = (player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) != 0;
     std::vector<int> jointArray;
     for (size_t i = 0; i < 24; i++) {
-        Vec3s joint = player->skelAnime.jointTable[i];
+        Vec3s joint = (upperOverride && upperLimbCopyMap[i]) ? player->upperSkelAnime.jointTable[i]
+                                                             : player->skelAnime.jointTable[i];
         jointArray.push_back(joint.x);
         jointArray.push_back(joint.y);
         jointArray.push_back(joint.z);

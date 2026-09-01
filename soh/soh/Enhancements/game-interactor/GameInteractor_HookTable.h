@@ -39,6 +39,7 @@ DEFINE_HOOK(OnCollisionCheckSetAC, (void* actor, void* collider));
 DEFINE_HOOK(OnCollisionCheckSetAT, (void* actor, void* collider));
 DEFINE_HOOK(OnCollisionCheckSetOC, (void* actor, void* collider));
 DEFINE_HOOK(OnColliderSetup, (void* actor, void* collider));
+DEFINE_HOOK(OnDynaPolySetBgActor, (void* actor, int32_t bgId));
 DEFINE_HOOK(OnSkelAnimeInit, (void* skelAnime));
 DEFINE_HOOK(OnEnemyDefeat, (void* actor));
 DEFINE_HOOK(OnBossDefeat, (void* actor));

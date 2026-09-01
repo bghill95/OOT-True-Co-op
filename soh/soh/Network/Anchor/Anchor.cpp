@@ -107,14 +107,20 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_BgmRestart(payload);
         else if (packetType == BGM_STATE)
             HandlePacket_BgmState(payload);
+        else if (packetType == BOMBF_EVENT)
+            HandlePacket_BombfEvent(payload);
         else if (packetType == BOSS_ENTRY)
             HandlePacket_BossEntry(payload);
+        else if (packetType == CARRY_EVENT)
+            HandlePacket_CarryEvent(payload);
         else if (packetType == CUTSCENE_SYNC)
             HandlePacket_CutsceneSync(payload);
         else if (packetType == DAMAGE_PLAYER)
             HandlePacket_DamagePlayer(payload);
         else if (packetType == DISABLE_ANCHOR)
             HandlePacket_DisableAnchor(payload);
+        else if (packetType == DYNA_STATE)
+            HandlePacket_DynaState(payload);
         else if (packetType == ENEMY_DESPAWN)
             HandlePacket_EnemyDespawn(payload);
         else if (packetType == ENEMY_DIED)

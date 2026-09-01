@@ -178,6 +178,10 @@ void GameInteractor_ExecuteOnColliderSetup(void* actor, void* collider) {
     GameInteractor::Instance->ExecuteHooks<GameInteractor::OnColliderSetup>(actor, collider);
 }
 
+void GameInteractor_ExecuteOnDynaPolySetBgActor(void* actor, int32_t bgId) {
+    GameInteractor::Instance->ExecuteHooks<GameInteractor::OnDynaPolySetBgActor>(actor, bgId);
+}
+
 void GameInteractor_ExecuteOnSkelAnimeInit(void* skelAnime) {
     GameInteractor::Instance->ExecuteHooks<GameInteractor::OnSkelAnimeInit>(skelAnime);
 }
