@@ -2,6 +2,8 @@
 #include "EnemySync.h"
 #include "DynaSync.h"
 #include "BombfSync.h"
+#include "BombSync.h"
+#include "BreakSync.h"
 #include "CarrySync.h"
 #include "PuppetFairy.h"
 #include "CoopWarp.h"
@@ -427,6 +429,12 @@ void Anchor::RegisterHooks() {
 
     // Bomb Flower throw/pluck replication (see BombfSync.cpp)
     BombfSync::RegisterHooks(isConnected);
+
+    // Player-placed bomb replication (see BombSync.cpp)
+    BombSync::RegisterHooks(isConnected);
+
+    // Breakable scenery: pots, crates, grass, rocks, beehives, tree bonks (see BreakSync.cpp)
+    BreakSync::RegisterHooks(isConnected);
 
     // Scene-placed carryable props: rocks, pots (see CarrySync.cpp)
     CarrySync::RegisterHooks(isConnected);

@@ -109,6 +109,10 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_BgmState(payload);
         else if (packetType == BOMBF_EVENT)
             HandlePacket_BombfEvent(payload);
+        else if (packetType == BOMB_EVENT)
+            HandlePacket_BombEvent(payload);
+        else if (packetType == BREAK_EVENT)
+            HandlePacket_BreakEvent(payload);
         else if (packetType == BOSS_ENTRY)
             HandlePacket_BossEntry(payload);
         else if (packetType == CARRY_EVENT)

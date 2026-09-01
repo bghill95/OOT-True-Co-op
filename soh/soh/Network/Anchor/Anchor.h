@@ -106,6 +106,8 @@ class Anchor : public Network {
     void HandlePacket_DisableAnchor(nlohmann::json payload);
     void HandlePacket_EnemyDespawn(nlohmann::json payload);
     void HandlePacket_BombfEvent(nlohmann::json payload);
+    void HandlePacket_BombEvent(nlohmann::json payload);
+    void HandlePacket_BreakEvent(nlohmann::json payload);
     void HandlePacket_CarryEvent(nlohmann::json payload);
     void HandlePacket_DynaState(nlohmann::json payload);
     void HandlePacket_EnemyDied(nlohmann::json payload);
@@ -147,6 +149,8 @@ class Anchor : public Network {
     inline static const std::string BGM_RESTART = "BGM_RESTART";
     inline static const std::string BGM_STATE = "BGM_STATE";
     inline static const std::string BOMBF_EVENT = "BOMBF_EVENT";
+    inline static const std::string BOMB_EVENT = "BOMB_EVENT";
+    inline static const std::string BREAK_EVENT = "BREAK_EVENT";
     inline static const std::string BOSS_ENTRY = "BOSS_ENTRY";
     inline static const std::string CARRY_EVENT = "CARRY_EVENT";
     inline static const std::string CUTSCENE_SYNC = "CUTSCENE_SYNC";
@@ -204,6 +208,8 @@ class Anchor : public Network {
     void SendPacket_BgmState();
     void SendPacket_BossEntry(s16 sceneNum, s32 entranceIndex);
     void SendPacket_BombfEvent(nlohmann::json& event);
+    void SendPacket_BombEvent(nlohmann::json& event);
+    void SendPacket_BreakEvent(nlohmann::json& event);
     void SendPacket_CarryEvent(nlohmann::json& event);
     void SendPacket_ClearTeamState(std::string teamId);
     void SendPacket_CutsceneSync(u8 kind, s16 sceneNum, s32 entranceIndex, s32 cutsceneIndex, s16 csFlag);

@@ -34,8 +34,11 @@ static constexpr int32_t CARRIER_LOST_TICKS = 45;
 // Scene-placed carryables worth replicating. Grow as needed.
 static bool IsSyncedCarryActor(const Actor* actor) {
     switch (actor->id) {
-        case ACTOR_EN_ISHI:   // small/large liftable rocks
-        case ACTOR_OBJ_TSUBO: // pots
+        case ACTOR_EN_ISHI:     // small/large liftable rocks
+        case ACTOR_OBJ_TSUBO:   // pots
+        case ACTOR_EN_NIW:      // cuccos — wander AI diverges between clients, but
+                                // every CARRY/THROW re-converges the copies, which
+                                // is what actually shows on screen
             return true;
         default:
             return false;
@@ -207,10 +210,13 @@ void RegisterHooks(bool isConnected) {
 
     COND_ID_HOOK(OnActorInit, ACTOR_EN_ISHI, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_OBJ_TSUBO, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
+    COND_ID_HOOK(OnActorInit, ACTOR_EN_NIW, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
 
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_ISHI, isConnected,
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_OBJ_TSUBO, isConnected,
+                 [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_NIW, isConnected,
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
 
     COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
