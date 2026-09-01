@@ -10,9 +10,13 @@
 
 extern "C" {
 #include "variables.h"
+#include "functions.h"
 #include "src/overlays/actors/ovl_En_Bom/z_en_bom.h"
 #include "src/overlays/actors/ovl_En_Bom_Chu/z_en_bom_chu.h"
 extern PlayState* gPlayState;
+// Not declared in the overlay header; both are non-static in z_en_bom_chu.c.
+void EnBomChu_UpdateFloorPoly(EnBomChu* chu, CollisionPoly* floorPoly, PlayState* play);
+void EnBomChu_Move(EnBomChu* chu, PlayState* play);
 }
 
 namespace BombSync {
@@ -46,6 +50,7 @@ struct BodyState {
 // Mirror side: one cosmetic replica.
 struct ReplicaState {
     bool carried = false;
+    bool launched = false; // chu only: crawl initialized from a THROW packet
     uint32_t ownerClientId = 0;
 };
 
@@ -118,7 +123,9 @@ static void OnBodyInit(Actor* actor) {
         // A chu replica's own crash/fuse just spawned this bomb: keep it as a
         // mute replica so it neither deals damage nor echoes back to the owner.
         sAbsorbNextBomb = false;
-        sReplicas[actor] = ReplicaState{ /*carried=*/false, sAbsorbOwnerId };
+        ReplicaState mute;
+        mute.ownerClientId = sAbsorbOwnerId;
+        sReplicas[actor] = mute;
         NeuterReplica(actor);
         return;
     }
@@ -154,6 +161,25 @@ static void ReplicaPreUpdate(Actor* actor, ReplicaState& rs, bool* should) {
     }
 
     if (actor->id == ACTOR_EN_BOM_CHU) {
+        // NEVER let a replica run EnBomChu_WaitForRelease: it has no parent, so
+        // that state would snap it onto OUR local player and deref floorPoly
+        // with no NULL check (a documented vanilla //!@bug — real 0xc0000005 in
+        // playtest). Until the THROW packet initializes the crawl (launched),
+        // hold the update and ride the owner's puppet while carried.
+        if (!rs.launched) {
+            *should = false;
+            EnBomChu* chu = (EnBomChu*)actor;
+            if (chu->timer > 1) {
+                chu->timer--;
+            }
+            Actor* puppet = rs.carried ? PuppetRef::Resolve(rs.ownerClientId) : NULL;
+            if (puppet != NULL) {
+                actor->world.pos = puppet->world.pos;
+                actor->world.pos.y += CARRY_Y_OFFSET;
+                actor->shape.rot.y = puppet->shape.rot.y;
+            }
+            return;
+        }
         // The blast is replicated through the owner's EN_BOM (spawned by the
         // real chu at detonation). Kill this crawler just before its own local
         // fuse blows so there is exactly one visible explosion; a crash-spawned
@@ -276,7 +302,9 @@ void Ingest(const nlohmann::json& payload) {
                 return;
             }
             sRemoteBodies[rkey] = replica;
-            sReplicas[replica] = ReplicaState{ /*carried=*/false, ownerId };
+            ReplicaState fresh;
+            fresh.ownerClientId = ownerId;
+            sReplicas[replica] = fresh;
             NeuterReplica(replica);
         }
 
@@ -296,6 +324,24 @@ void Ingest(const nlohmann::json& payload) {
                 replica->shape.rot.y = replica->world.rot.y;
                 replica->velocity = payload.at("vel").get<Vec3f>();
                 replica->speedXZ = payload.at("speedXZ").get<float>();
+                if (replica->id == ACTOR_EN_BOM_CHU) {
+                    // Hand-roll what EnBomChu_WaitForRelease does on release,
+                    // from the packet's data instead of the local player, WITH
+                    // the missing floor-poly NULL check.
+                    EnBomChu* chu = (EnBomChu*)replica;
+                    int16_t yaw = replica->shape.rot.y;
+                    chu->axisForwards = { Math_SinS(yaw), 0.0f, Math_CosS(yaw) };
+                    chu->axisUp = { 0.0f, 1.0f, 0.0f };
+                    chu->axisLeft = { Math_SinS((int16_t)(yaw + 0x4000)), 0.0f, Math_CosS((int16_t)(yaw + 0x4000)) };
+                    Actor_UpdateBgCheckInfo(gPlayState, replica, 0.0f, 0.0f, 0.0f, 4);
+                    if (replica->floorPoly == NULL) {
+                        Actor_Kill(replica); // no ground under the packet's pos: bail out safely
+                        break;
+                    }
+                    EnBomChu_UpdateFloorPoly(chu, replica->floorPoly, gPlayState);
+                    chu->actionFunc = EnBomChu_Move;
+                    rs.launched = true;
+                }
                 break;
             case BOMB_EV_DETONATE:
                 rs.carried = false;
