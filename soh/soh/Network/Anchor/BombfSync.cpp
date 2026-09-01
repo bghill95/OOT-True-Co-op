@@ -4,9 +4,9 @@
 #include "PuppetRef.h"
 #include "JsonConversions.hpp"
 #include "soh/cvar_prefixes.h"
-#include "soh/ObjectExtension/ActorListIndex.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
+#include <cmath>
 #include <unordered_map>
 
 extern "C" {
@@ -69,15 +69,25 @@ static uint64_t RemoteKey(uint32_t clientId, uint32_t bid) {
     return ((uint64_t)clientId << 32) | bid;
 }
 
+// Flower identity = quantized spawn position + id, like CarrySync/DynaSync —
+// NOT ActorListIndex (differs across scene setup layers: age, time of day).
+static uint64_t FlowerPosKey(const Actor* actor) {
+    int16_t qx = (int16_t)lroundf(actor->world.pos.x);
+    int16_t qy = (int16_t)lroundf(actor->world.pos.y);
+    int16_t qz = (int16_t)lroundf(actor->world.pos.z);
+    return ((uint64_t)(uint16_t)qx << 48) | ((uint64_t)(uint16_t)qy << 32) | ((uint64_t)(uint16_t)qz << 16) |
+           (uint16_t)actor->id;
+}
+
 static void OnBombfInit(Actor* actor) {
     if (!SyncEnabled()) {
         return;
     }
     EnBombf* bombf = (EnBombf*)actor;
     if (actor->params == BOMBFLOWER_FLOWER) {
-        // ActorListIndex is assigned AFTER Init; the key resolves lazily on
-        // the first pre-update.
-        sFlowerKey[actor] = 0;
+        uint64_t key = FlowerPosKey(actor);
+        sFlowerKey[actor] = key;
+        sFlowers[key] = actor;
         sFlowerScale[actor] = bombf->flowerBombScale;
     } else if (actor->params == BOMBFLOWER_BODY && !sSpawningReplica) {
         BodyState st;
@@ -199,15 +209,6 @@ static void OnBombfPreUpdate(Actor* actor, bool* should) {
     // Local FLOWER: a 1.0 -> <1.0 scale edge means the bomb was just taken.
     auto scale = sFlowerScale.find(actor);
     if (scale != sFlowerScale.end()) {
-        auto fk = sFlowerKey.find(actor);
-        if (fk != sFlowerKey.end() && fk->second == 0) {
-            int16_t listIndex = GetActorListIndex(actor);
-            if (listIndex >= 0) {
-                fk->second =
-                    EnemySync::PackKey(actor->room, (uint16_t)listIndex, actor->id, (uint16_t)actor->params);
-                sFlowers[fk->second] = actor;
-            }
-        }
         float current = ((EnBombf*)actor)->flowerBombScale;
         if (scale->second >= 1.0f && current < 1.0f) {
             AnnouncePluck(actor);

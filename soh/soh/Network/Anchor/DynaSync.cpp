@@ -3,7 +3,6 @@
 #include "EnemySync.h" // PackKey, authority election, ESYNC_LOG
 #include "JsonConversions.hpp"
 #include "soh/cvar_prefixes.h"
-#include "soh/ObjectExtension/ActorListIndex.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
 #include <cmath>
@@ -137,44 +136,38 @@ static void Reset() {
     sRemoteClaims.clear();
 }
 
-// OnDynaPolySetBgActor: fires from DynaPoly_SetBgActor (z_bgcheck.c) during the
-// actor's own Init, so ActorListIndex is already assigned for scene-placed
-// actors (set in the setup spawn loop, before Init runs via Actor_SpawnEntry).
+// Identity = quantized spawn position + actor id, computed at Init before the
+// actor ever moves. NOT ActorListIndex: the same scene loads different actor
+// lists per setup layer (age, time of day), so the same platform can sit at a
+// different index on each client (seen live: Kakariko windmill sails, index 6
+// on one side, 5 on the other). Spawn positions are identical everywhere.
+static uint64_t PosKey(const Actor* actor) {
+    int16_t qx = (int16_t)lroundf(actor->world.pos.x);
+    int16_t qy = (int16_t)lroundf(actor->world.pos.y);
+    int16_t qz = (int16_t)lroundf(actor->world.pos.z);
+    return ((uint64_t)(uint16_t)qx << 48) | ((uint64_t)(uint16_t)qy << 32) | ((uint64_t)(uint16_t)qz << 16) |
+           (uint16_t)actor->id;
+}
+
+// Fires from DynaPoly_SetBgActor (z_bgcheck.c) during the actor's own Init
+// (or from OnActorInit for whitelisted spinners with no DynaPoly).
 static void OnDynaRegistered(Actor* actor) {
     if (!SyncEnabled() || sTracked.contains(actor) || (!IsSyncedDynaActor(actor) && !IsClaimableDynaActor(actor))) {
         return;
     }
 
-    // ActorListIndex is assigned AFTER Init returns (z_actor.c spawn loop) and
-    // this hook fires from within Init — the key is resolved lazily on the
-    // first tick/pre-update (key == 0 = pending).
     TrackedDyna st;
+    st.key = PosKey(actor);
     st.claimable = IsClaimableDynaActor(actor);
     st.prevPos = actor->world.pos;
     st.hadUncullFlag = (actor->flags & ACTOR_FLAG_UPDATE_CULLING_DISABLED) != 0;
     sTracked[actor] = st;
+    ESYNC_LOG("[DynaSync] tracked id={} params={:#x} key={:#x}", actor->id, (uint16_t)actor->params, st.key);
 
     // The update-culling gate in Actor_UpdateAll sits BEFORE the
     // ShouldActorUpdate hook: the authority needs the AI running while its
     // player is far, and the mirror needs the hook firing to apply the stream.
     actor->flags |= ACTOR_FLAG_UPDATE_CULLING_DISABLED;
-}
-
-// Returns false when the actor turns out to be dynamically spawned (no
-// deterministic identity): the entry is erased, `st` must not be touched.
-static bool EnsureKey(Actor* actor, TrackedDyna& st) {
-    if (st.key != 0) {
-        return true;
-    }
-    int16_t listIndex = GetActorListIndex(actor);
-    if (listIndex < 0) {
-        sTracked.erase(actor);
-        return false;
-    }
-    st.key = EnemySync::PackKey(actor->room, (uint16_t)listIndex, actor->id, (uint16_t)actor->params);
-    ESYNC_LOG("[DynaSync] tracked id={} params={:#x} room={} listIndex={} key={:#x}", actor->id,
-              (uint16_t)actor->params, actor->room, listIndex, st.key);
-    return true;
 }
 
 // Mirror step, in the actor's own update slot. Fresh stream => apply + suppress;
@@ -192,9 +185,6 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
         return;
     }
     actor->flags |= ACTOR_FLAG_UPDATE_CULLING_DISABLED;
-    if (!EnsureKey(actor, st)) {
-        return; // dynamic spawn: entry erased
-    }
 
     if (st.claimable) {
         // Claim upkeep: a nonzero push force means OUR player is moving it;
@@ -292,9 +282,6 @@ void PerFrameTick() {
     nlohmann::json entries = nlohmann::json::array();
 
     for (auto& [actor, st] : sTracked) {
-        if (st.key == 0) {
-            continue; // resolved by the pre-update hook; skip until then
-        }
         bool localClaim = st.claimable && Fresh(st.localClaimTick, CLAIM_TICKS);
         bool remoteClaim = false;
         if (st.claimable) {
