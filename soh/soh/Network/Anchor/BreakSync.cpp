@@ -169,11 +169,16 @@ static void OnKanbanPreUpdate(Actor* actor) {
 // restored right after the sign's update (OnActorUpdate window only).
 static bool sKanbanAnimOverride = false;
 static s8 sKanbanSavedAnim = 0;
+static Actor* sKanbanOverrideTarget = NULL;
 
 static void OnKanbanPostUpdate(Actor* actor) {
-    if (sKanbanAnimOverride && gPlayState != NULL) {
+    // Restore ONLY once the targeted sign ran its update: any other EnKanban
+    // (flying pieces, other posts) updating first must not undo the override,
+    // or the target reads the local player's real last slash instead.
+    if (sKanbanAnimOverride && actor == sKanbanOverrideTarget && gPlayState != NULL) {
         GET_PLAYER(gPlayState)->meleeWeaponAnimation = sKanbanSavedAnim;
         sKanbanAnimOverride = false;
+        sKanbanOverrideTarget = NULL;
     }
 }
 
@@ -234,6 +239,7 @@ void Ingest(const nlohmann::json& payload) {
                 }
                 sKanbanSavedAnim = localPlayer->meleeWeaponAnimation;
                 sKanbanAnimOverride = true;
+                sKanbanOverrideTarget = actor;
                 localPlayer->meleeWeaponAnimation = anim;
             }
             sign->collider.info.acHitInfo = &sSpoofHitInfo;
