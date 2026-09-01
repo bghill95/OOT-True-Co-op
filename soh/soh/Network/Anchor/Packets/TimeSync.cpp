@@ -30,6 +30,7 @@ static constexpr int16_t APPLY_THRESHOLD = 0x100; // ~1.3 in-game minutes: don't
 
 static uint64_t sTick = 0;
 static bool sWasSpeedingTime = false;
+static bool sRemoteFastForward = false; // our ride was remote-triggered: don't re-broadcast the landing
 
 static bool IsTimeAuthority() {
     for (auto& [id, client] : Anchor::Instance->clients) {
@@ -81,6 +82,21 @@ void Anchor::HandlePacket_TimeSync(nlohmann::json payload) {
 
     uint16_t t = payload["t"].get<uint16_t>();
     int16_t diff = (int16_t)(t - gSaveContext.dayTime); // u16 wrap-aware
+
+    // A peer's Sun's Song: a hard dayTime snap skips every day/night transition
+    // trigger — the sky, ambience and spawns stay stale until the next scene
+    // load (looked like "sync didn't happen"). Outdoors, ride the exact same
+    // engine fast-forward the singer rode (z_parameter picks it up from
+    // SUNSSONG_START and lands on the same dawn/dusk boundary). Indoors the sky
+    // is not visible: silent snap below, and the next scene load repaints.
+    if (force && gPlayState->envCtx.timeIncrement != 0 && gSaveContext.sunsSongState == SUNSSONG_INACTIVE &&
+        (diff > APPLY_THRESHOLD || diff < -APPLY_THRESHOLD)) {
+        gSaveContext.sunsSongState = SUNSSONG_START;
+        sRemoteFastForward = true;
+        ESYNC_LOG("[TimeSync] remote suns song: riding local fast-forward");
+        return;
+    }
+
     if (force || diff > APPLY_THRESHOLD || diff < -APPLY_THRESHOLD) {
         gSaveContext.dayTime = t;
         gSaveContext.totalDays = payload.value("d", gSaveContext.totalDays);
@@ -97,9 +113,13 @@ void TimeSyncTick() {
 
     bool speeding = gSaveContext.sunsSongState == SUNSSONG_SPEED_TIME;
     if (sWasSpeedingTime && !speeding) {
-        // Our Sun's Song fast-forward just landed: everyone adopts it.
-        Anchor::Instance->SendPacket_TimeSync(true);
-        ESYNC_LOG("[TimeSync] suns song landed, forcing t={:#x}", (uint16_t)gSaveContext.dayTime);
+        if (sRemoteFastForward) {
+            sRemoteFastForward = false; // a peer's song we replayed: no echo
+        } else {
+            // Our Sun's Song fast-forward just landed: everyone adopts it.
+            Anchor::Instance->SendPacket_TimeSync(true);
+            ESYNC_LOG("[TimeSync] suns song landed, forcing t={:#x}", (uint16_t)gSaveContext.dayTime);
+        }
     }
     sWasSpeedingTime = speeding;
 
