@@ -4,6 +4,7 @@
 #include "BombfSync.h"
 #include "BombSync.h"
 #include "BreakSync.h"
+#include "FxSync.h"
 #include "CarrySync.h"
 #include "PuppetFairy.h"
 #include "CoopWarp.h"
@@ -435,6 +436,9 @@ void Anchor::RegisterHooks() {
 
     // Breakable scenery: pots, crates, grass, rocks, beehives, tree bonks (see BreakSync.cpp)
     BreakSync::RegisterHooks(isConnected);
+
+    // Magic-spell replicas + timed-torch lighting (see FxSync.cpp)
+    FxSync::RegisterHooks(isConnected);
 
     // Scene-placed carryable props: rocks, pots (see CarrySync.cpp)
     CarrySync::RegisterHooks(isConnected);

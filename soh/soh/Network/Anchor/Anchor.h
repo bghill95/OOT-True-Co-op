@@ -57,6 +57,7 @@ typedef struct {
     u8 modelGroup;
     s8 invincibilityTimer;
     s16 unk_862;
+    s16 dekuStickFlame; // player->unk_860: burning deku stick timer
     s8 actionVar1;
 
     // Ptr to the dummy player
@@ -117,6 +118,7 @@ class Anchor : public Network {
     void HandlePacket_EnemySpawn(nlohmann::json payload);
     void HandlePacket_EnemyState(nlohmann::json payload);
     void HandlePacket_EntranceDiscovered(nlohmann::json payload);
+    void HandlePacket_FxEvent(nlohmann::json payload);
     void HandlePacket_GameComplete(nlohmann::json payload);
     void HandlePacket_GiveItem(nlohmann::json payload);
     void HandlePacket_PlayerLifeState(nlohmann::json payload);
@@ -165,6 +167,7 @@ class Anchor : public Network {
     inline static const std::string ENEMY_SPAWN = "ENEMY_SPAWN";
     inline static const std::string ENEMY_STATE = "ENEMY_STATE";
     inline static const std::string ENTRANCE_DISCOVERED = "ENTRANCE_DISCOVERED";
+    inline static const std::string FX_EVENT = "FX_EVENT";
     inline static const std::string GAME_COMPLETE = "GAME_COMPLETE";
     inline static const std::string GIVE_ITEM = "GIVE_ITEM";
     inline static const std::string HANDSHAKE = "HANDSHAKE";
@@ -210,6 +213,7 @@ class Anchor : public Network {
     void SendPacket_BombfEvent(nlohmann::json& event);
     void SendPacket_BombEvent(nlohmann::json& event);
     void SendPacket_BreakEvent(nlohmann::json& event);
+    void SendPacket_FxEvent(nlohmann::json& event);
     void SendPacket_CarryEvent(nlohmann::json& event);
     void SendPacket_ClearTeamState(std::string teamId);
     void SendPacket_CutsceneSync(u8 kind, s16 sceneNum, s32 entranceIndex, s32 cutsceneIndex, s16 csFlag);

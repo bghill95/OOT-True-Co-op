@@ -136,6 +136,26 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
     player->unk_862 = client.unk_862;
     player->av1.actionVar1 = client.actionVar1;
 
+    // Burning deku stick: on the real player the flame is an effect spawned
+    // every UPDATE frame at the weapon tip (Player_UpdateBurningDekuStick) —
+    // the puppet never runs that, so its lit stick looked cold. The tip is
+    // valid here: the puppet's full player draw filled meleeWeaponInfo last
+    // frame. Constants match z_player.c's D_808547A4..C0.
+    if (client.dekuStickFlame != 0 && client.heldItemAction == PLAYER_IA_DEKU_STICK) {
+        static Vec3f flameVel = { 0.0f, 0.5f, 0.0f };
+        static Vec3f flameAccel = { 0.0f, 0.5f, 0.0f };
+        static Color_RGBA8 flamePrim = { 255, 255, 100, 255 };
+        static Color_RGBA8 flameEnv = { 255, 50, 0, 0 };
+        f32 intensity = 1.0f;
+        if (client.dekuStickFlame > 200) {
+            intensity = (210 - client.dekuStickFlame) / 10.0f;
+        } else if (client.dekuStickFlame < 20) {
+            intensity = client.dekuStickFlame / 20.0f;
+        }
+        func_8002836C(play, &player->meleeWeaponInfo[0].tip, &flameVel, &flameAccel, &flamePrim, &flameEnv,
+                      intensity * 200.0f, 0, 8);
+    }
+
     if (player->modelGroup != client.modelGroup) {
         // Hack to account for usage of gSaveContext
         s32 originalAge = gSaveContext.linkAge;

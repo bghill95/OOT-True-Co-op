@@ -141,6 +141,8 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_EnemyState(payload);
         else if (packetType == ENTRANCE_DISCOVERED)
             HandlePacket_EntranceDiscovered(payload);
+        else if (packetType == FX_EVENT)
+            HandlePacket_FxEvent(payload);
         else if (packetType == GAME_COMPLETE)
             HandlePacket_GameComplete(payload);
         else if (packetType == GIVE_ITEM)
