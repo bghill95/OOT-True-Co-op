@@ -243,8 +243,14 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
     // claim takeover recomputes pos from it. Reconstruct it from the streamed
     // displacement projected on the facing axis.
     if (actor->id == ACTOR_BG_HAKA) {
-        actor->minVelocityY = (actor->world.pos.x - actor->home.pos.x) * Math_SinS(actor->world.rot.y) +
-                              (actor->world.pos.z - actor->home.pos.z) * Math_CosS(actor->world.rot.y);
+        // The pull axis is shape.rot.y FLIPPED: Bg_Haka sets world.rot.y =
+        // shape.rot.y + 0x8000 when a pull starts — which never happens on the
+        // mirror, so world.rot.y is not usable here. Set it too, so a claim
+        // takeover by our player continues the pull instead of teleporting.
+        int16_t pullYaw = (int16_t)(actor->shape.rot.y + 0x8000);
+        actor->world.rot.y = pullYaw;
+        actor->minVelocityY = (actor->world.pos.x - actor->home.pos.x) * Math_SinS(pullYaw) +
+                              (actor->world.pos.z - actor->home.pos.z) * Math_CosS(pullYaw);
     }
     st.suppressed = true;
     // Claimables keep their update RUNNING while mirroring: the block's own
