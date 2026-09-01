@@ -721,9 +721,36 @@ static void SubmitColliders(Actor* actor, TrackedState& st, RemoteEnemyState& r)
 }
 
 static void ApplyPose(Actor* actor, TrackedState& st, RemoteEnemyState& r) {
+    Vec3f prevPos = actor->world.pos;
     actor->world.pos = r.pos;
     actor->shape.rot = r.rot;
     actor->focus.pos = r.focusPos;
+
+    // Drag the hitboxes along IMMEDIATELY: cylinders re-center from world.pos
+    // and JntSph spheres only refresh during PostLimbDraw — one frame late, on
+    // top of network delay. On a fast flyer (Keese) that leaves the hitbox
+    // trailing dozens of units behind the sprite, and thin player projectiles
+    // (slingshot seeds) whiff through where the enemy visibly is.
+    Vec3f d = { r.pos.x - prevPos.x, r.pos.y - prevPos.y, r.pos.z - prevPos.z };
+    auto drag = [&](Collider* col) {
+        if (col == nullptr || col->actor != actor) {
+            return;
+        }
+        if (col->shape == COLSHAPE_CYLINDER) {
+            Collider_UpdateCylinder(actor, (ColliderCylinder*)col);
+        } else if (col->shape == COLSHAPE_JNTSPH) {
+            ColliderJntSph* js = (ColliderJntSph*)col;
+            for (int32_t i = 0; i < js->count; i++) {
+                js->elements[i].dim.worldSphere.center.x += (int16_t)d.x;
+                js->elements[i].dim.worldSphere.center.y += (int16_t)d.y;
+                js->elements[i].dim.worldSphere.center.z += (int16_t)d.z;
+            }
+        }
+    };
+    for (Collider* col : st.colliders) {
+        drag(col);
+    }
+    drag(st.acCollider);
     if (r.hasScale) {
         actor->scale = r.scale;
     }
