@@ -56,6 +56,9 @@ static bool IsSyncedDynaActor(const Actor* actor) {
         case ACTOR_BG_JYA_ZURERUKABE: // Spirit Temple: sliding walls (cyclic)
         case ACTOR_BG_MENKURI_KAITEN: // GTG: rotating ring platform
         case ACTOR_BG_RELAY_OBJECTS:  // Windmill: rotating center structure
+        case ACTOR_BG_SPOT01_FUSYA:   // Kakariko: windmill sails seen from outside —
+                                      // cosmetic, NO DynaPoly, so it is fed to
+                                      // OnDynaRegistered by an OnActorInit hook instead
         case ACTOR_BG_SPOT18_BASKET:  // Goron City: spinning vase
             // NOT one-shot switch-flag movers (Bg_Ddan_Kd stairs, Hamsteps, gates,
             // shutters...): Anchor's flag sync already replays those on both
@@ -227,7 +230,14 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
     actor->world.pos = rs->second.pos;
     actor->shape.rot = rs->second.rot;
     st.suppressed = true;
-    *should = false;
+    // Claimables keep their update RUNNING while mirroring: the block's own
+    // update is what offers the grab (A) to our player, so a suppressed block
+    // could never be claimed by anyone but the authority. Its idle AI can't
+    // fight the stream — the position is overwritten every frame above, and the
+    // first real push (dyna.unk_150) flips it to a local claim before this.
+    if (!st.claimable) {
+        *should = false;
+    }
     // DynaPoly_UpdateBgActorTransforms (end of Actor_UpdateAll) re-reads
     // world.pos/shape.rot afterwards, so the collision mesh follows.
 }
@@ -330,6 +340,11 @@ void RegisterHooks(bool isConnected) {
     COND_HOOK(OnSceneInit, isConnected, [](int16_t sceneNum) { Reset(); });
 
     COND_HOOK(OnDynaPolySetBgActor, isConnected, [](void* actor, int32_t bgId) { OnDynaRegistered((Actor*)actor); });
+
+    // Whitelisted spinners with no DynaPoly collision never reach the hook
+    // above; track them from their plain actor init.
+    COND_ID_HOOK(OnActorInit, ACTOR_BG_SPOT01_FUSYA, isConnected,
+                 [](void* actor) { OnDynaRegistered((Actor*)actor); });
 
     COND_HOOK(OnActorDestroy, isConnected, [](void* actor) { sTracked.erase((Actor*)actor); });
 

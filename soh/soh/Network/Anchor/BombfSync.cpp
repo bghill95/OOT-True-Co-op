@@ -141,8 +141,10 @@ static void ReplicaPreUpdate(Actor* actor, ReplicaState& rs, bool* should) {
         return; // free flight: local ballistics + own fuse
     }
 
-    // Carried: ride the owner's puppet overhead and tick the fuse by hand, with
-    // the update suppressed so no gravity or explosion logic runs meanwhile.
+    if (actor->params == BOMBFLOWER_EXPLOSION) {
+        rs.carried = false; // fuse ran out in hand: explosion stays in place
+        return;
+    }
     Actor* puppet = PuppetRef::Resolve(rs.ownerClientId);
     if (puppet == NULL) {
         // Owner left mid-carry: drop the replica where it stands and let its own
@@ -151,15 +153,15 @@ static void ReplicaPreUpdate(Actor* actor, ReplicaState& rs, bool* should) {
         rs.carried = false;
         return;
     }
-    if (bombf->timer <= 1) {
-        rs.carried = false; // fuse out in hand: local update explodes it in place
-        return;
-    }
-    *should = false;
-    bombf->timer--;
+    // Keep the update RUNNING while carried: fuse sparks, smoke, ignition SFX,
+    // red flash and the timer all live in EnBombf_Move. Pin the body onto the
+    // puppet instead — position rewritten every pre-update, velocity zeroed so
+    // gravity never accumulates.
     actor->world.pos = puppet->world.pos;
     actor->world.pos.y += CARRY_Y_OFFSET;
     actor->shape.rot.y = puppet->shape.rot.y;
+    actor->velocity = { 0, 0, 0 };
+    actor->speedXZ = 0.0f;
 }
 
 // Pre-update watcher for every En_Bombf (owner bodies, replicas, flowers).

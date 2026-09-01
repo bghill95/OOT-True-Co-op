@@ -15,6 +15,7 @@
 extern "C" {
 #include "variables.h"
 #include "functions.h"
+extern EffectSsInfo sEffectSsInfo; // z_effect_soft_sprite.c (no header declares it)
 #include "src/overlays/actors/ovl_Bg_Bombwall/z_bg_bombwall.h"
 #include "src/overlays/actors/ovl_Bg_Breakwall/z_bg_breakwall.h"
 #include "src/overlays/actors/ovl_Bg_Haka_Zou/z_bg_haka_zou.h"
@@ -388,6 +389,24 @@ void Anchor::RegisterHooks() {
     });
 
     // #endregion
+
+    // A dying actor can leave particle effects behind that still point at it:
+    // EffectSs entries keep a raw owner Actor* that several updates dereference
+    // with no liveness guard (EffectSsGSpk reads actor->category before its
+    // update != NULL check). Networked kills (EnemySync despawns/handoffs,
+    // Bombf/Carry replicas) free actors at moments vanilla never does, which
+    // turns that latent read-after-free into a real 0xc0000005 in
+    // EffectSs_Update. NULL is handled by every effect type; sweep is ~100 slots.
+    COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
+        if (sEffectSsInfo.table == NULL) {
+            return;
+        }
+        for (s32 i = 0; i < sEffectSsInfo.tableSize; i++) {
+            if (sEffectSsInfo.table[i].actor == (Actor*)actorRef) {
+                sEffectSsInfo.table[i].actor = NULL;
+            }
+        }
+    });
 
     // Each module below registers its NON-per-frame hooks (OnSceneInit, VBs, actor
     // hooks, ...) and does its connect/disconnect Reset. Their per-frame ticks are NOT
