@@ -4,9 +4,9 @@
 #include "PuppetRef.h"
 #include "JsonConversions.hpp"
 #include "soh/cvar_prefixes.h"
-#include "soh/ObjectExtension/ActorListIndex.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
+#include <cmath>
 #include <unordered_map>
 
 extern "C" {
@@ -63,29 +63,30 @@ static void Reset() {
     sByKey.clear();
 }
 
+// Identity = quantized spawn position + actor id. Most carryables are NOT in
+// the scene's actor list: the Death Mountain rock circles (and their kind) are
+// spawned by Obj_Mure2, so they have no ActorListIndex — but the spawner lays
+// them out at fixed offsets from its own position (no Rand_ anywhere), so the
+// same rock sits at the same coordinates on every client. Bonus: a rock that
+// breaks and respawns later gets the same key back. Computed at Init, before
+// the actor ever moves; the same binary computes identical floats.
+static uint64_t PosKey(const Actor* actor) {
+    int16_t qx = (int16_t)lroundf(actor->world.pos.x);
+    int16_t qy = (int16_t)lroundf(actor->world.pos.y);
+    int16_t qz = (int16_t)lroundf(actor->world.pos.z);
+    return ((uint64_t)(uint16_t)qx << 48) | ((uint64_t)(uint16_t)qy << 32) | ((uint64_t)(uint16_t)qz << 16) |
+           (uint16_t)actor->id;
+}
+
 static void OnCarryableInit(Actor* actor) {
     if (!SyncEnabled() || sTracked.contains(actor)) {
         return;
     }
-    // ActorListIndex is assigned AFTER Init returns (z_actor.c spawn loop), so
-    // the key is resolved lazily on the first pre-update (key == 0 = pending).
-    sTracked[actor] = CarryState{};
-}
-
-// Returns false when the actor turns out to be a dynamic spawn (no identity):
-// the tracking entry is erased and the caller must not touch `st` again.
-static bool EnsureKey(Actor* actor, CarryState& st) {
-    if (st.key != 0) {
-        return true;
-    }
-    int16_t listIndex = GetActorListIndex(actor);
-    if (listIndex < 0) {
-        sTracked.erase(actor);
-        return false;
-    }
-    st.key = EnemySync::PackKey(actor->room, (uint16_t)listIndex, actor->id, (uint16_t)actor->params);
+    CarryState st;
+    st.key = PosKey(actor);
+    sTracked[actor] = st;
     sByKey[st.key] = actor;
-    return true;
+    ESYNC_LOG("[CarrySync] tracked id={} params={:#x} key={:#x}", actor->id, (uint16_t)actor->params, st.key);
 }
 
 static void SendEvent(Actor* actor, const CarryState& st, uint8_t kind) {
@@ -111,9 +112,6 @@ static void OnCarryablePreUpdate(Actor* actor, bool* should) {
         return;
     }
     CarryState& st = it->second;
-    if (!EnsureKey(actor, st)) {
-        return; // dynamic spawn: entry erased
-    }
 
     if (st.remoteCarried) {
         // Keep the actor parented to the carrier's puppet so its own held
@@ -227,7 +225,12 @@ void RegisterHooks(bool isConnected) {
         if (it->second.mineLatch && it->second.hadParent) {
             SendEvent(a, it->second, CARRY_EV_GONE);
         }
-        sByKey.erase(it->second.key);
+        // A respawned instance (same key, Obj_Mure2 cycle) may already have
+        // re-claimed the slot; only erase the mapping if it is still ours.
+        auto bk = sByKey.find(it->second.key);
+        if (bk != sByKey.end() && bk->second == a) {
+            sByKey.erase(bk);
+        }
         sTracked.erase(it);
     });
 }
