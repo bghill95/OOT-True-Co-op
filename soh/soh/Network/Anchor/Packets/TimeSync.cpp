@@ -8,6 +8,7 @@
 extern "C" {
 #include "macros.h"
 #include "variables.h"
+#include "functions.h"
 extern PlayState* gPlayState;
 }
 
@@ -105,6 +106,15 @@ void Anchor::HandlePacket_TimeSync(nlohmann::json payload) {
         gPlayState->transitionType = toDay ? TRANS_TYPE_FADE_WHITE_FAST : TRANS_TYPE_FADE_BLACK_FAST;
         gSaveContext.nextTransitionType = toDay ? TRANS_TYPE_FADE_WHITE : TRANS_TYPE_FADE_BLACK;
         gPlayState->unk_11DE9 = 1;
+        // Second half of the vanilla recipe (z_parameter, Sun's Song in a
+        // time-frozen area): without the trigger, unk_11DE9 freezes every actor
+        // update but the transition never starts — a soft-lock.
+        gSaveContext.respawnFlag = -2;
+        gPlayState->nextEntranceIndex = gSaveContext.entranceIndex;
+        gPlayState->transitionTrigger = TRANS_TRIGGER_START;
+        func_800F6964(30); // audio fade, same as vanilla
+        gSaveContext.seqId = (u8)NA_BGM_DISABLED;
+        gSaveContext.natureAmbienceId = NATURE_ID_DISABLED;
         gSaveContext.totalDays = payload.value("d", gSaveContext.totalDays);
         gSaveContext.bgsDayCount = payload.value("bgs", gSaveContext.bgsDayCount);
         sSuppressJumpBroadcast = true; // the reload's own jump is this apply, not a new local event
