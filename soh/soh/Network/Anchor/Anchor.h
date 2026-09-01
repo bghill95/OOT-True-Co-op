@@ -127,6 +127,7 @@ class Anchor : public Network {
     void HandlePacket_SetCheckStatus(nlohmann::json payload);
     void HandlePacket_SetFlag(nlohmann::json payload);
     void HandlePacket_TeleportTo(nlohmann::json payload);
+    void HandlePacket_TimeSync(nlohmann::json payload);
     void HandlePacket_UnsetFlag(nlohmann::json payload);
     void HandlePacket_UpdateBeansCount(nlohmann::json payload);
     void HandlePacket_UpdateClientState(nlohmann::json payload);
@@ -173,6 +174,7 @@ class Anchor : public Network {
     inline static const std::string SET_CHECK_STATUS = "SET_CHECK_STATUS";
     inline static const std::string SET_FLAG = "SET_FLAG";
     inline static const std::string TELEPORT_TO = "TELEPORT_TO";
+    inline static const std::string TIME_SYNC = "TIME_SYNC";
     inline static const std::string UNSET_FLAG = "UNSET_FLAG";
     inline static const std::string UPDATE_BEANS_COUNT = "UPDATE_BEANS_COUNT";
     inline static const std::string UPDATE_CLIENT_STATE = "UPDATE_CLIENT_STATE";
@@ -228,6 +230,7 @@ class Anchor : public Network {
     void SendPacket_SetCheckStatus(RandomizerCheck rc);
     void SendPacket_SetFlag(s16 sceneNum, s16 flagType, s16 flag);
     void SendPacket_TeleportTo(u32 clientId);
+    void SendPacket_TimeSync(bool force);
     void SendPacket_UnsetFlag(s16 sceneNum, s16 flagType, s16 flag);
     void SendPacket_UpdateBeansCount();
     void SendPacket_UpdateClientState();

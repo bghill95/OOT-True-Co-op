@@ -161,6 +161,8 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_SetFlag(payload);
         else if (packetType == TELEPORT_TO)
             HandlePacket_TeleportTo(payload);
+        else if (packetType == TIME_SYNC)
+            HandlePacket_TimeSync(payload);
         else if (packetType == UNSET_FLAG)
             HandlePacket_UnsetFlag(payload);
         else if (packetType == UPDATE_BEANS_COUNT)

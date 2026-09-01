@@ -9,6 +9,7 @@
 #include "BossEntry.h"
 #include "CutsceneSync.h"
 #include "BgmSync.h"
+#include "TimeSync.h"
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
@@ -471,5 +472,6 @@ void Anchor::RegisterHooks() {
         BossEntryTick();              // reconcile boss echo-latch (Fix A)
         CutsceneSyncTick();           // reconcile cutscene pull-replay
         BgmSyncTick();                // spectate restore READS myLifeState
+        TimeSyncTick();               // world-clock broadcast/follow (see Packets/TimeSync.cpp)
     });
 }
