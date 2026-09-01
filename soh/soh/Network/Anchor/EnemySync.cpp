@@ -859,6 +859,14 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
     }
     RemoteEnemyState& r = rs->second;
 
+    // Deferred-init enemies (EnPoh and friends) spend their first update(s)
+    // waiting for their object bank: only then do they build their skeleton and
+    // assign actor->draw. Suppressing before that leaves an invisible ghost
+    // forever — let the local update run until the actor can actually draw.
+    if (actor->draw == NULL) {
+        return;
+    }
+
     const ActorSyncAdapter* adapter = GetAdapter(actor->id);
 
     // Phase edges fire before the ShouldMirror gate: the defeat edge arrives with

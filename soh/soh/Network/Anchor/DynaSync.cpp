@@ -10,6 +10,7 @@
 
 extern "C" {
 #include "variables.h"
+#include "functions.h"
 extern PlayState* gPlayState;
 }
 
@@ -237,6 +238,14 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
 
     actor->world.pos = rs->second.pos;
     actor->shape.rot = rs->second.rot;
+    // Bg_Haka repurposes minVelocityY as its pull distance: the draw offsets the
+    // dirt patch back by it (else the dirt slides along with the stone) and a
+    // claim takeover recomputes pos from it. Reconstruct it from the streamed
+    // displacement projected on the facing axis.
+    if (actor->id == ACTOR_BG_HAKA) {
+        actor->minVelocityY = (actor->world.pos.x - actor->home.pos.x) * Math_SinS(actor->world.rot.y) +
+                              (actor->world.pos.z - actor->home.pos.z) * Math_CosS(actor->world.rot.y);
+    }
     st.suppressed = true;
     // Claimables keep their update RUNNING while mirroring: the block's own
     // update is what offers the grab (A) to our player, so a suppressed block
