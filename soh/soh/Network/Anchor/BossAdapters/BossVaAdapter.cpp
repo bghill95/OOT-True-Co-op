@@ -131,11 +131,16 @@ static void BossVaSync_SerializeExtras(Actor* actor, nlohmann::json& x) {
         x["cr"] = va->colliderBody.dim.radius;
         x["ch"] = va->colliderBody.dim.height;
         x["cdf"] = va->colliderBody.info.bumper.dmgFlags;
+        x["t"] = va->timer; // phase-4 charge state drives the attack sparks
+        x["cft"] = va->actor.colorFilterTimer;
+        x["cfp"] = va->actor.colorFilterParams;
     } else if (IsSupport(params)) {
         x["oc"] = va->onCeiling;
         x["hrx"] = va->headRot.x;
         x["t"] = va->timer;
         x["t2"] = va->timer2;
+        x["cft"] = va->actor.colorFilterTimer;
+        x["cfp"] = va->actor.colorFilterParams;
     } else if (IsZapper(params)) {
         x["r4y"] = va->unk_1E6;
         x["r4z"] = va->unk_1E4;
@@ -146,6 +151,8 @@ static void BossVaSync_SerializeExtras(Actor* actor, nlohmann::json& x) {
         x["tgt"] = { va->unk_1D8.x, va->unk_1D8.y, va->unk_1D8.z };
         x["t2"] = va->timer2;
         x["b"] = va->burst;
+        x["cft"] = va->actor.colorFilterTimer;
+        x["cfp"] = va->actor.colorFilterParams;
     } else if (IsBari(params)) {
         x["lf"] = va->unk_1F0;
         x["sx"] = va->unk_1D8.x;
@@ -184,6 +191,9 @@ static void BossVaSync_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
             if (x.contains("cr")) va->colliderBody.dim.radius = x["cr"].get<int16_t>();
             if (x.contains("ch")) va->colliderBody.dim.height = x["ch"].get<int16_t>();
             if (x.contains("cdf")) va->colliderBody.info.bumper.dmgFlags = x["cdf"].get<uint32_t>();
+            if (x.contains("t")) va->timer = x["t"].get<int32_t>();
+            if (x.contains("cft")) va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
+            if (x.contains("cfp")) va->actor.colorFilterParams = x["cfp"].get<int16_t>();
             // The shared 400-effect pool is stepped by the body's update —
             // keep it decaying while the body is suppressed.
             if (gPlayState != NULL) {
@@ -194,6 +204,8 @@ static void BossVaSync_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
             if (x.contains("hrx")) va->headRot.x = x["hrx"].get<int16_t>();
             if (x.contains("t")) va->timer = x["t"].get<int32_t>();
             if (x.contains("t2")) va->timer2 = x["t2"].get<int16_t>();
+            if (x.contains("cft")) va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
+            if (x.contains("cfp")) va->actor.colorFilterParams = x["cfp"].get<int16_t>();
         } else if (IsZapper(params)) {
             if (x.contains("r4y")) va->unk_1E6 = x["r4y"].get<int16_t>();
             if (x.contains("r4z")) va->unk_1E4 = x["r4z"].get<int16_t>();
@@ -208,6 +220,8 @@ static void BossVaSync_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
             }
             if (x.contains("t2")) va->timer2 = x["t2"].get<int16_t>();
             if (x.contains("b")) va->burst = x["b"].get<uint8_t>();
+            if (x.contains("cft")) va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
+            if (x.contains("cfp")) va->actor.colorFilterParams = x["cfp"].get<int16_t>();
         } else if (IsBari(params)) {
             if (x.contains("lf")) va->unk_1F0 = x["lf"].get<int16_t>();
             if (x.contains("sx")) va->unk_1D8.x = x["sx"].get<float>();

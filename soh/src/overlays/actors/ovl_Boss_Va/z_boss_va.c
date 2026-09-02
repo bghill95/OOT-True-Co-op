@@ -4108,7 +4108,12 @@ void BossVa_CoopMirrorAmbientFx(BossVa* this, PlayState* play) {
             }
             func_800F436C(&this->actor.projectedPos, NA_SE_EN_BALINADE_LEVEL - SFX_FLAG, 1.0f);
             if (sFightPhase >= PHASE_4) {
-                if ((play->gameplayFrames % 2) == 0) {
+                if (this->timer != 0) {
+                    // charge/attack run: wide lightning burst (BodyPhase4)
+                    if ((play->gameplayFrames % 4) == 0) {
+                        BossVa_Spark(play, this, 2, 0x64, 220.0f, 5.0f, SPARK_BODY, 12.0f, true);
+                    }
+                } else if ((play->gameplayFrames % 2) == 0) {
                     BossVa_Spark(play, this, 2, 125, 40.0f, 10.0f, SPARK_BODY, 10.0f, false);
                     BossVa_Spark(play, this, 1, 100, 15.0f, 10.0f, SPARK_BARI, 11.0f, true);
                 }
