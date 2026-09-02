@@ -4073,3 +4073,58 @@ u8* BossVa_CoopKillBari(void) {
 u8* BossVa_CoopBodyBari(void) {
     return sBodyBari;
 }
+
+// Co-op mirror ambient FX: every visible arc/spark is pool-spawned by the
+// actionFuncs, which a mirrored (suppressed) part never runs — its draw only
+// refreshes the effectPos anchors. Called each applied frame by the adapter,
+// this replays the per-frame ambient spawns from streamed state (timer/timer2/
+// burst/unk_1F0/colorFilterTimer + sFightPhase). Attack-specific effects
+// (spark balls, blood, tumors) stay authority-only.
+void BossVa_CoopMirrorAmbientFx(BossVa* this, PlayState* play) {
+    switch (this->actor.params) {
+        case BOSSVA_BODY:
+            func_800F436C(&this->actor.projectedPos, NA_SE_EN_BALINADE_LEVEL - SFX_FLAG, 1.0f);
+            if (sFightPhase >= PHASE_4) {
+                if ((play->gameplayFrames % 2) == 0) {
+                    BossVa_Spark(play, this, 2, 125, 40.0f, 10.0f, SPARK_BODY, 10.0f, false);
+                    BossVa_Spark(play, this, 1, 100, 15.0f, 10.0f, SPARK_BARI, 11.0f, true);
+                }
+            } else if ((play->gameplayFrames % 4) == 0) {
+                BossVa_Spark(play, this, 1, 100, 50.0f, 10.0f, SPARK_BODY, 10.0f, false);
+            }
+            break;
+        case BOSSVA_SUPPORT_1:
+        case BOSSVA_SUPPORT_2:
+        case BOSSVA_SUPPORT_3:
+            if ((this->timer % 2) == 0) {
+                BossVa_Spark(play, this, 1, 100, 5.0f, 0.0f, SPARK_BODY, ((this->timer & 0x20) >> 5) + 1, true);
+            }
+            break;
+        case BOSSVA_ZAPPER_1:
+        case BOSSVA_ZAPPER_2:
+        case BOSSVA_ZAPPER_3:
+            if (this->burst) {
+                if (this->timer2 >= 32) {
+                    BossVa_Spark(play, this, 2, 110, 15.0f, 15.0f, SPARK_BLAST, 5.0f, true);
+                    BossVa_Spark(play, this, 2, 110, 15.0f, 15.0f, SPARK_BLAST, 6.0f, true);
+                    BossVa_Spark(play, this, 2, 110, 15.0f, 15.0f, SPARK_BLAST, 7.0f, true);
+                } else {
+                    BossVa_Spark(play, this, 2, 50, 15.0f, 0.0f, SPARK_BODY, (this->timer2 >> 3) + 1, true);
+                }
+            }
+            break;
+        case BOSSVA_STUMP_1:
+        case BOSSVA_STUMP_2:
+        case BOSSVA_STUMP_3:
+        case BOSSVA_DOOR:
+            break;
+        default: // Bari: orbit sparks + lightning tether to the body
+            if ((play->gameplayFrames % 4) == 0) {
+                BossVa_Spark(play, this, 1, this->unk_1F0, 25.0f, 20.0f, SPARK_BARI, 2.0f, true);
+            }
+            if (this->actor.colorFilterTimer == 0) {
+                BossVa_Spark(play, this, 1, 125, 15.0f, 7.0f, SPARK_TETHER, 1.0f, true);
+            }
+            break;
+    }
+}

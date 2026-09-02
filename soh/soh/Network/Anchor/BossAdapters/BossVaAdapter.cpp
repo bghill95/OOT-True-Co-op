@@ -15,6 +15,7 @@ void BossVa_SetupBodyDeath(BossVa* boss, PlayState* play);
 void BossVa_SetupSupportCut(BossVa* boss, PlayState* play);
 void BossVa_KillBari(BossVa* boss, PlayState* play);
 void BossVa_UpdateEffects(PlayState* play);
+void BossVa_CoopMirrorAmbientFx(BossVa* boss, PlayState* play);
 // Co-op accessors added at the bottom of z_boss_va.c.
 s8* BossVa_CoopCsState(void);
 u8* BossVa_CoopFightPhase(void);
@@ -144,7 +145,9 @@ static void BossVaSync_SerializeExtras(Actor* actor, nlohmann::json& x) {
         x["r7z"] = va->unk_1F0;
         x["tgt"] = { va->unk_1D8.x, va->unk_1D8.y, va->unk_1D8.z };
         x["t2"] = va->timer2;
+        x["b"] = va->burst;
     } else if (IsBari(params)) {
+        x["lf"] = va->unk_1F0;
         x["sx"] = va->unk_1D8.x;
         x["sy"] = va->unk_1D8.y;
         x["t2"] = va->timer2;
@@ -204,7 +207,9 @@ static void BossVaSync_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
                 va->unk_1D8.z = x["tgt"][2].get<float>();
             }
             if (x.contains("t2")) va->timer2 = x["t2"].get<int16_t>();
+            if (x.contains("b")) va->burst = x["b"].get<uint8_t>();
         } else if (IsBari(params)) {
+            if (x.contains("lf")) va->unk_1F0 = x["lf"].get<int16_t>();
             if (x.contains("sx")) va->unk_1D8.x = x["sx"].get<float>();
             if (x.contains("sy")) va->unk_1D8.y = x["sy"].get<float>();
             if (x.contains("t2")) va->timer2 = x["t2"].get<int16_t>();
@@ -216,6 +221,18 @@ static void BossVaSync_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
         }
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[BossVaSync] extras parse error: {}", ex.what());
+    }
+
+    // Mirror-side ambient FX (arcs/sparks/tether are actionFunc-spawned).
+    if (!IsLocalOnly(params) && gPlayState != NULL) {
+        BossVa_CoopMirrorAmbientFx(va, gPlayState);
+    }
+
+    // Validation heartbeat: one line per second on the mirror.
+    if (params == BOSSVA_BODY && gPlayState != NULL && (gPlayState->gameplayFrames % 20) == 0) {
+        ESYNC_LOG("[BossVaSync] mirror: cs={} fp={} hp4={} glow={} yo={:.0f}", (int)*BossVa_CoopCsState(),
+                  (int)*BossVa_CoopFightPhase(), (int)*BossVa_CoopPhase4HP(), (int)va->bodyGlow,
+                  va->actor.shape.yOffset);
     }
 }
 
