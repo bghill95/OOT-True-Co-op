@@ -321,6 +321,13 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play) {
         isPuppetOwned = 1;
     }
 
+    if (isPuppetOwned && ((play->gameplayFrames % 20) == 0)) {
+        void FxSync_HookDbg(s32 drawOk, s32 rhType, f32 hx, f32 hy, f32 hz);
+        FxSync_HookDbg(player->actor.draw != NULL, player->rightHandType,
+                       player->bodyPartsPos[PLAYER_BODYPART_R_HAND].x, player->bodyPartsPos[PLAYER_BODYPART_R_HAND].y,
+                       player->bodyPartsPos[PLAYER_BODYPART_R_HAND].z);
+    }
+
     if ((player->actor.draw != NULL) &&
         (isPuppetOwned || (player->rightHandType == PLAYER_MODELTYPE_RH_HOOKSHOT))) {
         OPEN_DISPS(play->state.gfxCtx);

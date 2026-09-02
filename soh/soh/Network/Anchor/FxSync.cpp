@@ -225,6 +225,16 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
             ar->timer = s.timer;
             ar->hitFlags = s.hitFlags;
             ar->collider.base.atFlags &= ~AT_ON; // the draw submits the AT quad itself
+            // Elemental flame/frost/light child: vanilla spawns it from EnArrow's
+            // update (suppressed here), so do it ourselves — this also lights the
+            // NOCKED arrow, which the update wouldn't reach until release.
+            if (r.actor->child == NULL && s.params >= ARROW_FIRE && s.params <= ARROW_LIGHT) {
+                int16_t childId = (s.params == ARROW_FIRE)  ? ACTOR_ARROW_FIRE
+                                  : (s.params == ARROW_ICE) ? ACTOR_ARROW_ICE
+                                                            : ACTOR_ARROW_LIGHT;
+                Actor_SpawnAsChild(&gPlayState->actorCtx, r.actor, gPlayState, childId, s.pos.x, s.pos.y, s.pos.z, 0,
+                                   0, 0, 0);
+            }
             if (r.actor->child != NULL) {
                 r.actor->child->destroy = NULL; // ArrowFire/Light_Destroy calls Magic_Reset (local magic!)
             }
@@ -264,6 +274,10 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
         Actor_Kill(pp.hookReplica);
         pp.hookReplica = NULL;
     }
+}
+
+extern "C" void FxSync_HookDbg(int32_t drawOk, int32_t rhType, float hx, float hy, float hz) {
+    ESYNC_LOG("[HookDbg] puppet drawOk={} rhType={} hand=({:.0f},{:.0f},{:.0f})", drawOk, rhType, hx, hy, hz);
 }
 
 extern "C" void FxSync_OnHammerShockwave(Vec3f* pos) {
