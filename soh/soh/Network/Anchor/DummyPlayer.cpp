@@ -1,5 +1,6 @@
 #include "Anchor.h"
 #include "soh/Network/Anchor/EnemySync.h"
+#include "soh/Network/Anchor/FxSync.h"
 #include "soh/Enhancements/nametag.h"
 #include "soh/frame_interpolation.h"
 
@@ -156,6 +157,9 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
         func_8002836C(play, &player->meleeWeaponInfo[0].tip, &flameVel, &flameAccel, &flamePrim, &flameEnv,
                       intensity * 200.0f, 0, 8);
     }
+
+    // Boomerang in flight: the real EN_BOOM exists only on the thrower's game.
+    FxSync::TickPuppetBoomerang(client.clientId, client.boomActive, client.boomPos, client.boomYaw);
 
     if (player->modelGroup != client.modelGroup) {
         // Hack to account for usage of gSaveContext

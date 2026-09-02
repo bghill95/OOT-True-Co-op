@@ -56,10 +56,42 @@ bool SyncEnabled() {
     return CVarGetInteger(CVAR_REMOTE_ANCHOR("FxSync"), 1);
 }
 
+// --- Puppet boomerang -------------------------------------------------------
+// One replica per remote client, spawned while their stream says "in flight"
+// and killed when it stops (catch, drop, scene change). The pin happens here;
+// suppression happens in the ShouldActorUpdate hook below.
+
+static std::unordered_map<uint32_t, Actor*> sBoomReplicas;
+
+void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw) {
+    if (gPlayState == NULL || !SyncEnabled()) {
+        return;
+    }
+    Actor*& boom = sBoomReplicas[clientId];
+    if (boom != NULL && boom->update == NULL) {
+        boom = NULL; // reaped elsewhere (scene teardown)
+    }
+    if (active) {
+        if (boom == NULL) {
+            boom = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_BOOM, pos.x, pos.y, pos.z, 0, yaw, 0, 0,
+                               false);
+            ESYNC_LOG("[FxSync] puppet boomerang spawn client={} ok={}", clientId, boom != NULL);
+        }
+        if (boom != NULL) {
+            boom->world.pos = pos;
+            boom->shape.rot.y = yaw; // the real spin streams through the thrower
+        }
+    } else if (boom != NULL) {
+        Actor_Kill(boom);
+        boom = NULL;
+    }
+}
+
 static void Reset() {
     sSpellReplicas.clear();
     sTorches.clear();
     sTorchByKey.clear();
+    sBoomReplicas.clear();
     sSpawningReplica = false;
 }
 
@@ -192,6 +224,15 @@ void RegisterHooks(bool isConnected) {
     COND_ID_HOOK(OnActorUpdate, ACTOR_MAGIC_WIND, isConnected, [](void* actor) { OnSpellPostUpdate((Actor*)actor); });
     COND_ID_HOOK(OnActorUpdate, ACTOR_MAGIC_DARK, isConnected, [](void* actor) { OnSpellPostUpdate((Actor*)actor); });
 
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_BOOM, isConnected, [](void* actor, bool* should) {
+        for (auto& [cid, boom] : sBoomReplicas) {
+            if (boom == (Actor*)actor) {
+                *should = false; // pinned from the stream; never fly or collide
+                return;
+            }
+        }
+    });
+
     COND_ID_HOOK(OnActorInit, ACTOR_OBJ_SYOKUDAI, isConnected, [](void* actor) { OnTorchInit((Actor*)actor); });
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_OBJ_SYOKUDAI, isConnected,
                  [](void* actor, bool* should) { OnTorchPreUpdate((Actor*)actor); });
@@ -199,6 +240,9 @@ void RegisterHooks(bool isConnected) {
     COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
         Actor* a = (Actor*)actorRef;
         sSpellReplicas.erase(a);
+        for (auto it = sBoomReplicas.begin(); it != sBoomReplicas.end();) {
+            it = (it->second == a) ? sBoomReplicas.erase(it) : std::next(it);
+        }
         auto it = sTorches.find(a);
         if (it != sTorches.end()) {
             auto bk = sTorchByKey.find(it->second.key);

@@ -79,6 +79,11 @@ void Anchor::SendPacket_PlayerUpdate() {
     payload["stickFlame"] = player->unk_860;
     payload["stickLen"] = player->unk_85C;
     payload["actionVar1"] = player->av1.actionVar1;
+    if ((player->stateFlags1 & PLAYER_STATE1_BOOMERANG_THROWN) && player->boomerangActor != NULL &&
+        player->boomerangActor->update != NULL) {
+        payload["boomPos"] = player->boomerangActor->world.pos;
+        payload["boomYaw"] = player->boomerangActor->shape.rot.y;
+    }
     payload["quiet"] = true;
 
     for (auto& [clientId, client] : clients) {
@@ -126,6 +131,11 @@ void Anchor::HandlePacket_PlayerUpdate(nlohmann::json payload) {
         client.dekuStickFlame = payload.value("stickFlame", (s16)0);
         client.dekuStickLength = payload.value("stickLen", 0.0f);
         client.actionVar1 = payload["actionVar1"].get<s8>();
+        client.boomActive = payload.contains("boomPos");
+        if (client.boomActive) {
+            client.boomPos = payload["boomPos"].get<Vec3f>();
+            client.boomYaw = payload.value("boomYaw", (s16)0);
+        }
     }
 
     if (shouldRefreshActors) {

@@ -60,6 +60,9 @@ typedef struct {
     s16 dekuStickFlame; // player->unk_860: burning deku stick timer
     f32 dekuStickLength; // player->unk_85C: remaining stick fraction (draw scale + tip reach)
     s8 actionVar1;
+    bool boomActive; // thrower's EN_BOOM is in flight (boomPos/boomYaw valid)
+    Vec3f boomPos;
+    s16 boomYaw;
 
     // Ptr to the dummy player
     Player* player;
