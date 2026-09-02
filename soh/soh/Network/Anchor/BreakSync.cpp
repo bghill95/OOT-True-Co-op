@@ -367,8 +367,12 @@ void RegisterHooks(bool isConnected) {
         // to die mid-scene). Killed-by-own-physics after a synced THROW breaks
         // on both sides already; the receiver's copy is then dead and Ingest
         // drops the echo.
+        // EN_KUSA included: grass that DIES on cut (rather than surviving as a
+        // regrowing stump) never trips the GRASS_DESTROYED pre-update edge —
+        // the flag is set and the actor killed in the same update frame. The
+        // announced latch keeps this from double-sending with the flag edge.
         if (SyncEnabled() && (a->id == ACTOR_OBJ_TSUBO || a->id == ACTOR_OBJ_KIBAKO || a->id == ACTOR_OBJ_KIBAKO2 ||
-                              a->id == ACTOR_EN_ISHI || a->id == ACTOR_OBJ_COMB)) {
+                              a->id == ACTOR_EN_ISHI || a->id == ACTOR_OBJ_COMB || a->id == ACTOR_EN_KUSA)) {
             SendBreak(a, it->second);
         }
         auto bk = sByKey.find(it->second.key);
