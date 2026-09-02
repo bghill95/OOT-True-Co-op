@@ -27,6 +27,21 @@ inline Actor* Resolve(uint32_t clientId) {
     return (Actor*)it->second.player;
 }
 
+// Where a carried actor sits on a puppet: just above the head. The puppet's
+// bodyPartsPos are filled by its full player draw each frame, so this tracks
+// age and animation; fall back to a fixed lift before the first draw.
+inline Vec3f CarryAnchor(Actor* puppet) {
+    Player* p = (Player*)puppet;
+    Vec3f headPos = p->bodyPartsPos[PLAYER_BODYPART_HEAD];
+    Vec3f anchor = puppet->world.pos;
+    if (headPos.x != 0.0f || headPos.y != 0.0f || headPos.z != 0.0f) {
+        anchor.y = headPos.y + 12.0f;
+    } else {
+        anchor.y += 38.0f;
+    }
+    return anchor;
+}
+
 // Take `actor` out of our own player's hands if it is what he is holding.
 // Mirrors the revoke path in EnBombf_GrowBomb (z_en_bombf.c): every field has to
 // be cleared together or Link keeps the carry pose holding nothing.

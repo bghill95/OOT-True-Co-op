@@ -124,8 +124,7 @@ static void OnCarryablePreUpdate(Actor* actor, bool* should) {
         if (puppet != NULL) {
             st.carrierLostTicks = 0;
             actor->parent = puppet;
-            actor->world.pos = puppet->world.pos;
-            actor->world.pos.y += CARRY_Y_OFFSET;
+            actor->world.pos = PuppetRef::CarryAnchor(puppet);
             actor->shape.rot.y = puppet->shape.rot.y;
             st.hadParent = true;
             return;

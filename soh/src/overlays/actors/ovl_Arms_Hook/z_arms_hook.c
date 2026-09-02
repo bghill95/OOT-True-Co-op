@@ -305,19 +305,24 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play) {
     ArmsHook* this = (ArmsHook*)thisx;
     Player* player = GET_PLAYER(play);
 
-    // Co-op: a networked replica belongs to its puppet — draw the chain from
-    // that player's hand, not the local one's.
-    if ((this->actor.parent != NULL) && (this->actor.parent->id == ACTOR_PLAYER) &&
-        (this->actor.parent != &player->actor)) {
-        player = (Player*)this->actor.parent;
-    }
+    s32 isPuppetOwned = 0;
     Vec3f sp78;
     Vec3f sp6C;
     Vec3f sp60;
     f32 sp5C;
     f32 sp58;
 
-    if ((player->actor.draw != NULL) && (player->rightHandType == PLAYER_MODELTYPE_RH_HOOKSHOT)) {
+    // Co-op: a networked replica belongs to its puppet — draw the chain from
+    // that player's hand, not the local one's. The puppet never computes
+    // rightHandType or unk_3C8, so skip the gate and anchor on its hand part.
+    if ((this->actor.parent != NULL) && (this->actor.parent->id == ACTOR_PLAYER) &&
+        (this->actor.parent != &player->actor)) {
+        player = (Player*)this->actor.parent;
+        isPuppetOwned = 1;
+    }
+
+    if ((player->actor.draw != NULL) &&
+        (isPuppetOwned || (player->rightHandType == PLAYER_MODELTYPE_RH_HOOKSHOT))) {
         OPEN_DISPS(play->state.gfxCtx);
 
         if ((ArmsHook_Shoot != this->actionFunc) || (this->timer <= 0)) {
@@ -340,7 +345,8 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play) {
         gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
         gSPDisplayList(POLY_OPA_DISP++, gLinkAdultHookshotTipDL);
         Matrix_Translate(this->actor.world.pos.x, this->actor.world.pos.y, this->actor.world.pos.z, MTXMODE_NEW);
-        Math_Vec3f_Diff(&player->unk_3C8, &this->actor.world.pos, &sp78);
+        Math_Vec3f_Diff(isPuppetOwned ? &player->bodyPartsPos[PLAYER_BODYPART_R_HAND] : &player->unk_3C8,
+                        &this->actor.world.pos, &sp78);
         sp58 = SQ(sp78.x) + SQ(sp78.z);
         sp5C = sqrtf(sp58);
         Matrix_RotateY(Math_FAtan2F(sp78.x, sp78.z), MTXMODE_APPLY);

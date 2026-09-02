@@ -177,8 +177,7 @@ static void ReplicaPreUpdate(Actor* actor, ReplicaState& rs, bool* should) {
             }
             Actor* puppet = rs.carried ? PuppetRef::Resolve(rs.ownerClientId) : NULL;
             if (puppet != NULL) {
-                actor->world.pos = puppet->world.pos;
-                actor->world.pos.y += CARRY_Y_OFFSET;
+                actor->world.pos = PuppetRef::CarryAnchor(puppet);
                 actor->shape.rot.y = puppet->shape.rot.y;
             }
             return;
@@ -214,8 +213,7 @@ static void ReplicaPreUpdate(Actor* actor, ReplicaState& rs, bool* should) {
     // Keep the update RUNNING while carried (sparks, smoke, hiss, flash,
     // natural fuse) — just pin the body onto the puppet, velocity zeroed so
     // gravity never accumulates.
-    actor->world.pos = puppet->world.pos;
-    actor->world.pos.y += CARRY_Y_OFFSET;
+    actor->world.pos = PuppetRef::CarryAnchor(puppet);
     actor->shape.rot.y = puppet->shape.rot.y;
     actor->velocity = { 0, 0, 0 };
     actor->speedXZ = 0.0f;
@@ -308,8 +306,7 @@ void Ingest(const nlohmann::json& payload) {
                 pos = payload["pos"].get<Vec3f>();
                 rotY = payload.value("rotY", (int16_t)0);
             } else if (Actor* puppet = PuppetRef::Resolve(ownerId)) {
-                pos = puppet->world.pos;
-                pos.y += CARRY_Y_OFFSET;
+                pos = PuppetRef::CarryAnchor(puppet);
             } else {
                 return; // carry event with no puppet to hang it on; the next
                         // throw/detonate carries a position and spawns it then

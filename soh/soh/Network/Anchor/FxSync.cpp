@@ -122,8 +122,11 @@ void CollectProjectiles(nlohmann::json& payload) {
     nlohmann::json arr = nlohmann::json::array();
     for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_ITEMACTION].head; a != NULL && arr.size() < 3;
          a = a->next) {
-        if (a->id != ACTOR_EN_ARROW || a->parent != NULL || a->update == NULL || IsOwnProjReplica(a)) {
-            continue; // nocked arrows (parent = player) are part of the puppet model
+        // Flying arrows (parent NULL) AND the nocked one (parent = player,
+        // positioned at the hand — the puppet model doesn't draw it).
+        if (a->id != ACTOR_EN_ARROW || a->update == NULL || IsOwnProjReplica(a) ||
+            (a->parent != NULL && a->parent != &player->actor)) {
+            continue;
         }
         EnArrow* ar = (EnArrow*)a;
         nlohmann::json e;
