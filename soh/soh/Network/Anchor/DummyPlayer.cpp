@@ -136,6 +136,7 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
     player->invincibilityTimer = client.invincibilityTimer;
     player->unk_862 = client.unk_862;
     player->unk_85C = client.dekuStickLength; // stick draw scale + weapon-tip reach (z_player_lib.c)
+    player->unk_858 = client.bowString;       // bow string draw amount — stale value froze the bow drawn
     player->av1.actionVar1 = client.actionVar1;
 
     // Burning deku stick: on the real player the flame is an effect spawned

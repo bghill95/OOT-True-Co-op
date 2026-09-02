@@ -59,6 +59,7 @@ typedef struct {
     s16 unk_862;
     s16 dekuStickFlame; // player->unk_860: burning deku stick timer
     f32 dekuStickLength; // player->unk_85C: remaining stick fraction (draw scale + tip reach)
+    f32 bowString; // player->unk_858: bow string draw amount (stale on puppets = bow stuck drawn)
     s8 actionVar1;
     bool boomActive; // thrower's EN_BOOM is in flight (boomPos/boomYaw valid)
     Vec3f boomPos;
