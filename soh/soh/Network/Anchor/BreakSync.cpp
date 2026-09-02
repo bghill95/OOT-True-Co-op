@@ -78,6 +78,7 @@ struct BreakState {
     bool announced = false;      // we already sent BREAK for this actor
     bool remoteBreaking = false; // break was remote-triggered: never echo it
     uint16_t kanbanPrevParts = 0; // signposts break piece by piece, not once
+    uint16_t latchTicks = 0;      // frames since remoteBreaking was armed
 };
 
 static std::unordered_map<Actor*, BreakState> sTracked;
@@ -150,9 +151,18 @@ static void OnKanbanPreUpdate(Actor* actor) {
     }
     BreakState& st = it->second;
     EnKanban* sign = (EnKanban*)actor;
+    // A remote cut that never lands (packet raced a state we can't cut) must
+    // not gag every later cut: un-stick the latch after a second, loudly.
+    if (st.remoteBreaking && ++st.latchTicks > 20) {
+        SPDLOG_WARN("[BreakSync] kanban latch timeout key={:#x} parts={:#x} acFlags={:#x} inv={}", st.key,
+                    sign->partFlags, sign->collider.base.acFlags, sign->invincibilityTimer);
+        st.remoteBreaking = false;
+        st.latchTicks = 0;
+    }
     if (sign->partFlags < st.kanbanPrevParts) {
         if (st.remoteBreaking) {
             st.remoteBreaking = false;
+            st.latchTicks = 0;
         } else {
             nlohmann::json payload;
             payload["key"] = st.key;
@@ -206,6 +216,12 @@ void Ingest(const nlohmann::json& payload) {
             return;
         }
         st->second.remoteBreaking = true;
+        st->second.latchTicks = 0;
+
+        // A culled actor never runs its update, so the spoofed AC_HIT would sit
+        // unconsumed forever (arrow-shot signpost with the peer's Link far
+        // away). Keep every replay target updating from here on.
+        actor->flags |= ACTOR_FLAG_UPDATE_CULLING_DISABLED;
 
         sSpoofHitInfo.toucher.dmgFlags = SPOOF_DMG_FLAGS;
 
