@@ -321,11 +321,11 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play) {
         isPuppetOwned = 1;
     }
 
-    if (isPuppetOwned) {
-        void FxSync_HookDbg(s32 drawOk, s32 rhType, s32 shot, s32 timer, f32 hx, f32 hy, f32 hz);
-        FxSync_HookDbg(player->actor.draw != NULL, player->rightHandType, ArmsHook_Shoot == this->actionFunc,
-                       this->timer, player->bodyPartsPos[PLAYER_BODYPART_R_HAND].x,
-                       player->bodyPartsPos[PLAYER_BODYPART_R_HAND].y,
+    {
+        void FxSync_HookDbg(s32 puppetOwned, s32 parentId, s32 drawOk, s32 shot, s32 timer, f32 hx, f32 hy, f32 hz);
+        FxSync_HookDbg(isPuppetOwned, this->actor.parent != NULL ? this->actor.parent->id : -1,
+                       player->actor.draw != NULL, ArmsHook_Shoot == this->actionFunc, this->timer,
+                       player->bodyPartsPos[PLAYER_BODYPART_R_HAND].x, player->bodyPartsPos[PLAYER_BODYPART_R_HAND].y,
                        player->bodyPartsPos[PLAYER_BODYPART_R_HAND].z);
     }
 
