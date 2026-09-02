@@ -228,11 +228,27 @@ static void BossVaSync_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
         BossVa_CoopMirrorAmbientFx(va, gPlayState);
     }
 
+    // A part suppressed before its first local CollisionCheck call has an empty
+    // tracked-collider list — hand its colliders over so SubmitColliders can
+    // expose the streamed AT/AC classes (body contact, Bari touch + tether).
+    if (params == BOSSVA_BODY) {
+        EnemySync::NoteActorCollider(actor, &va->colliderBody.base);
+    } else if (!IsLocalOnly(params)) {
+        EnemySync::NoteActorCollider(actor, &va->colliderSph.base);
+        EnemySync::NoteActorCollider(actor, &va->colliderLightning.base);
+    }
+
     // Validation heartbeat: one line per second on the mirror.
-    if (params == BOSSVA_BODY && gPlayState != NULL && (gPlayState->gameplayFrames % 20) == 0) {
-        ESYNC_LOG("[BossVaSync] mirror: cs={} fp={} hp4={} glow={} yo={:.0f}", (int)*BossVa_CoopCsState(),
-                  (int)*BossVa_CoopFightPhase(), (int)*BossVa_CoopPhase4HP(), (int)va->bodyGlow,
-                  va->actor.shape.yOffset);
+    if (gPlayState != NULL && (gPlayState->gameplayFrames % 20) == 0) {
+        if (params == BOSSVA_BODY) {
+            ESYNC_LOG("[BossVaSync] mirror: cs={} fp={} hp4={} glow={} yo={:.0f}", (int)*BossVa_CoopCsState(),
+                      (int)*BossVa_CoopFightPhase(), (int)*BossVa_CoopPhase4HP(), (int)va->bodyGlow,
+                      va->actor.shape.yOffset);
+        } else {
+            ESYNC_LOG("[BossVaSync] mirror part: params={} dead={} t2={} sx={:.2f} pos=({:.0f},{:.0f},{:.0f})", params,
+                      (int)va->isDead, (int)va->timer2, va->unk_1D8.x, va->actor.world.pos.x, va->actor.world.pos.y,
+                      va->actor.world.pos.z);
+        }
     }
 }
 

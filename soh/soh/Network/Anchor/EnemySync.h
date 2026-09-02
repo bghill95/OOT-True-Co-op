@@ -111,6 +111,12 @@ Actor* FindActorForPacket(uint64_t key, int16_t actorId, Vec3f homePos);
 void ApplyRemoteHit(Actor* actor, uint8_t damage, uint32_t dmgFlags, Vec3s hitPos, uint8_t remoteHealth,
                     Actor* attacker);
 
+// Registers a collider on an already-tracked actor. Mirror copies that never
+// submitted colliders locally (suppressed before their first CollisionCheck
+// call) have an empty tracked list, so SubmitColliders exposes nothing — an
+// adapter can hand the colliders over explicitly. Idempotent.
+void NoteActorCollider(Actor* actor, Collider* col);
+
 // Returns a zeroed dummy actor wearing the given actor id, for replaying hits
 // whose real attacker (the mirror's weapon actor) doesn't exist on this client.
 // Big enough for enemies that write through the pointer (EnBoom::returnTimer).

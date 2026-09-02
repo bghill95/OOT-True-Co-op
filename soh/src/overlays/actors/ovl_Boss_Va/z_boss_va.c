@@ -4081,8 +4081,31 @@ u8* BossVa_CoopBodyBari(void) {
 // burst/unk_1F0/colorFilterTimer + sFightPhase). Attack-specific effects
 // (spark balls, blood, tumors) stay authority-only.
 void BossVa_CoopMirrorAmbientFx(BossVa* this, PlayState* play) {
+    s32 i;
+
     switch (this->actor.params) {
         case BOSSVA_BODY:
+            // The body's update decays the spark-flash room lighting every
+            // frame; suppressed, the last intro flash stays glued to envCtx.
+            for (i = 2; i >= 0; i--) {
+                if ((play->envCtx.adjAmbientColor[i] - 1) > 0) {
+                    play->envCtx.adjAmbientColor[i] -= 1;
+                } else {
+                    play->envCtx.adjAmbientColor[i] = 0;
+                }
+
+                if ((play->envCtx.adjLight1Color[i] - 10) > 0) {
+                    play->envCtx.adjLight1Color[i] -= 10;
+                } else {
+                    play->envCtx.adjLight1Color[i] = 0;
+                }
+
+                if ((play->envCtx.adjFogColor[i] - 10) > 0) {
+                    play->envCtx.adjFogColor[i] -= 10;
+                } else {
+                    play->envCtx.adjFogColor[i] = 0;
+                }
+            }
             func_800F436C(&this->actor.projectedPos, NA_SE_EN_BALINADE_LEVEL - SFX_FLAG, 1.0f);
             if (sFightPhase >= PHASE_4) {
                 if ((play->gameplayFrames % 2) == 0) {

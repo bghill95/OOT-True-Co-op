@@ -487,6 +487,27 @@ Actor* FindActorForPacket(uint64_t key, int16_t actorId, Vec3f homePos) {
     return best;
 }
 
+void NoteActorCollider(Actor* actor, Collider* col) {
+    auto it = tracked.find(actor);
+    if (it == tracked.end() || col == nullptr) {
+        return;
+    }
+    TrackedState& st = it->second;
+    for (Collider* c : st.colliders) {
+        if (c == col) {
+            return;
+        }
+    }
+    if (st.colliders.size() < MAX_TRACKED_COLLIDERS) {
+        st.colliders.push_back(col);
+        ESYNC_LOG("[EnemySync] NoteActorCollider id={} shape={} count={}", actor->id, (int)col->shape,
+                  st.colliders.size());
+    }
+    if (st.acCollider == nullptr) {
+        st.acCollider = col;
+    }
+}
+
 Actor* FakeAttacker(int16_t actorId, Vec3s hitPos) {
     // Pool of oversized zeroed actors: enemies may keep the pointer until their
     // next update and some cast+write through it (Barinade writes
