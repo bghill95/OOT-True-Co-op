@@ -160,6 +160,8 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
 
     // Boomerang in flight: the real EN_BOOM exists only on the thrower's game.
     FxSync::TickPuppetBoomerang(client.clientId, client.boomActive, client.boomPos, client.boomYaw, client.boomPitch);
+    // Arrows (incl. elemental/nut/seed) and hookshot, same model.
+    FxSync::TickPuppetProjectiles(client.clientId, actor);
 
     if (player->modelGroup != client.modelGroup) {
         // Hack to account for usage of gSaveContext

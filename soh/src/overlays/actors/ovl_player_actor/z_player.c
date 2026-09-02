@@ -15312,6 +15312,11 @@ void Player_Action_808502D0(Player* this, PlayState* play) {
                     (sp2C > -40.0f) && (sp2C < 40.0f)) {
                     func_80842A28(play, this);
                     EffectSsBlast_SpawnWhiteShockwave(play, &shockwavePos, &zeroVec, &zeroVec);
+                    {
+                        // Co-op: replay the shockwave on same-scene peers (FxSync).
+                        void FxSync_OnHammerShockwave(Vec3f* pos);
+                        FxSync_OnHammerShockwave(&shockwavePos);
+                    }
                 }
             }
         }

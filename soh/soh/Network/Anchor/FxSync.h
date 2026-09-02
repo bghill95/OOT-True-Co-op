@@ -6,6 +6,7 @@
 
 extern "C" {
 #include "z64math.h"
+struct Actor;
 }
 
 // Visual-effects sync: magic spells (Din's Fire / Farore's Wind / Nayru's
@@ -24,6 +25,14 @@ void RegisterHooks(bool isConnected);
 // update is suppressed, so its AT quad is never submitted — it can't land
 // false local hits. Called from DummyPlayer's per-frame client apply.
 void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw, int16_t pitch);
+
+// Puppet projectiles (arrows incl. elemental/nut/seed, hookshot): same model.
+// CollectProjectiles adds the local player's in-flight snapshot to the
+// PLAYER_UPDATE payload; IngestPlayerProjectiles stores the peer's snapshot;
+// TickPuppetProjectiles (DummyPlayer, per frame) reconciles pinned replicas.
+void CollectProjectiles(nlohmann::json& payload);
+void IngestPlayerProjectiles(uint32_t clientId, const nlohmann::json& payload);
+void TickPuppetProjectiles(uint32_t clientId, struct Actor* puppet);
 
 } // namespace FxSync
 

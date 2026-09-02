@@ -304,6 +304,13 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play) {
     s32 pad;
     ArmsHook* this = (ArmsHook*)thisx;
     Player* player = GET_PLAYER(play);
+
+    // Co-op: a networked replica belongs to its puppet — draw the chain from
+    // that player's hand, not the local one's.
+    if ((this->actor.parent != NULL) && (this->actor.parent->id == ACTOR_PLAYER) &&
+        (this->actor.parent != &player->actor)) {
+        player = (Player*)this->actor.parent;
+    }
     Vec3f sp78;
     Vec3f sp6C;
     Vec3f sp60;

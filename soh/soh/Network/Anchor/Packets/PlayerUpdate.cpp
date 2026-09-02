@@ -1,4 +1,5 @@
 #include "soh/Network/Anchor/Anchor.h"
+#include "soh/Network/Anchor/FxSync.h"
 #include "soh/Network/Anchor/JsonConversions.hpp"
 #include <nlohmann/json.hpp>
 #include <libultraship/libultraship.h>
@@ -85,6 +86,7 @@ void Anchor::SendPacket_PlayerUpdate() {
         payload["boomYaw"] = player->boomerangActor->world.rot.y;   // flight yaw (EnBoom_Draw basis)
         payload["boomPitch"] = player->boomerangActor->world.rot.x; // flight pitch
     }
+    FxSync::CollectProjectiles(payload); // arrows + hookshot in flight
     payload["quiet"] = true;
 
     for (auto& [clientId, client] : clients) {
@@ -138,6 +140,7 @@ void Anchor::HandlePacket_PlayerUpdate(nlohmann::json payload) {
             client.boomYaw = payload.value("boomYaw", (s16)0);
             client.boomPitch = payload.value("boomPitch", (s16)0);
         }
+        FxSync::IngestPlayerProjectiles(clientId, payload);
     }
 
     if (shouldRefreshActors) {
