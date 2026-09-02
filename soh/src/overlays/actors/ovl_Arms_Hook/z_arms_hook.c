@@ -312,11 +312,10 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play) {
     f32 sp5C;
     f32 sp58;
 
-    // Co-op: a networked replica belongs to its puppet — draw the chain from
-    // that player's hand, not the local one's. The puppet never computes
-    // rightHandType or unk_3C8, so skip the gate and anchor on its hand part.
-    if ((this->actor.parent != NULL) && (this->actor.parent->id == ACTOR_PLAYER) &&
-        (this->actor.parent != &player->actor)) {
+    // Co-op: a networked replica is parented to its puppet (a custom actor id
+    // in this fork, not ACTOR_PLAYER) — any non-local parent means a puppet we
+    // attached. Draw the chain from its hand, and skip the local-only gate.
+    if ((this->actor.parent != NULL) && (this->actor.parent != &player->actor)) {
         player = (Player*)this->actor.parent;
         isPuppetOwned = 1;
     }
