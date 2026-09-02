@@ -393,7 +393,11 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
 
         if (kind == FX_EV_NUT) {
             Vec3f pos = payload.at("pos").get<Vec3f>();
-            iREG(50) = -1; // full-screen white flash (TransitionFade, z_fbdemo_fade.c)
+            // The white flash fills the whole screen — only take it when the
+            // burst is actually near us, like the thrower experiences it.
+            if (Math_Vec3f_DistXYZ(&GET_PLAYER(gPlayState)->actor.world.pos, &pos) < 600.0f) {
+                iREG(50) = -1; // full-screen white flash (TransitionFade, z_fbdemo_fade.c)
+            }
             EffectSsStone1_Spawn(gPlayState, &pos, 0);
             SoundSource_PlaySfxAtFixedWorldPos(gPlayState, &pos, 20, NA_SE_IT_DEKU);
             ESYNC_LOG("[FxSync] nut flash rx");
