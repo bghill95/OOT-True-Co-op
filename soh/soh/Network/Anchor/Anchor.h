@@ -222,7 +222,8 @@ class Anchor : public Network {
     void SendPacket_EnemyDespawn(uint64_t enemyKey);
     void SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanent);
     void SendPacket_EnemyHit(Actor* actor, uint64_t enemyKey, u8 damage, u32 dmgFlags, Vec3s hitPos, u8 health);
-    void SendPacket_EnemyHitRequest(Actor* actor, uint64_t enemyKey, u8 damage, u32 dmgFlags, Vec3s hitPos);
+    void SendPacket_EnemyHitRequest(Actor* actor, uint64_t enemyKey, u8 damage, u32 dmgFlags, Vec3s hitPos,
+                                    int16_t attackerActorId);
     void SendPacket_EnemyRosterRequest(int16_t roomNum);
     void SendPacket_EnemySpawn(uint64_t enemyKey, int16_t actorId, uint16_t params, Vec3f pos, Vec3s rot,
                                int16_t roomNum, uint64_t parentKey);

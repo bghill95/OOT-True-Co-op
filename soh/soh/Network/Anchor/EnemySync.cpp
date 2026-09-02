@@ -487,6 +487,23 @@ Actor* FindActorForPacket(uint64_t key, int16_t actorId, Vec3f homePos) {
     return best;
 }
 
+Actor* FakeAttacker(int16_t actorId, Vec3s hitPos) {
+    // Pool of oversized zeroed actors: enemies may keep the pointer until their
+    // next update and some cast+write through it (Barinade writes
+    // EnBoom::returnTimer/moveTo into whatever wears ACTOR_EN_BOOM).
+    static uint8_t pool[4][0x800];
+    static uint8_t next = 0;
+    uint8_t* slot = pool[next];
+    next = (next + 1) % 4;
+    memset(slot, 0, sizeof(pool[0]));
+    Actor* fake = (Actor*)slot;
+    fake->id = actorId;
+    fake->category = ACTORCAT_ITEMACTION;
+    fake->world.pos = { (float)hitPos.x, (float)hitPos.y, (float)hitPos.z };
+    fake->home.pos = fake->world.pos;
+    return fake;
+}
+
 void ApplyRemoteHit(Actor* actor, uint8_t damage, uint32_t dmgFlags, Vec3s hitPos, uint8_t remoteHealth,
                     Actor* attacker) {
     auto it = tracked.find(actor);
@@ -620,6 +637,7 @@ static void DetectAndForwardLocalHits(Actor* actor, TrackedState& st) {
 
     uint32_t dmgFlags = 0;
     Vec3s hitPos = { (int16_t)actor->world.pos.x, (int16_t)actor->world.pos.y, (int16_t)actor->world.pos.z };
+    int16_t atkId = ACTOR_PLAYER;
     bool hit = false;
 
     auto scan = [&](Collider* col) {
@@ -631,6 +649,9 @@ static void DetectAndForwardLocalHits(Actor* actor, TrackedState& st) {
             if (dmgFlags == 0 && (info->bumperFlags & BUMP_HIT) && info->acHitInfo != NULL) {
                 dmgFlags = info->acHitInfo->toucher.dmgFlags;
                 hitPos = info->bumper.hitPos;
+                if (col->ac != NULL) {
+                    atkId = col->ac->id; // some enemies branch on it (Barinade vs boomerang)
+                }
             }
             info->bumperFlags &= ~BUMP_HIT;
         });
@@ -649,7 +670,7 @@ static void DetectAndForwardLocalHits(Actor* actor, TrackedState& st) {
     uint8_t damage = actor->colChkInfo.damage;
     actor->colChkInfo.damage = 0;
 
-    Anchor::Instance->SendPacket_EnemyHitRequest(actor, st.key, damage, dmgFlags, hitPos);
+    Anchor::Instance->SendPacket_EnemyHitRequest(actor, st.key, damage, dmgFlags, hitPos, atkId);
 
     // Immediate local reaction while the authority's verdict streams back.
     Actor_SetColorFilter(actor, 0x4000, 255, 0, 8);
@@ -1385,6 +1406,12 @@ void HandleRemoteSpawn(uint64_t key, int16_t actorId, uint16_t params, Vec3f pos
     }
     if (gPlayState->roomCtx.curRoom.num != roomNum) {
         ESYNC_LOG("[EnemySync] SPAWN rx dropped (room {} not loaded) key={:#x}", roomNum, key);
+        return;
+    }
+    // Barinade stumps (16..18) and door (19): spawned locally by the
+    // support-cut replay / intro on every client (BossVaAdapter) — a remote
+    // copy would double them.
+    if (actorId == ACTOR_BOSS_VA && (int16_t)params >= 16) {
         return;
     }
 

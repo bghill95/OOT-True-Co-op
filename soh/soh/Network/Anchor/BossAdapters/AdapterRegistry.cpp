@@ -6,6 +6,7 @@ void RegisterEnGomaAdapter();
 void RegisterEnDekubabaAdapter();
 void RegisterEnVmAdapter();
 void RegisterKingDodongoAdapter();
+void RegisterBossVaAdapter();
 void RegisterEnPohAdapter();
 void RegisterEnPoFieldAdapter();
 void RegisterEnPoDesertAdapter();
@@ -34,6 +35,7 @@ void RegisterBuiltInAdapters() {
     RegisterEnDekubabaAdapter();
     RegisterEnVmAdapter();
     RegisterKingDodongoAdapter();
+    RegisterBossVaAdapter();
     RegisterEnPohAdapter();
     RegisterEnPoFieldAdapter();
     RegisterEnPoDesertAdapter();

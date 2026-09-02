@@ -22,7 +22,7 @@ extern PlayState* gPlayState;
  */
 
 void Anchor::SendPacket_EnemyHitRequest(Actor* actor, uint64_t enemyKey, uint8_t damage, uint32_t dmgFlags,
-                                        Vec3s hitPos) {
+                                        Vec3s hitPos, int16_t attackerActorId) {
     if (!IsSaveLoaded() || !EnemySync::SyncEnabled() || gPlayState == NULL) {
         return;
     }
@@ -41,6 +41,7 @@ void Anchor::SendPacket_EnemyHitRequest(Actor* actor, uint64_t enemyKey, uint8_t
     payload["damage"] = damage;
     payload["dmgFlags"] = dmgFlags;
     payload["hitPos"] = hitPos;
+    payload["atkId"] = attackerActorId;
     payload["targetClientId"] = authorityId;
 
     SendJsonToRemote(payload);
@@ -75,6 +76,15 @@ void Anchor::HandlePacket_EnemyHitRequest(nlohmann::json payload) {
     uint32_t clientId = payload["clientId"].get<uint32_t>();
     if (clients.contains(clientId) && clients[clientId].player != NULL) {
         attacker = &clients[clientId].player->actor;
+    }
+
+    // Some enemies branch on the attacker's actor id (Barinade: only
+    // base.ac->id == ACTOR_EN_BOOM kills a Bari) — the mirror's weapon actor
+    // doesn't exist here, so replay those through a fake attacker carrying the
+    // streamed id instead of the puppet.
+    int16_t atkId = payload.contains("atkId") ? payload["atkId"].get<int16_t>() : (int16_t)ACTOR_PLAYER;
+    if (atkId != ACTOR_PLAYER) {
+        attacker = EnemySync::FakeAttacker(atkId, payload["hitPos"].get<Vec3s>());
     }
 
     uint8_t damage = payload["damage"].get<uint8_t>();

@@ -111,6 +111,11 @@ Actor* FindActorForPacket(uint64_t key, int16_t actorId, Vec3f homePos);
 void ApplyRemoteHit(Actor* actor, uint8_t damage, uint32_t dmgFlags, Vec3s hitPos, uint8_t remoteHealth,
                     Actor* attacker);
 
+// Returns a zeroed dummy actor wearing the given actor id, for replaying hits
+// whose real attacker (the mirror's weapon actor) doesn't exist on this client.
+// Big enough for enemies that write through the pointer (EnBoom::returnTimer).
+Actor* FakeAttacker(int16_t actorId, Vec3s hitPos);
+
 // Handles a remote death: lethal synthetic hit so the death plays naturally.
 // permanent (Actor_Kill deaths) adds a force-kill fallback after a grace period;
 // defeat-hook deaths (regrowers) skip it — a copy that can't consume the hit

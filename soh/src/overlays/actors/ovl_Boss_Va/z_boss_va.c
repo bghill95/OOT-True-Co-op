@@ -1161,7 +1161,7 @@ void BossVa_BodyPhase2(BossVa* this, PlayState* play) {
     if (this->colliderBody.base.acFlags & AC_HIT) {
         this->colliderBody.base.acFlags &= ~AC_HIT;
 
-        if (this->colliderBody.base.ac->id == ACTOR_EN_BOOM) {
+        if ((this->colliderBody.base.ac != NULL) && (this->colliderBody.base.ac->id == ACTOR_EN_BOOM)) {
             sPhase2Timer &= 0xFE00;
             Actor_SetColorFilter(&this->actor, 0, 255, 0, 160);
             this->colliderBody.info.bumper.dmgFlags = 0xFC00712;
@@ -1422,7 +1422,7 @@ void BossVa_BodyPhase4(BossVa* this, PlayState* play) {
                     Audio_PlayActorSound2(&this->actor, NA_SE_EN_BALINADE_FAINT);
                 }
             }
-        } else if (this->colliderBody.base.ac->id == ACTOR_EN_BOOM) {
+        } else if ((this->colliderBody.base.ac != NULL) && (this->colliderBody.base.ac->id == ACTOR_EN_BOOM)) {
             boomerang = (EnBoom*)this->colliderBody.base.ac;
             boomerang->returnTimer = 0;
             boomerang->moveTo = &player->actor;
@@ -2581,7 +2581,7 @@ void BossVa_BariPhase3Attack(BossVa* this, PlayState* play) {
 
     if (this->colliderSph.base.acFlags & AC_HIT) {
         this->colliderSph.base.acFlags &= ~AC_HIT;
-        if ((this->colliderSph.base.ac->id == ACTOR_EN_BOOM) && (sp52 >= 128)) {
+        if ((this->colliderSph.base.ac != NULL) && (this->colliderSph.base.ac->id == ACTOR_EN_BOOM) && (sp52 >= 128)) {
             boomerang = (EnBoom*)this->colliderSph.base.ac;
             boomerang->returnTimer = 0;
             boomerang->moveTo = &player->actor;
@@ -2695,7 +2695,7 @@ void BossVa_BariPhase2Attack(BossVa* this, PlayState* play) {
         if (this->colliderSph.base.acFlags & AC_HIT) {
             this->colliderSph.base.acFlags &= ~AC_HIT;
 
-            if ((this->colliderSph.base.ac->id == ACTOR_EN_BOOM) && (sp52 >= 64)) {
+            if ((this->colliderSph.base.ac != NULL) && (this->colliderSph.base.ac->id == ACTOR_EN_BOOM) && (sp52 >= 64)) {
                 boomerang = (EnBoom*)this->colliderSph.base.ac;
                 boomerang->returnTimer = 0;
                 boomerang->moveTo = &player->actor;
@@ -2837,7 +2837,7 @@ void BossVa_Update(Actor* thisx, PlayState* play2) {
         case BOSSVA_BODY:
             if (this->colliderBody.base.acFlags & AC_HIT) {
                 this->colliderBody.base.acFlags &= ~AC_HIT;
-                if (this->colliderBody.base.ac->id == ACTOR_EN_BOOM) {
+                if ((this->colliderBody.base.ac != NULL) && (this->colliderBody.base.ac->id == ACTOR_EN_BOOM)) {
                     boomerang = (EnBoom*)this->colliderBody.base.ac;
                     boomerang->returnTimer = 0;
                 }
@@ -4050,4 +4050,26 @@ void BossVa_Reset(void) {
     for (u8 i = 0; i < ARRAY_SIZE(sBodyBari); i++) {
         sBodyBari[i] = 0;
     }
+}
+
+// Co-op sync accessors (Network/Anchor/BossAdapters/BossVaAdapter.cpp): the
+// combat statics gate every part's draw and the door/stump local updates, so a
+// mirrored client must adopt the authority's values.
+s8* BossVa_CoopCsState(void) {
+    return &sCsState;
+}
+u8* BossVa_CoopFightPhase(void) {
+    return &sFightPhase;
+}
+s8* BossVa_CoopPhase4HP(void) {
+    return &sPhase4HP;
+}
+u8* BossVa_CoopBodyState(void) {
+    return &sBodyState;
+}
+u8* BossVa_CoopKillBari(void) {
+    return &sKillBari;
+}
+u8* BossVa_CoopBodyBari(void) {
+    return sBodyBari;
 }
