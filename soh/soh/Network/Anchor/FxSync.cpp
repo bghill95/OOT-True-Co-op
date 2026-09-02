@@ -146,15 +146,15 @@ void CollectProjectiles(nlohmann::json& payload) {
     }
 
     // The shot hook: scan instead of trusting heldActor (which flickers during
-    // the shot and made the peer's replica kill/respawn every other tick).
+    // the shot and made the peer's replica kill/respawn every other tick). The
+    // actor only exists while a shot is out, so no distance gate is needed.
     for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_ITEMACTION].head; a != NULL; a = a->next) {
         if (a->id != ACTOR_ARMS_HOOK || a->update == NULL || IsOwnProjReplica(a)) {
             continue;
         }
-        if (Math_Vec3f_DistXYZ(&a->world.pos, &player->actor.world.pos) > 30.0f) {
-            payload["hookPos"] = a->world.pos;
-            payload["hookRot"] = a->shape.rot;
-        }
+        payload["hookPos"] = a->world.pos;
+        payload["hookRot"] = a->shape.rot;
+        ESYNC_LOG("[HookTx] hook seen pos=({:.0f},{:.0f},{:.0f})", a->world.pos.x, a->world.pos.y, a->world.pos.z);
         break;
     }
 }
