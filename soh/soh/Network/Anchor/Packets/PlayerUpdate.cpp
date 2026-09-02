@@ -82,7 +82,8 @@ void Anchor::SendPacket_PlayerUpdate() {
     if ((player->stateFlags1 & PLAYER_STATE1_BOOMERANG_THROWN) && player->boomerangActor != NULL &&
         player->boomerangActor->update != NULL) {
         payload["boomPos"] = player->boomerangActor->world.pos;
-        payload["boomYaw"] = player->boomerangActor->shape.rot.y;
+        payload["boomYaw"] = player->boomerangActor->world.rot.y;   // flight yaw (EnBoom_Draw basis)
+        payload["boomPitch"] = player->boomerangActor->world.rot.x; // flight pitch
     }
     payload["quiet"] = true;
 
@@ -135,6 +136,7 @@ void Anchor::HandlePacket_PlayerUpdate(nlohmann::json payload) {
         if (client.boomActive) {
             client.boomPos = payload["boomPos"].get<Vec3f>();
             client.boomYaw = payload.value("boomYaw", (s16)0);
+            client.boomPitch = payload.value("boomPitch", (s16)0);
         }
     }
 

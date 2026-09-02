@@ -63,6 +63,7 @@ typedef struct {
     bool boomActive; // thrower's EN_BOOM is in flight (boomPos/boomYaw valid)
     Vec3f boomPos;
     s16 boomYaw;
+    s16 boomPitch;
 
     // Ptr to the dummy player
     Player* player;

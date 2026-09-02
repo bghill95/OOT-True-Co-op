@@ -14,6 +14,7 @@ extern "C" {
 #include "functions.h"
 #include "src/overlays/actors/ovl_Magic_Fire/z_magic_fire.h"
 #include "src/overlays/actors/ovl_Obj_Syokudai/z_obj_syokudai.h"
+#include "src/overlays/actors/ovl_En_Boom/z_en_boom.h"
 extern PlayState* gPlayState;
 }
 
@@ -63,7 +64,7 @@ bool SyncEnabled() {
 
 static std::unordered_map<uint32_t, Actor*> sBoomReplicas;
 
-void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw) {
+void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw, int16_t pitch) {
     if (gPlayState == NULL || !SyncEnabled()) {
         return;
     }
@@ -78,8 +79,12 @@ void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw)
             ESYNC_LOG("[FxSync] puppet boomerang spawn client={} ok={}", clientId, boom != NULL);
         }
         if (boom != NULL) {
+            // EnBoom_Draw orients on world.rot and spins from activeTimer —
+            // both update-fed on the thrower, so drive them here.
             boom->world.pos = pos;
-            boom->shape.rot.y = yaw; // the real spin streams through the thrower
+            boom->world.rot.y = yaw;
+            boom->world.rot.x = pitch;
+            ((EnBoom*)boom)->activeTimer++;
         }
     } else if (boom != NULL) {
         Actor_Kill(boom);

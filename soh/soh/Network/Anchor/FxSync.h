@@ -23,7 +23,7 @@ void RegisterHooks(bool isConnected);
 // thrower's streamed flight position (PLAYER_UPDATE boomPos/boomYaw). Its
 // update is suppressed, so its AT quad is never submitted — it can't land
 // false local hits. Called from DummyPlayer's per-frame client apply.
-void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw);
+void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw, int16_t pitch);
 
 } // namespace FxSync
 
