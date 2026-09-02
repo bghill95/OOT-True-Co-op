@@ -276,8 +276,13 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
     }
 }
 
-extern "C" void FxSync_HookDbg(int32_t drawOk, int32_t rhType, float hx, float hy, float hz) {
-    ESYNC_LOG("[HookDbg] puppet drawOk={} rhType={} hand=({:.0f},{:.0f},{:.0f})", drawOk, rhType, hx, hy, hz);
+extern "C" void FxSync_HookDbg(int32_t drawOk, int32_t rhType, int32_t shot, int32_t timer, float hx, float hy,
+                               float hz) {
+    static uint32_t n = 0;
+    if ((n++ % 4) == 0) { // rate-limit but catch short shots
+        ESYNC_LOG("[HookDbg] drawOk={} rhType={} shot={} timer={} hand=({:.0f},{:.0f},{:.0f})", drawOk, rhType, shot,
+                  timer, hx, hy, hz);
+    }
 }
 
 extern "C" void FxSync_OnHammerShockwave(Vec3f* pos) {
