@@ -81,11 +81,13 @@ struct ProjSnap {
     Vec3s rot = { 0, 0, 0 };
     uint8_t timer = 0;
     uint8_t hitFlags = 0;
+    bool nocked = false; // still on the bow: no Fly handoff (trail) yet
 };
 
 struct ProjReplica {
     Actor* actor = NULL;
     uint8_t grace = 0; // update frames still allowed after spawn
+    bool armed = false; // Fly handoff granted (release moment)
 };
 
 struct PuppetProjectiles {
@@ -95,6 +97,7 @@ struct PuppetProjectiles {
     Vec3s hookRot = { 0, 0, 0 };
     std::vector<ProjReplica> arrowReplicas;
     Actor* hookReplica = NULL;
+    uint8_t hookGrace = 0; // ticks to survive a flickering stream
 };
 
 static std::unordered_map<uint32_t, PuppetProjectiles> sProj;
@@ -135,17 +138,24 @@ void CollectProjectiles(nlohmann::json& payload) {
         e["rot"] = a->shape.rot;
         e["t"] = ar->timer;
         e["hf"] = ar->hitFlags;
+        e["n"] = a->parent != NULL; // nocked
         arr.push_back(e);
     }
     if (!arr.empty()) {
         payload["projA"] = arr;
     }
 
-    Actor* hook = player->heldActor;
-    if (hook != NULL && hook->id == ACTOR_ARMS_HOOK && hook->update != NULL &&
-        Math_Vec3f_DistXYZ(&hook->world.pos, &player->actor.world.pos) > 30.0f) {
-        payload["hookPos"] = hook->world.pos;
-        payload["hookRot"] = hook->shape.rot;
+    // The shot hook: scan instead of trusting heldActor (which flickers during
+    // the shot and made the peer's replica kill/respawn every other tick).
+    for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_ITEMACTION].head; a != NULL; a = a->next) {
+        if (a->id != ACTOR_ARMS_HOOK || a->update == NULL || IsOwnProjReplica(a)) {
+            continue;
+        }
+        if (Math_Vec3f_DistXYZ(&a->world.pos, &player->actor.world.pos) > 30.0f) {
+            payload["hookPos"] = a->world.pos;
+            payload["hookRot"] = a->shape.rot;
+        }
+        break;
     }
 }
 
@@ -160,6 +170,7 @@ void IngestPlayerProjectiles(uint32_t clientId, const nlohmann::json& payload) {
             s.rot = e["rot"].get<Vec3s>();
             s.timer = e.contains("t") ? e["t"].get<uint8_t>() : 0;
             s.hitFlags = e.contains("hf") ? e["hf"].get<uint8_t>() : 0;
+            s.nocked = e.contains("n") && e["n"].get<bool>();
             pp.arrows.push_back(s);
         }
     }
@@ -193,11 +204,18 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
             GET_PLAYER(gPlayState)->unk_A73 = 4; // EnArrow_Shoot self-kills at 0 (En_Partner precedent)
             r.actor = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_ARROW, s.pos.x, s.pos.y, s.pos.z,
                                   s.rot.x, s.rot.y, 0, s.params, false);
-            r.grace = 1; // one update: Shoot->Fly (trail) + elemental child spawn
+            r.grace = 0;
+            r.armed = false;
             if (r.actor != NULL) {
                 ((EnArrow*)r.actor)->collider.base.atFlags &= ~AT_ON;
             }
             ESYNC_LOG("[FxSync] puppet arrow spawn client={} p={} ok={}", clientId, s.params, r.actor != NULL);
+        }
+        // Fly handoff (trail + elemental child) only once released — a nocked
+        // replica armed too early streaked a white trail off the arrowhead.
+        if (!s.nocked && !r.armed) {
+            r.armed = true;
+            r.grace = 1;
         }
         if (r.actor != NULL) {
             EnArrow* ar = (EnArrow*)r.actor;
@@ -221,10 +239,16 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
     }
 
     // Hookshot: fully suppressed, pinned, chained to the puppet via parent.
+    // Hysteresis: survive short stream gaps instead of kill/respawn flicker.
     if (pp.hookReplica != NULL && pp.hookReplica->update == NULL) {
         pp.hookReplica = NULL;
     }
     if (pp.hookActive) {
+        pp.hookGrace = 6;
+    } else if (pp.hookGrace > 0) {
+        pp.hookGrace--;
+    }
+    if (pp.hookActive || pp.hookGrace > 0) {
         if (pp.hookReplica == NULL) {
             pp.hookReplica = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_ARMS_HOOK, pp.hookPos.x,
                                          pp.hookPos.y, pp.hookPos.z, 0, pp.hookRot.y, 0, 0, false);

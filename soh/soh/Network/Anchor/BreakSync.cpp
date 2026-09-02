@@ -206,11 +206,35 @@ static void OnWoodPreUpdate(Actor* actor) {
 void Ingest(const nlohmann::json& payload) {
     try {
         uint64_t key = payload.at("key").get<uint64_t>();
+        Actor* actor = NULL;
         auto it = sByKey.find(key);
-        if (it == sByKey.end() || it->second->update == NULL) {
-            return; // unknown or already dead (e.g. broke by its own physics)
+        if (it != sByKey.end() && it->second->update != NULL) {
+            actor = it->second;
+        } else {
+            // Fuzzy fallback: some spawns settle (floor snap) before the key
+            // capture on one client but not the other — the same signpost keyed
+            // 15 units apart in Y across sessions. Same actor id, nearest
+            // spawn position wins; a miss is loud, never silent.
+            int16_t wantId = (int16_t)(key & 0xFFFF);
+            Vec3f wantPos = { (float)(int16_t)((key >> 48) & 0xFFFF), (float)(int16_t)((key >> 32) & 0xFFFF),
+                              (float)(int16_t)((key >> 16) & 0xFFFF) };
+            float bestD = 80.0f;
+            for (auto& [a, stt] : sTracked) {
+                if (a->id != wantId || a->update == NULL) {
+                    continue;
+                }
+                float d = Math_Vec3f_DistXYZ(&a->home.pos, &wantPos);
+                if (d < bestD) {
+                    bestD = d;
+                    actor = a;
+                }
+            }
+            if (actor == NULL) {
+                SPDLOG_WARN("[BreakSync] rx unknown key={:#x} id={} (no fuzzy match)", key, wantId);
+                return; // unknown or already dead (e.g. broke by its own physics)
+            }
+            SPDLOG_WARN("[BreakSync] rx fuzzy-matched key={:#x} id={} d={:.0f}", key, wantId, bestD);
         }
-        Actor* actor = it->second;
         auto st = sTracked.find(actor);
         if (st == sTracked.end() || st->second.announced || st->second.remoteBreaking) {
             return;
