@@ -27,8 +27,9 @@ namespace FxSync {
 enum FxEventKind : uint8_t {
     FX_EV_SPELL = 0,  // caster spawned a magic spell actor (aid says which)
     FX_EV_TORCH = 1,  // a torch's litTimer flipped (key + new value)
-    FX_EV_NUT = 2,    // deku nut impact flash (pos)
-    FX_EV_HAMMER = 3, // hammer ground shockwave (pos)
+    FX_EV_NUT = 2,       // deku nut impact flash (pos)
+    FX_EV_HAMMER = 3,    // hammer ground shockwave (pos)
+    FX_EV_HOOKSPARK = 4, // hookshot reflected off a wall (pos)
 };
 
 // --- Spells -----------------------------------------------------------------
@@ -154,7 +155,6 @@ void CollectProjectiles(nlohmann::json& payload) {
         }
         payload["hookPos"] = a->world.pos;
         payload["hookRot"] = a->shape.rot;
-        ESYNC_LOG("[HookTx] hook seen pos=({:.0f},{:.0f},{:.0f})", a->world.pos.x, a->world.pos.y, a->world.pos.z);
         break;
     }
 }
@@ -276,13 +276,14 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
     }
 }
 
-extern "C" void FxSync_HookDbg(int32_t puppetOwned, int32_t parentId, int32_t drawOk, int32_t shot, int32_t timer,
-                               float hx, float hy, float hz) {
-    static uint32_t n = 0;
-    if ((n++ % 4) == 0) { // rate-limit but catch short shots
-        ESYNC_LOG("[HookDbg] puppetOwned={} parentId={} drawOk={} shot={} timer={} hand=({:.0f},{:.0f},{:.0f})",
-                  puppetOwned, parentId, drawOk, shot, timer, hx, hy, hz);
+extern "C" void FxSync_OnHookSpark(Vec3f* pos) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || pos == NULL) {
+        return;
     }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_HOOKSPARK;
+    payload["pos"] = *pos;
+    Anchor::Instance->SendPacket_FxEvent(payload);
 }
 
 extern "C" void FxSync_OnHammerShockwave(Vec3f* pos) {
@@ -444,6 +445,13 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             EffectSsStone1_Spawn(gPlayState, &pos, 0);
             SoundSource_PlaySfxAtFixedWorldPos(gPlayState, &pos, 20, NA_SE_IT_DEKU);
             ESYNC_LOG("[FxSync] nut flash rx");
+            return;
+        }
+
+        if (kind == FX_EV_HOOKSPARK) {
+            Vec3f pos = payload.at("pos").get<Vec3f>();
+            CollisionCheck_SpawnShieldParticlesMetal(gPlayState, &pos);
+            SoundSource_PlaySfxAtFixedWorldPos(gPlayState, &pos, 4, NA_SE_IT_HOOKSHOT_REFLECT);
             return;
         }
 
