@@ -1620,6 +1620,11 @@ void CollisionCheck_HitSolid(PlayState* play, ColliderInfo* info, Collider* coll
         } else {
             CollisionCheck_SpawnShieldParticlesMetalSound(play, hitPos, &collider->actor->projectedPos);
         }
+        if (collider->actor == &GET_PLAYER(play)->actor) {
+            // Co-op: our shield deflected something; replay the sparks on peers (FxSync).
+            void FxSync_OnShieldHit(Vec3f* pos, s32 metal);
+            FxSync_OnShieldHit(hitPos, 1);
+        }
     } else if (flags == TOUCH_SFX_HARD) {
         EffectSsHitMark_SpawnFixedScale(play, EFFECT_HITMARK_WHITE, hitPos);
         if (collider->actor == NULL) {
@@ -1698,6 +1703,11 @@ void CollisionCheck_HitEffects(PlayState* play, Collider* at, ColliderInfo* atIn
                                        &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
             } else {
                 CollisionCheck_SpawnShieldParticlesWood(play, hitPos, &at->actor->projectedPos);
+            }
+            if (ac->actor == &GET_PLAYER(play)->actor) {
+                // Co-op: our (wooden) shield deflected something; replay on peers (FxSync).
+                void FxSync_OnShieldHit(Vec3f* pos, s32 metal);
+                FxSync_OnShieldHit(hitPos, 0);
             }
         } else if (sHitInfo[ac->colType].effect != HIT_NONE) {
             EffectSsHitMark_SpawnFixedScale(play, sHitInfo[ac->colType].effect, hitPos);

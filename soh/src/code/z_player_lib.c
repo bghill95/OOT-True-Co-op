@@ -879,8 +879,16 @@ s32 Player_HoldsTwoHandedWeapon(Player* this) {
     }
 }
 
+// Co-op: a remote player's puppet must show ITS owner's knife, not our save's.
+// Anchor answers -1 for anything that is not one of its puppets.
+s32 Anchor_PuppetBgsBroken(Player* player);
+static s32 Player_BgsBroken(Player* this) {
+    s32 puppet = Anchor_PuppetBgsBroken(this);
+    return (puppet >= 0) ? puppet : (gSaveContext.swordHealth <= 0.0f);
+}
+
 s32 Player_HoldsBrokenKnife(Player* this) {
-    return (this->heldItemAction == PLAYER_IA_SWORD_BIGGORON) && (gSaveContext.swordHealth <= 0.0f);
+    return (this->heldItemAction == PLAYER_IA_SWORD_BIGGORON) && Player_BgsBroken(this);
 }
 
 s32 Player_ActionToBottle(Player* this, s32 actionParam) {
@@ -1370,7 +1378,7 @@ s32 Player_OverrideLimbDrawGameplayDefault(PlayState* play, s32 limbIndex, Gfx**
         if (limbIndex == PLAYER_LIMB_L_HAND) {
             Gfx** dLists = this->leftHandDLists;
 
-            if ((sLeftHandType == PLAYER_MODELTYPE_LH_BGS) && (gSaveContext.swordHealth <= 0.0f)) {
+            if ((sLeftHandType == PLAYER_MODELTYPE_LH_BGS) && Player_BgsBroken(this)) {
                 dLists += 4;
             } else if ((sLeftHandType == PLAYER_MODELTYPE_LH_BOOMERANG) &&
                        (this->stateFlags1 & PLAYER_STATE1_BOOMERANG_THROWN)) {

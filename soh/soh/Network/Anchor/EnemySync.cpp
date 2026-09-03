@@ -789,10 +789,17 @@ static void ApplyPose(Actor* actor, TrackedState& st, RemoteEnemyState& r) {
             }
         }
     };
+    // OnColliderSetAC AddCollider()s acCollider, so it is normally already in
+    // the list. The JntSph drag is an accumulating +=, so dragging it a second
+    // time put the hitbox a full delta AHEAD of the sprite instead of on it.
+    bool acDragged = false;
     for (Collider* col : st.colliders) {
         drag(col);
+        acDragged = acDragged || (col == st.acCollider);
     }
-    drag(st.acCollider);
+    if (!acDragged) {
+        drag(st.acCollider);
+    }
     if (r.hasScale) {
         actor->scale = r.scale;
     }

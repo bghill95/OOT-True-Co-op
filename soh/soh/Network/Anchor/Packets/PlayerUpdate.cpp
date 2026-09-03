@@ -80,6 +80,11 @@ void Anchor::SendPacket_PlayerUpdate() {
     payload["stickFlame"] = player->unk_860;
     payload["stickLen"] = player->unk_85C;
     payload["bowStr"] = player->unk_858; // bow string draw amount
+    payload["mask"] = player->currentMask;   // worn mask (Keaton/Skull/Spooky/Bunny/...)
+    payload["mws"] = player->meleeWeaponState; // sword/stick swing trail
+    payload["bgs"] = (gSaveContext.swordHealth <= 0.0f); // snapped Giant's Knife
+    payload["giId"] = (player->unk_862 != 0) ? (s16)player->getItemEntry.getItemId : (s16)-1; // item held up
+    payload["giMod"] = (s8)player->getItemEntry.modIndex;
     payload["actionVar1"] = player->av1.actionVar1;
     if ((player->stateFlags1 & PLAYER_STATE1_BOOMERANG_THROWN) && player->boomerangActor != NULL &&
         player->boomerangActor->update != NULL) {
@@ -135,6 +140,11 @@ void Anchor::HandlePacket_PlayerUpdate(nlohmann::json payload) {
         client.dekuStickFlame = payload.value("stickFlame", (s16)0);
         client.dekuStickLength = payload.value("stickLen", 0.0f);
         client.bowString = payload.value("bowStr", 0.0f);
+        client.currentMask = (u8)payload.value("mask", 0);
+        client.meleeWeaponState = (s8)payload.value("mws", 0);
+        client.bgsBroken = payload.value("bgs", false);
+        client.giId = (s16)payload.value("giId", -1);
+        client.giMod = (s8)payload.value("giMod", 0);
         client.actionVar1 = payload["actionVar1"].get<s8>();
         client.boomActive = payload.contains("boomPos");
         if (client.boomActive) {

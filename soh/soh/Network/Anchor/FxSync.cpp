@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <unordered_map>
+#include <unordered_set>
 
 extern "C" {
 #include "variables.h"
@@ -17,7 +18,21 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_Boom/z_en_boom.h"
 #include "src/overlays/actors/ovl_En_Arrow/z_en_arrow.h"
 #include "src/overlays/actors/ovl_Arms_Hook/z_arms_hook.h"
+#include "src/overlays/actors/ovl_Bg_Po_Event/z_bg_po_event.h"
+#include "src/overlays/actors/ovl_En_G_Switch/z_en_g_switch.h"
+#include "src/overlays/effects/ovl_Effect_Ss_HitMark/z_eff_ss_hitmark.h"
 extern PlayState* gPlayState;
+// z_en_g_switch.c: silver-rupee tally accessor + action funcs.
+s16* EnGSwitch_CoopCollectedCount(void);
+void EnGSwitch_SilverRupeeIdle(EnGSwitch* self, PlayState* play);
+void EnGSwitch_SilverRupeeCollected(EnGSwitch* self, PlayState* play);
+// z_bg_po_event.c: file-scope (non-static) puzzle state + painting action funcs.
+extern u8 sBgPoEventPuzzleState;
+void BgPoEvent_PaintingEmpty(BgPoEvent* self, PlayState* play);
+void BgPoEvent_PaintingAppear(BgPoEvent* self, PlayState* play);
+void BgPoEvent_PaintingPresent(BgPoEvent* self, PlayState* play);
+void BgPoEvent_PaintingVanish(BgPoEvent* self, PlayState* play);
+void BgPoEvent_PaintingBurn(BgPoEvent* self, PlayState* play);
 // z_player.c internal, already called cross-file by En_Partner.
 void Player_RequestQuake(PlayState* play, s32 speed, s32 y, s32 countdown);
 }
@@ -30,6 +45,9 @@ enum FxEventKind : uint8_t {
     FX_EV_NUT = 2,       // deku nut impact flash (pos)
     FX_EV_HAMMER = 3,    // hammer ground shockwave (pos)
     FX_EV_HOOKSPARK = 4, // hookshot reflected off a wall (pos)
+    FX_EV_POEPAINT = 5,  // Forest Temple portrait chain decided its next painting (pt, pi, ev, nx)
+    FX_EV_SHIELD = 6,    // our shield deflected a hit (pos, metal)
+    FX_EV_SILVER = 7,    // we picked up a silver rupee (home pos): peers tally it and remove theirs
 };
 
 // --- Spells -----------------------------------------------------------------
@@ -77,6 +95,11 @@ bool SyncEnabled() {
 // substitution patched into ArmsHook_Draw.
 
 struct ProjSnap {
+    // Stable per-arrow identity (low bits of the OWNER's actor pointer). Actors
+    // are PREPENDED to their category list, so firing a second arrow shifts the
+    // first one's slot: pairing snapshot slot i with replica slot i made two
+    // arrows of the same type swap identities mid-flight.
+    uint32_t id = 0;
     int16_t params = 0;
     Vec3f pos = { 0, 0, 0 };
     Vec3s rot = { 0, 0, 0 };
@@ -86,6 +109,7 @@ struct ProjSnap {
 };
 
 struct ProjReplica {
+    uint32_t id = 0; // matches ProjSnap::id
     Actor* actor = NULL;
     uint8_t grace = 0; // update frames still allowed after spawn
     bool armed = false; // Fly handoff granted (release moment)
@@ -134,6 +158,7 @@ void CollectProjectiles(nlohmann::json& payload) {
         }
         EnArrow* ar = (EnArrow*)a;
         nlohmann::json e;
+        e["id"] = (uint32_t)((uintptr_t)a & 0xFFFFFFFFu); // stable while this arrow lives
         e["p"] = a->params;
         e["pos"] = a->world.pos;
         e["rot"] = a->shape.rot;
@@ -165,6 +190,7 @@ void IngestPlayerProjectiles(uint32_t clientId, const nlohmann::json& payload) {
     if (payload.contains("projA")) {
         for (auto& e : payload["projA"]) {
             ProjSnap s;
+            s.id = e.contains("id") ? e["id"].get<uint32_t>() : 0;
             s.params = e["p"].get<int16_t>();
             s.pos = e["pos"].get<Vec3f>();
             s.rot = e["rot"].get<Vec3s>();
@@ -181,17 +207,118 @@ void IngestPlayerProjectiles(uint32_t clientId, const nlohmann::json& payload) {
     }
 }
 
+// One boomerang replica per remote client (defined here so ReapClientProjectiles
+// below can drop it together with that client's arrows and hookshot).
+static std::unordered_map<uint32_t, Actor*> sBoomReplicas;
+
+// unk_A73 is the local player's "just fired" counter. A replica arrow needs it
+// non-zero for its single graced vanilla update or EnArrow_Shoot kills itself
+// (z_en_arrow.c:211), but bosses read the SAME field to react to OUR shots
+// (Ganondorf/Twinrova deflect, Gohma's stun window). So borrow it and give it
+// back as soon as no replica still needs it, instead of leaving it set.
+static bool sA73Borrowed = false;
+static uint8_t sA73Saved = 0;
+
+static void BorrowFiredCounter() {
+    Player* lp = GET_PLAYER(gPlayState);
+    if (!sA73Borrowed) {
+        sA73Saved = lp->unk_A73;
+        sA73Borrowed = true;
+    }
+    lp->unk_A73 = 4;
+}
+
+static void ReleaseFiredCounterIfIdle() {
+    if (!sA73Borrowed || gPlayState == NULL) {
+        return;
+    }
+    for (auto& [cid, other] : sProj) {
+        for (auto& r : other.arrowReplicas) {
+            if (r.actor != NULL && r.grace > 0) {
+                return; // still mid-handoff
+            }
+        }
+    }
+    Player* lp = GET_PLAYER(gPlayState);
+    if (lp->unk_A73 <= 4) { // untouched since we set it: nothing of the player's to lose
+        lp->unk_A73 = sA73Saved;
+    }
+    sA73Borrowed = false;
+}
+
+// Kills every replica owned by one client and drops the pointers.
+//
+// Replicas are only ticked from DummyPlayer_Update, but Anchor::RefreshClientActors
+// Actor_Kills EVERY dummy Player on any roster change (join, leave, disconnect).
+// Without this the replicas linger with their update suppressed, are never
+// reaped, and the hookshot replica keeps `parent` pointing at the freed arena
+// block -- which ArmsHook_Draw dereferences on every draw frame.
+void ReapClientProjectiles(uint32_t clientId) {
+    auto it = sProj.find(clientId);
+    if (it != sProj.end()) {
+        PuppetProjectiles& pp = it->second;
+        for (auto& r : pp.arrowReplicas) {
+            if (r.actor != NULL) {
+                if (r.actor->update != NULL) {
+                    Actor_Kill(r.actor);
+                }
+                r.actor = NULL;
+            }
+        }
+        pp.arrowReplicas.clear();
+        pp.arrows.clear();
+        if (pp.hookReplica != NULL) {
+            pp.hookReplica->parent = NULL; // never leave a dangling parent for the draw
+            if (pp.hookReplica->update != NULL) {
+                Actor_Kill(pp.hookReplica);
+            }
+            pp.hookReplica = NULL;
+        }
+        pp.hookActive = false;
+        pp.hookGrace = 0;
+    }
+    auto bit = sBoomReplicas.find(clientId);
+    if (bit != sBoomReplicas.end()) {
+        if (bit->second != NULL && bit->second->update != NULL) {
+            Actor_Kill(bit->second);
+        }
+        sBoomReplicas.erase(bit);
+    }
+}
+
 void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
     if (gPlayState == NULL || !SyncEnabled()) {
         return;
     }
+    if (puppet == NULL || puppet->update == NULL) {
+        ReapClientProjectiles(clientId); // owner gone: nothing left to pin them to
+        return;
+    }
     PuppetProjectiles& pp = sProj[clientId];
 
-    // Arrows: snapshot slot i pairs with replica slot i.
-    for (size_t i = 0; i < pp.arrows.size(); i++) {
-        if (i >= pp.arrowReplicas.size()) {
-            pp.arrowReplicas.push_back({});
+    // Arrows are matched by the owner's stable arrow id, never by slot.
+    std::vector<ProjReplica> kept;
+    kept.reserve(pp.arrows.size());
+    for (auto& s : pp.arrows) {
+        ProjReplica found;
+        for (auto& r : pp.arrowReplicas) {
+            if (r.actor != NULL && r.id == s.id) {
+                found = r;
+                r.actor = NULL; // claimed; whatever is left over is reaped below
+                break;
+            }
         }
+        found.id = s.id;
+        kept.push_back(found);
+    }
+    for (auto& r : pp.arrowReplicas) { // snapshots that disappeared
+        if (r.actor != NULL && r.actor->update != NULL) {
+            Actor_Kill(r.actor); // the elemental child self-kills on parent->update == NULL
+        }
+    }
+    pp.arrowReplicas.swap(kept);
+
+    for (size_t i = 0; i < pp.arrows.size(); i++) {
         ProjReplica& r = pp.arrowReplicas[i];
         ProjSnap& s = pp.arrows[i];
         if (r.actor != NULL && (r.actor->update == NULL || r.actor->params != s.params)) {
@@ -201,7 +328,7 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
             r.actor = NULL;
         }
         if (r.actor == NULL) {
-            GET_PLAYER(gPlayState)->unk_A73 = 4; // EnArrow_Shoot self-kills at 0 (En_Partner precedent)
+            BorrowFiredCounter();
             r.actor = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_ARROW, s.pos.x, s.pos.y, s.pos.z,
                                   s.rot.x, s.rot.y, 0, s.params, false);
             r.grace = 0;
@@ -216,6 +343,7 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
         if (!s.nocked && !r.armed) {
             r.armed = true;
             r.grace = 1;
+            BorrowFiredCounter(); // the graced update runs EnArrow_Shoot
         }
         if (r.actor != NULL) {
             EnArrow* ar = (EnArrow*)r.actor;
@@ -240,13 +368,7 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
             }
         }
     }
-    while (pp.arrowReplicas.size() > pp.arrows.size()) {
-        ProjReplica& r = pp.arrowReplicas.back();
-        if (r.actor != NULL && r.actor->update != NULL) {
-            Actor_Kill(r.actor); // the elemental child self-kills on parent->update == NULL
-        }
-        pp.arrowReplicas.pop_back();
-    }
+    ReleaseFiredCounterIfIdle();
 
     // Hookshot: fully suppressed, pinned, chained to the puppet via parent.
     // Hysteresis: survive short stream gaps instead of kill/respawn flicker.
@@ -297,12 +419,65 @@ extern "C" void FxSync_OnHammerShockwave(Vec3f* pos) {
     ESYNC_LOG("[FxSync] hammer shockwave tx");
 }
 
+// Forest Temple Poe paintings (Joelle/Beth): the portrait hops between the
+// three paintings of a chain, the next one picked at RANDOM (BgPoEvent_
+// NextPainting), and only the copy that got shot/approached knows the pick.
+// Broadcast (type, index, event, chosen next) so the peer applies the same
+// pick instead of rolling its own; the Poe itself is an announced dynamic spawn.
+extern "C" void FxSync_OnPoePainting(Actor* painting, s32 ev) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || painting == NULL) {
+        return;
+    }
+    BgPoEvent* p = (BgPoEvent*)painting;
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_POEPAINT;
+    payload["pt"] = p->type;
+    payload["pi"] = p->index;
+    payload["ev"] = ev;
+    payload["nx"] = sBgPoEventPuzzleState;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+}
+
+// Shield deflection sparks spawn from the blocker's own collision pass only.
+extern "C" void FxSync_OnShieldHit(Vec3f* pos, s32 metal) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || pos == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_SHIELD;
+    payload["pos"] = *pos;
+    payload["metal"] = metal != 0;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+}
+
+// --- Silver rupees ----------------------------------------------------------
+// En_G_Switch tallies pickups in a file static, per client: split 3/2 between
+// two players, nobody reaches 5 and the door never opens. Announce our pickups
+// (the Idle -> Collected edge); the peer bumps its tally and removes its copy.
+static std::unordered_set<Actor*> sSilverAnnounced;
+
+static void OnSilverRupeePreUpdate(Actor* a) {
+    EnGSwitch* g = (EnGSwitch*)a;
+    if (g->type != ENGSWITCH_SILVER_RUPEE || g->actionFunc != EnGSwitch_SilverRupeeCollected ||
+        sSilverAnnounced.contains(a)) {
+        return;
+    }
+    sSilverAnnounced.insert(a);
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_SILVER;
+    payload["pos"] = a->home.pos;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] silver rupee tx");
+}
+
 // --- Puppet boomerang -------------------------------------------------------
 // One replica per remote client, spawned while their stream says "in flight"
 // and killed when it stops (catch, drop, scene change). The pin happens here;
 // suppression happens in the ShouldActorUpdate hook below.
 
-static std::unordered_map<uint32_t, Actor*> sBoomReplicas;
 
 void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw, int16_t pitch) {
     if (gPlayState == NULL || !SyncEnabled()) {
@@ -333,6 +508,7 @@ void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw,
 }
 
 static void Reset() {
+    sSilverAnnounced.clear();
     sSpellReplicas.clear();
     sTorches.clear();
     sTorchByKey.clear();
@@ -466,6 +642,88 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             return;
         }
 
+        if (kind == FX_EV_POEPAINT) {
+            uint8_t pt = payload.at("pt").get<uint8_t>();
+            uint8_t pi = payload.at("pi").get<uint8_t>();
+            uint8_t ev = payload.at("ev").get<uint8_t>();
+            uint8_t nx = payload.at("nx").get<uint8_t>();
+            if (ev != 2) {
+                sBgPoEventPuzzleState = nx; // the Empty painting with this index appears on its own
+            }
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_BG].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_BG_PO_EVENT) {
+                    continue;
+                }
+                BgPoEvent* p = (BgPoEvent*)a;
+                if (p->type != pt || p->type < 2) {
+                    continue;
+                }
+                bool showing = p->actionFunc == BgPoEvent_PaintingPresent ||
+                               p->actionFunc == BgPoEvent_PaintingAppear || p->actionFunc == BgPoEvent_PaintingVanish;
+                if (p->index == pi) {
+                    if (ev == 0) {
+                        if (showing) { // portrait left this painting: blank it (no fade, the sender already faded)
+                            p->timer = 255;
+                            p->actionFunc = BgPoEvent_PaintingEmpty;
+                        }
+                    } else if (p->actionFunc != BgPoEvent_PaintingBurn) {
+                        // shot: same unlink + burn as vanilla, minus the shooter's spawn/cutscene
+                        if (a->parent != NULL) {
+                            a->parent->child = NULL;
+                            a->parent = NULL;
+                        }
+                        if (a->child != NULL) {
+                            a->child->parent = NULL;
+                            a->child = NULL;
+                        }
+                        p->timer = 20;
+                        p->actionFunc = BgPoEvent_PaintingBurn;
+                        if (ev == 1) {
+                            Audio_PlayActorSound2(a, NA_SE_EN_PO_LAUGH2);
+                        }
+                    }
+                } else if (ev != 2 && p->index != nx && showing) {
+                    p->timer = 255; // a stale local portrait elsewhere in the chain
+                    p->actionFunc = BgPoEvent_PaintingEmpty;
+                }
+            }
+            ESYNC_LOG("[FxSync] poe painting rx type={} idx={} ev={} next={}", pt, pi, ev, nx);
+            return;
+        }
+
+        if (kind == FX_EV_SHIELD) {
+            Vec3f pos = payload.at("pos").get<Vec3f>();
+            if (payload.value("metal", true)) {
+                EffectSsHitMark_SpawnFixedScale(gPlayState, EFFECT_HITMARK_METAL, &pos);
+                CollisionCheck_SpawnShieldParticlesMetal(gPlayState, &pos);
+                SoundSource_PlaySfxAtFixedWorldPos(gPlayState, &pos, 4, NA_SE_IT_SHIELD_REFLECT_SW);
+            } else {
+                CollisionCheck_SpawnShieldParticles(gPlayState, &pos);
+                SoundSource_PlaySfxAtFixedWorldPos(gPlayState, &pos, 4, NA_SE_IT_REFLECTION_WOOD);
+            }
+            return;
+        }
+
+        if (kind == FX_EV_SILVER) {
+            Vec3f pos = payload.at("pos").get<Vec3f>();
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_PROP].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_EN_G_SWITCH) {
+                    continue;
+                }
+                EnGSwitch* g = (EnGSwitch*)a;
+                if (g->type != ENGSWITCH_SILVER_RUPEE || g->actionFunc != EnGSwitch_SilverRupeeIdle ||
+                    Math_Vec3f_DistXYZ(&a->home.pos, &pos) > 40.0f) {
+                    continue;
+                }
+                (*EnGSwitch_CoopCollectedCount())++; // the tracker plays the note / sets the flag from this
+                sSilverAnnounced.insert(a);           // a remote pickup is never re-announced
+                Actor_Kill(a);
+                ESYNC_LOG("[FxSync] silver rupee rx -> tally {}", *EnGSwitch_CoopCollectedCount());
+                break;
+            }
+            return;
+        }
+
         if (kind == FX_EV_TORCH) {
             uint64_t key = payload.at("key").get<uint64_t>();
             auto it = sTorchByKey.find(key);
@@ -529,6 +787,9 @@ void RegisterHooks(bool isConnected) {
         }
     });
 
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_G_SWITCH, isConnected,
+                 [](void* actor, bool* should) { OnSilverRupeePreUpdate((Actor*)actor); });
+
     COND_ID_HOOK(OnActorInit, ACTOR_OBJ_SYOKUDAI, isConnected, [](void* actor) { OnTorchInit((Actor*)actor); });
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_OBJ_SYOKUDAI, isConnected,
                  [](void* actor, bool* should) { OnTorchPreUpdate((Actor*)actor); });
@@ -536,6 +797,17 @@ void RegisterHooks(bool isConnected) {
     COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
         Actor* a = (Actor*)actorRef;
         sSpellReplicas.erase(a);
+        sSilverAnnounced.erase(a);
+        // A dying puppet takes its projectile replicas with it: they are only
+        // ticked from DummyPlayer_Update, so nothing else would ever reap them.
+        if (Anchor::Instance != nullptr) {
+            for (auto& [cid, client] : Anchor::Instance->clients) {
+                if ((Actor*)client.player == a) {
+                    ReapClientProjectiles(cid);
+                    break;
+                }
+            }
+        }
         for (auto it = sBoomReplicas.begin(); it != sBoomReplicas.end();) {
             it = (it->second == a) ? sBoomReplicas.erase(it) : std::next(it);
         }

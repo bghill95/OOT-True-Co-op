@@ -9,6 +9,11 @@
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 
+// Co-op (FxSync): the portrait chain picks its next painting at RANDOM, so the
+// chosen index is broadcast at the moment it is decided (ev: 0 = portrait
+// moved on, 1 = painting shot with a next one, 2 = last painting shot).
+void FxSync_OnPoePainting(Actor* painting, s32 ev);
+
 #define FLAGS 0
 
 void BgPoEvent_Init(Actor* thisx, PlayState* play);
@@ -511,6 +516,7 @@ void BgPoEvent_PaintingVanish(BgPoEvent* this, PlayState* play) {
     this->timer += 20;
     if (this->timer >= 255) {
         BgPoEvent_NextPainting(this);
+        FxSync_OnPoePainting(&this->dyna.actor, 0);
         this->actionFunc = BgPoEvent_PaintingEmpty;
     }
 }
@@ -518,6 +524,7 @@ void BgPoEvent_PaintingVanish(BgPoEvent* this, PlayState* play) {
 void BgPoEvent_PaintingPresent(BgPoEvent* this, PlayState* play) {
     Actor* thisx = &this->dyna.actor;
     Player* player = GET_PLAYER(play);
+    s32 hasNext;
 
     DECR(this->timer);
 
@@ -536,7 +543,9 @@ void BgPoEvent_PaintingPresent(BgPoEvent* this, PlayState* play) {
         Audio_PlayActorSound2(thisx, NA_SE_EN_PO_LAUGH);
         this->actionFunc = BgPoEvent_PaintingVanish;
     } else if (this->collider.base.acFlags & AC_HIT) {
-        if (!BgPoEvent_NextPainting(this)) {
+        hasNext = BgPoEvent_NextPainting(this);
+        FxSync_OnPoePainting(thisx, hasNext ? 1 : 2);
+        if (!hasNext) {
             Actor_Spawn(&play->actorCtx, play, ACTOR_EN_PO_SISTERS, thisx->world.pos.x, thisx->world.pos.y - 40.0f,
                         thisx->world.pos.z, 0, thisx->shape.rot.y, 0, thisx->params + ((this->type - 1) << 8), true);
             OnePointCutscene_Init(play, 3160, 80, thisx, MAIN_CAM);

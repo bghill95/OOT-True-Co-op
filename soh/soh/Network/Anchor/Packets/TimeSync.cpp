@@ -94,6 +94,17 @@ void Anchor::HandlePacket_TimeSync(nlohmann::json payload) {
     uint16_t t = payload["t"].get<uint16_t>();
     int16_t diff = (int16_t)(t - gSaveContext.dayTime); // u16 wrap-aware
 
+    // Indoors envCtx.timeIncrement is 0, so dayTime never advances there. The
+    // authority is elected purely on lowest clientId, so the moment that player
+    // walks into a house their frozen value was republished every second and
+    // dragged every outdoor peer back -- world time stopped for everybody.
+    // Natural flow only ever moves forward, so a small BACKWARD correction can
+    // only be that frozen case; a real one (Sun's Song, sleep, debug warp)
+    // arrives as `force` with a jump far past this window.
+    if (!force && diff < 0 && diff > -JUMP_THRESHOLD && gPlayState->envCtx.timeIncrement != 0) {
+        return;
+    }
+
     // A peer force-set the clock across day/night (Sun's Song, sleep, debug
     // warp). A bare dayTime snap skips every transition trigger — sky, ambience
     // and spawns stay stale until the next scene load, and time-frozen areas

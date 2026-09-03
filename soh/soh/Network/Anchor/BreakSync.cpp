@@ -277,6 +277,13 @@ void Ingest(const nlohmann::json& payload) {
                         anim = 0; // VERT_L base; local flip may mirror
                         break;
                 }
+                // Two cuts ingested in the same packet drain (both before either
+                // target updates) used to save the ALREADY-SPOOFED value, and the
+                // first sign's restore was lost -- leaving the local player's
+                // meleeWeaponAnimation stuck on a spoofed index for good.
+                if (sKanbanAnimOverride) {
+                    localPlayer->meleeWeaponAnimation = sKanbanSavedAnim;
+                }
                 sKanbanSavedAnim = localPlayer->meleeWeaponAnimation;
                 sKanbanAnimOverride = true;
                 sKanbanOverrideTarget = actor;
@@ -371,8 +378,13 @@ void RegisterHooks(bool isConnected) {
         // regrowing stump) never trips the GRASS_DESTROYED pre-update edge —
         // the flag is set and the actor killed in the same update frame. The
         // announced latch keeps this from double-sending with the flag edge.
+        // ROCK_LARGE (EN_ISHI params bit 0) is excluded: it can only be lifted and
+        // thrown, never hit-broken, so Ingest bails out of the replay switch --
+        // but only AFTER latching remoteBreaking and forcing culling off, which
+        // then blocks that rock from every later break sync in the scene.
         if (SyncEnabled() && (a->id == ACTOR_OBJ_TSUBO || a->id == ACTOR_OBJ_KIBAKO || a->id == ACTOR_OBJ_KIBAKO2 ||
-                              a->id == ACTOR_EN_ISHI || a->id == ACTOR_OBJ_COMB || a->id == ACTOR_EN_KUSA)) {
+                              (a->id == ACTOR_EN_ISHI && !(a->params & 1)) || a->id == ACTOR_OBJ_COMB ||
+                              a->id == ACTOR_EN_KUSA)) {
             SendBreak(a, it->second);
         }
         auto bk = sByKey.find(it->second.key);

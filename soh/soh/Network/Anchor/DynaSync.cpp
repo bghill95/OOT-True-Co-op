@@ -11,6 +11,7 @@
 extern "C" {
 #include "variables.h"
 #include "functions.h"
+#include "src/overlays/actors/ovl_Bg_Po_Event/z_bg_po_event.h"
 extern PlayState* gPlayState;
 }
 
@@ -82,6 +83,8 @@ static bool IsSyncedDynaActor(const Actor* actor) {
 // by the claimant instead of the scene authority while a claim is fresh.
 static bool IsClaimableDynaActor(const Actor* actor) {
     switch (actor->id) {
+        case ACTOR_BG_PO_EVENT: // Forest Temple: Amy's picture blocks (the paintings share the id, type >= 2)
+            return ((const BgPoEvent*)actor)->type < 2;
         case ACTOR_OBJ_OSHIHIKI:       // push blocks (every dungeon)
         case ACTOR_BG_HIDAN_ROCK:      // Fire Temple push stone
         case ACTOR_BG_MORI_KAITENKABE: // Forest Temple: push-rotated basement wall
@@ -344,6 +347,13 @@ void PerFrameTick() {
     if (!entries.empty()) {
         Anchor::Instance->SendPacket_DynaState(entries);
     }
+}
+
+// True while this copy is a mirror of a fresh remote stream (authority or a
+// remote claimant): its scripted motion is not ours to run.
+bool IsRemoteDriven(const Actor* actor) {
+    auto it = sTracked.find(const_cast<Actor*>(actor));
+    return it != sTracked.end() && it->second.suppressed;
 }
 
 void RegisterHooks(bool isConnected) {

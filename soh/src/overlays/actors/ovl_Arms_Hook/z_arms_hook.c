@@ -321,6 +321,12 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play) {
     // in this fork, not ACTOR_PLAYER) — any non-local parent means a puppet we
     // attached. Draw the chain from its hand, and skip the local-only gate.
     if ((this->actor.parent != NULL) && (this->actor.parent != &player->actor)) {
+        // The puppet died this frame (Actor_Kill clears update, the arena block
+        // is freed right after): reading its bodyPartsPos would be a use-after-
+        // free every draw frame. Drop the replica's draw instead.
+        if (this->actor.parent->update == NULL) {
+            return;
+        }
         player = (Player*)this->actor.parent;
         isPuppetOwned = 1;
     }

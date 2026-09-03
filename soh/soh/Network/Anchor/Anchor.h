@@ -60,6 +60,11 @@ typedef struct {
     s16 dekuStickFlame; // player->unk_860: burning deku stick timer
     f32 dekuStickLength; // player->unk_85C: remaining stick fraction (draw scale + tip reach)
     f32 bowString; // player->unk_858: bow string draw amount (stale on puppets = bow stuck drawn)
+    u8 currentMask;  // player->currentMask: worn mask (PlayerMask). Never streamed before -> puppets showed no mask.
+    s8 meleeWeaponState; // player->meleeWeaponState: swing trail live (the puppet owns a blure from Player_Init)
+    bool bgsBroken;      // owner's gSaveContext.swordHealth <= 0: snapped Giant's Knife (model reads OUR save otherwise)
+    s16 giId;            // get-item presentation: getItemEntry.getItemId while unk_862 != 0, else -1
+    s8 giMod;            // ... and its modIndex (MOD_NONE / MOD_RANDOMIZER)
     s8 actionVar1;
     bool boomActive; // thrower's EN_BOOM is in flight (boomPos/boomYaw valid)
     Vec3f boomPos;

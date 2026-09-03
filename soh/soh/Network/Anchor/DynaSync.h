@@ -45,6 +45,10 @@ namespace DynaSync {
 // disconnected.
 void RegisterHooks(bool isConnected);
 
+// True while the given tracked DynaPoly actor is currently mirroring a fresh
+// remote stream (its update is suppressed / position overwritten).
+bool IsRemoteDriven(const struct Actor* actor);
+
 // Per-frame streaming (authority side). Driven by the Anchor per-frame
 // dispatcher in explicit tick order, right after EnemySync::PerFrameTick
 // (reuses its authority election).

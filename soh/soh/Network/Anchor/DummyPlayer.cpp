@@ -2,6 +2,9 @@
 #include "soh/Network/Anchor/EnemySync.h"
 #include "soh/Network/Anchor/FxSync.h"
 #include "soh/Enhancements/nametag.h"
+#include "soh/Enhancements/item-tables/ItemTableManager.h"
+#include "soh/Enhancements/randomizer/randomizer.h"
+#include <unordered_map>
 #include "soh/frame_interpolation.h"
 
 extern "C" {
@@ -12,7 +15,11 @@ extern PlayState* gPlayState;
 
 void Player_UseItem(PlayState* play, Player* player, s32 item);
 void Player_Draw(Actor* actor, PlayState* play);
+void func_8083AE40(Player* player, s16 objectId); // z_player.c: DMA the get-item object into giObjectSegment
 }
+
+// Get-item id last applied per puppet (the object DMA is only re-issued on change).
+static std::unordered_map<uint32_t, int16_t> sPuppetGi;
 
 // Hijacking player->zTargetActiveTimer (unused s32 for the dummy) to store the clientId for convenience
 #define DUMMY_CLIENT_ID player->zTargetActiveTimer
@@ -137,6 +144,29 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
     player->unk_862 = client.unk_862;
     player->unk_85C = client.dekuStickLength; // stick draw scale + weapon-tip reach (z_player_lib.c)
     player->unk_858 = client.bowString;       // bow string draw amount — stale value froze the bow drawn
+    player->currentMask = client.currentMask; // mask is drawn from the Player struct by Player_Draw
+    player->meleeWeaponState = client.meleeWeaponState; // swing trail; the puppet got its own blure in Player_Init
+    // Get-item presentation (item held overhead, bottle catch, trade show-off):
+    // unk_862 was already streamed, but the entry + object were never set, so the
+    // puppet drew nothing. Player_Init gave it a giObjectSegment buffer; load the
+    // owner's object into it the same way Player does (func_8083AE40).
+    {
+        auto itg = sPuppetGi.find(client.clientId);
+        if (itg == sPuppetGi.end() || itg->second != client.giId) {
+            sPuppetGi[client.clientId] = client.giId;
+            if (client.giId < 0) {
+                player->getItemEntry = GetItemEntry GET_ITEM_NONE;
+            } else {
+                GetItemEntry entry = (client.giMod == MOD_RANDOMIZER)
+                    ? Rando::StaticData::RetrieveItem(static_cast<RandomizerGet>(client.giId)).GetGIEntry_Copy()
+                    : ItemTableManager::Instance->RetrieveItemEntry(MOD_NONE, client.giId);
+                player->getItemEntry = entry;
+                if (player->giObjectSegment != NULL) {
+                    func_8083AE40(player, entry.objectId);
+                }
+            }
+        }
+    }
     player->av1.actionVar1 = client.actionVar1;
 
     // Burning deku stick: on the real player the flame is an effect spawned
@@ -252,4 +282,19 @@ void DummyPlayer_Draw(Actor* actor, PlayState* play) {
 }
 
 void DummyPlayer_Destroy(Actor* actor, PlayState* play) {
+    sPuppetGi.erase((uint32_t)((Player*)actor)->zTargetActiveTimer);
+}
+
+// z_player_lib.c asks whether a Player struct is one of our puppets with a
+// snapped Giant's Knife: 1/0 for a puppet, -1 for anything else (the local
+// player, Dark Link's Player struct...) so the caller falls back to the save.
+extern "C" s32 Anchor_PuppetBgsBroken(Player* p) {
+    if (Anchor::Instance == nullptr || gPlayState == NULL || p == NULL || p == GET_PLAYER(gPlayState)) {
+        return -1;
+    }
+    auto it = Anchor::Instance->clients.find((uint32_t)p->zTargetActiveTimer);
+    if (it == Anchor::Instance->clients.end() || it->second.player != p) {
+        return -1;
+    }
+    return it->second.bgsBroken ? 1 : 0;
 }

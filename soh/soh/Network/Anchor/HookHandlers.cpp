@@ -6,6 +6,7 @@
 #include "BreakSync.h"
 #include "FxSync.h"
 #include "CarrySync.h"
+#include "FlagReplay.h"
 #include "PuppetFairy.h"
 #include "CoopWarp.h"
 #include "CoopLifeSync.h"
@@ -442,6 +443,9 @@ void Anchor::RegisterHooks() {
 
     // Scene-placed carryable props: rocks, pots (see CarrySync.cpp)
     CarrySync::RegisterHooks(isConnected);
+
+    // Init-only flag readers reacting to a REMOTE flag (see FlagReplay.cpp)
+    FlagReplay::RegisterHooks(isConnected);
 
     // Cosmetic companion fairy per remote-player puppet (see PuppetFairy.cpp)
     RegisterPuppetFairyHooks(isConnected);

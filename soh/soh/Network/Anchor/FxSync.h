@@ -33,6 +33,8 @@ void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw,
 void CollectProjectiles(nlohmann::json& payload);
 void IngestPlayerProjectiles(uint32_t clientId, const nlohmann::json& payload);
 void TickPuppetProjectiles(uint32_t clientId, struct Actor* puppet);
+// Kills one client's projectile replicas (its puppet died / it went offline).
+void ReapClientProjectiles(uint32_t clientId);
 
 } // namespace FxSync
 
