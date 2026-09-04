@@ -42,6 +42,9 @@ static bool IsSyncedCarryActor(const Actor* actor) {
         case ACTOR_EN_KUSA:     // grass tufts: cut is BreakSync's, but they are
                                 // liftable and throwable like a pot (Actor_OfferCarry
                                 // in EnKusa_Main), and that half was unsynced
+        case ACTOR_EN_RU1:      // Princess Ruto (Jabu-Jabu): carried and thrown like a
+                                // pot (Actor_OfferCarry), lands by her own physics and
+                                // presses the blue button herself; keyed by id (PosKey)
             return true;
         default:
             return false;
@@ -58,7 +61,14 @@ struct CarryState {
     int32_t carriedUpdates = 0;     // actor updates run while parented to the puppet
     bool hasPendingThrow = false;   // THROW received before the copy ran its held update
     nlohmann::json pendingThrow;
+    bool cullForced = false; // we set ACTOR_FLAG_UPDATE_CULLING_DISABLED on this copy
+    int32_t uncullTicks = 0; // frames left before handing its culling setting back
 };
+
+// Frames a released copy keeps updating off-camera: long enough for the whole
+// throw arc and its break, short enough that a scene's worth of thrown pots
+// does not stay permanently uncullable.
+static constexpr int32_t UNCULL_RELEASE_TICKS = 200;
 
 static std::unordered_map<Actor*, CarryState> sTracked;
 static std::unordered_map<uint64_t, Actor*> sByKey;
@@ -80,6 +90,13 @@ static void Reset() {
 // breaks and respawns later gets the same key back. Computed at Init, before
 // the actor ever moves; the same binary computes identical floats.
 static uint64_t PosKey(const Actor* actor) {
+    // Princess Ruto: the scene places one copy per room (woken/killed by the
+    // infTable flags, the newcomer kills any older one), so the live instance
+    // sits at a different spawn spot on each client once she was carried
+    // through a door. There is only ever one of her: key her by id alone.
+    if (actor->id == ACTOR_EN_RU1) {
+        return (uint16_t)actor->id;
+    }
     int16_t qx = (int16_t)lroundf(actor->world.pos.x);
     int16_t qy = (int16_t)lroundf(actor->world.pos.y);
     int16_t qz = (int16_t)lroundf(actor->world.pos.z);
@@ -112,10 +129,26 @@ static void SendEvent(Actor* actor, const CarryState& st, uint8_t kind) {
     ESYNC_LOG("[CarrySync] event kind={} key={:#x}", kind, st.key);
 }
 
+// Hands a copy its own culling setting back once it no longer needs to run
+// off-camera. Only ever clears the flag WE forced on at CARRY time: an actor
+// that had it from its own lift path keeps it.
+static void ReleaseCull(Actor* actor, CarryState& st) {
+    if (st.cullForced) {
+        actor->flags &= ~ACTOR_FLAG_UPDATE_CULLING_DISABLED;
+        st.cullForced = false;
+    }
+    st.uncullTicks = 0;
+}
+
 // Clearing the parent + applying the streamed kinematics makes the actor's own
 // release logic run: real local physics, real break-on-impact.
 static void ApplyThrow(Actor* actor, CarryState& st, const nlohmann::json& payload) {
     st.remoteCarried = false;
+    // Keep updating through the flight and the break, then stop: a thrown copy
+    // that stayed uncullable forever kept running its AI (a cucco's gravity,
+    // bgcheck and wander) for the rest of the scene, once per object ever
+    // lifted by a peer.
+    st.uncullTicks = UNCULL_RELEASE_TICKS;
     st.hasPendingThrow = false;
     st.pendingThrow = nullptr;
     actor->parent = NULL; // its own release logic takes over
@@ -150,6 +183,10 @@ static void OnCarryablePreUpdate(Actor* actor, bool* should) {
         return;
     }
     CarryState& st = it->second;
+
+    if (!st.remoteCarried && st.cullForced && st.uncullTicks > 0 && --st.uncullTicks == 0) {
+        ReleaseCull(actor, st);
+    }
 
     if (st.remoteCarried) {
         // Keep the actor parented to the carrier's puppet so its own held
@@ -187,6 +224,7 @@ static void OnCarryablePreUpdate(Actor* actor, bool* should) {
             ESYNC_LOG("[CarrySync] carrier {} lost, releasing key={:#x}", st.carrierClientId, st.key);
             st.remoteCarried = false;
             st.carrierLostTicks = 0;
+            st.uncullTicks = UNCULL_RELEASE_TICKS; // drop where it stands, then cull normally
         }
         st.hadParent = false;
         return;
@@ -256,6 +294,11 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                 // advance to its held state nor ride the puppet, and the pre-update
                 // hook above never fires for it. Keep every remote-carried copy
                 // updating; the actors' own lift path sets the same flag anyway.
+                // Remember whether the flag was ours to clear (ReleaseCull).
+                if (!st.cullForced && !(actor->flags & ACTOR_FLAG_UPDATE_CULLING_DISABLED)) {
+                    st.cullForced = true;
+                }
+                st.uncullTicks = 0;
                 actor->flags |= ACTOR_FLAG_UPDATE_CULLING_DISABLED;
                 break;
             case CARRY_EV_THROW:
@@ -290,6 +333,7 @@ void RegisterHooks(bool isConnected) {
     COND_ID_HOOK(OnActorInit, ACTOR_OBJ_TSUBO, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_EN_NIW, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_EN_KUSA, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
+    COND_ID_HOOK(OnActorInit, ACTOR_EN_RU1, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
 
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_ISHI, isConnected,
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
@@ -299,12 +343,15 @@ void RegisterHooks(bool isConnected) {
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_KUSA, isConnected,
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_RU1, isConnected,
+                 [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
 
     COND_ID_HOOK(OnActorUpdate, ACTOR_EN_ISHI, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
     COND_ID_HOOK(OnActorUpdate, ACTOR_OBJ_TSUBO, isConnected,
                  [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
     COND_ID_HOOK(OnActorUpdate, ACTOR_EN_NIW, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
     COND_ID_HOOK(OnActorUpdate, ACTOR_EN_KUSA, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
+    COND_ID_HOOK(OnActorUpdate, ACTOR_EN_RU1, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
 
     COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
         Actor* a = (Actor*)actorRef;
@@ -322,12 +369,22 @@ void RegisterHooks(bool isConnected) {
             SendEvent(a, it->second, CARRY_EV_GONE);
         }
         // A respawned instance (same key, Obj_Mure2 cycle) may already have
-        // re-claimed the slot; only erase the mapping if it is still ours.
-        auto bk = sByKey.find(it->second.key);
+        // re-claimed the slot; only erase the mapping if it is still ours, and
+        // hand the key to another live instance sharing it (Ruto: the scene
+        // spawns one copy per room and the newcomer kills the older one, so
+        // the survivor must keep receiving the events).
+        uint64_t key = it->second.key;
+        sTracked.erase(it);
+        auto bk = sByKey.find(key);
         if (bk != sByKey.end() && bk->second == a) {
             sByKey.erase(bk);
+            for (auto& [other, st] : sTracked) {
+                if (st.key == key && other->update != NULL) {
+                    sByKey[key] = other;
+                    break;
+                }
+            }
         }
-        sTracked.erase(it);
     });
 }
 

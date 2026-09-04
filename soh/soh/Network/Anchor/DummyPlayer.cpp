@@ -212,7 +212,12 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
         // alone left the puppet holding its previous item while the owner drank
         // from a bottle or played the ocarina.
         s32 modelsGroup = client.modelGroup;
-        if (client.itemAction >= PLAYER_IA_NONE && client.itemAction != client.heldItemAction) {
+        // Bounded before use: Player_ActionToModelGroup indexes a table with it,
+        // and itemAction comes straight off the wire (a corrupt or version-
+        // skewed peer would read past sActionModelGroups into garbage model
+        // groups, which Player_SetModels then uses as further table indices).
+        if (client.itemAction >= PLAYER_IA_NONE && client.itemAction < PLAYER_IA_MAX &&
+            client.itemAction != client.heldItemAction) {
             modelsGroup = Player_ActionToModelGroup(player, client.itemAction);
         }
         auto cur = sPuppetModelsGroup.try_emplace(client.clientId, -1).first;

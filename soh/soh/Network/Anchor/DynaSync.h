@@ -49,6 +49,11 @@ void RegisterHooks(bool isConnected);
 // remote stream (its update is suppressed / position overwritten).
 bool IsRemoteDriven(const struct Actor* actor);
 
+// Soft claim: keep streaming this claimable actor from here (own:2) while a
+// module runs a scripted sequence on it. Yields to a push claim and to a soft
+// claim from a lower client id. Call it every frame the sequence is live.
+void HoldSoftClaim(struct Actor* actor);
+
 // Per-frame streaming (authority side). Driven by the Anchor per-frame
 // dispatcher in explicit tick order, right after EnemySync::PerFrameTick
 // (reuses its authority election).

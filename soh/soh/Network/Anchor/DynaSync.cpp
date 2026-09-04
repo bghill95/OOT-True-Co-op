@@ -79,6 +79,8 @@ static bool IsSyncedDynaActor(const Actor* actor) {
     }
 }
 
+static bool IsRideClaimable(const Actor* actor);
+
 // Claimable: movable by WHOEVER touches it (push blocks). Motion is streamed
 // by the claimant instead of the scene authority while a claim is fresh.
 static bool IsClaimableDynaActor(const Actor* actor) {
@@ -97,6 +99,25 @@ static bool IsClaimableDynaActor(const Actor* actor) {
         case ACTOR_BG_SPOT18_OBJ:      // Goron City: push statue (latches a flag once placed)
             return true;
         default:
+            return IsRideClaimable(actor);
+    }
+}
+
+// Ride-claimables: platforms driven by whoever STANDS on them. The trigger is
+// DYNA_INTERACT_PLAYER_ON_TOP, written by our own Player's bgcheck (a puppet
+// never sets it), never dyna.unk_150. Unlike push blocks their update rewrites
+// world.pos from private state every frame (Obj_Bean replays its path points,
+// Mori_Elevator picks a target from OUR room and flag), so a mirror must be
+// suppressed outright: the pin cannot fight the update. Our rider still claims
+// it — interactFlags are read in the hook, before the update would run.
+static bool IsRideClaimable(const Actor* actor) {
+    switch (actor->id) {
+        case ACTOR_OBJ_BEAN: // magic bean leaf platform (adult); the child soil never moves
+            return LINK_AGE_IN_YEARS == YEARS_ADULT;
+        case ACTOR_BG_MORI_ELEVATOR: // Forest Temple elevator (flag 0x1B stays per-client by design)
+        case ACTOR_OBJ_ELEVATOR:     // stone elevator (Gerudo Training Ground), toggles on each rider
+            return true;
+        default:
             return false;
     }
 }
@@ -108,8 +129,10 @@ struct TrackedDyna {
     bool everSent = false;
     bool suppressed = false;
     bool claimable = false;
+    bool ride = false;          // claimed by standing on it, mirrored with update suppressed
     bool hadUncullFlag = false; // actor's own culling setting, restored on release
     uint64_t localClaimTick = 0; // last tick our player pushed/moved it
+    uint64_t softClaimTick = 0;  // last tick a module asked us to keep driving it (HoldSoftClaim)
     Vec3f prevPos{};             // motion detection for claim upkeep
     Vec3s prevRot{};             // idem — push-rotated walls/mirrors move rot only
 };
@@ -122,13 +145,35 @@ struct RemoteDynaState {
     Vec3s rot{};
 };
 
+// A soft claim ("own":2): the sender is running a scripted sequence on the
+// actor (the Amy puzzle driver) and wants everyone to follow, but yields to a
+// real push claim, and between two soft claimants the lower client id wins.
+struct RemoteSoftClaim {
+    uint64_t rxTick = 0;
+    uint32_t senderId = 0;
+};
+
 static std::unordered_map<Actor*, TrackedDyna> sTracked;
 static std::unordered_map<uint64_t, RemoteDynaState> sRemote;
 static std::unordered_map<uint64_t, uint64_t> sRemoteClaims; // key -> last claimed-entry rx tick
+static std::unordered_map<uint64_t, RemoteSoftClaim> sRemoteSoft; // key -> last soft-claimed entry
 static uint64_t sTick = 0;
 
 static bool Fresh(uint64_t tick, uint64_t window) {
     return tick != 0 && (sTick - tick) <= window;
+}
+
+// True when a fresh remote soft claim outranks our own (any remote soft claim
+// when we hold none; the lower client id when both hold one).
+static bool RemoteSoftWins(const TrackedDyna& st) {
+    auto it = sRemoteSoft.find(st.key);
+    if (it == sRemoteSoft.end() || !Fresh(it->second.rxTick, CLAIM_TICKS)) {
+        return false;
+    }
+    if (!Fresh(st.softClaimTick, CLAIM_TICKS)) {
+        return true;
+    }
+    return Anchor::Instance == nullptr || it->second.senderId < Anchor::Instance->ownClientId;
 }
 
 bool SyncEnabled() {
@@ -153,6 +198,7 @@ static void Reset() {
     sTracked.clear();
     sRemote.clear();
     sRemoteClaims.clear();
+    sRemoteSoft.clear();
 }
 
 // Identity = quantized spawn position + actor id, computed at Init before the
@@ -178,6 +224,7 @@ static void OnDynaRegistered(Actor* actor) {
     TrackedDyna st;
     st.key = PosKey(actor);
     st.claimable = IsClaimableDynaActor(actor);
+    st.ride = IsRideClaimable(actor);
     st.prevPos = actor->world.pos;
     st.hadUncullFlag = (actor->flags & ACTOR_FLAG_UPDATE_CULLING_DISABLED) != 0;
     sTracked[actor] = st;
@@ -215,13 +262,22 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
                      actor->shape.rot.z != st.prevRot.z;
         st.prevPos = actor->world.pos;
         st.prevRot = actor->shape.rot;
-        if (fabsf(((DynaPolyActor*)actor)->unk_150) > 0.001f ||
-            (Fresh(st.localClaimTick, CLAIM_TICKS) && moved && !st.suppressed)) {
+        bool localSignal = st.ride ? (((DynaPolyActor*)actor)->interactFlags & DYNA_INTERACT_PLAYER_ON_TOP) != 0
+                                   : fabsf(((DynaPolyActor*)actor)->unk_150) > 0.001f;
+        if (localSignal || (Fresh(st.localClaimTick, CLAIM_TICKS) && moved && !st.suppressed)) {
             st.localClaimTick = sTick;
         }
         if (Fresh(st.localClaimTick, CLAIM_TICKS)) {
             st.suppressed = false;
             return; // we own it: local simulation, PerFrameTick streams it
+        }
+        // A remote push claim outranks everything else; otherwise a soft claim
+        // we hold keeps our copy live unless a better-ranked peer holds one.
+        auto rc = sRemoteClaims.find(st.key);
+        bool remoteHard = rc != sRemoteClaims.end() && Fresh(rc->second, CLAIM_TICKS);
+        if (!remoteHard && Fresh(st.softClaimTick, CLAIM_TICKS) && !RemoteSoftWins(st)) {
+            st.suppressed = false;
+            return;
         }
         // Unclaimed by us: mirror a fresh remote stream below — the scene
         // authority included (a claimant elsewhere outranks the authority).
@@ -261,7 +317,9 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
     // could never be claimed by anyone but the authority. Its idle AI can't
     // fight the stream — the position is overwritten every frame above, and the
     // first real push (dyna.unk_150) flips it to a local claim before this.
-    if (!st.claimable) {
+    // Ride-claimables are the exception: their update WOULD fight the pin (see
+    // IsRideClaimable), and standing on them needs no update to be detected.
+    if (!st.claimable || st.ride) {
         *should = false;
     }
     // DynaPoly_UpdateBgActorTransforms (end of Actor_UpdateAll) re-reads
@@ -285,7 +343,9 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                 continue;
             }
             uint64_t key = e["key"].get<uint64_t>();
-            if (owned) {
+            if (e.value("own", 0) == 2) {
+                sRemoteSoft[key] = RemoteSoftClaim{ sTick, senderClientId };
+            } else if (owned) {
                 sRemoteClaims[key] = sTick;
             }
             RemoteDynaState& r = sRemote[key];
@@ -320,12 +380,17 @@ void PerFrameTick() {
     for (auto& [actor, st] : sTracked) {
         bool localClaim = st.claimable && Fresh(st.localClaimTick, CLAIM_TICKS);
         bool remoteClaim = false;
+        bool softClaim = false;
         if (st.claimable) {
             auto rc = sRemoteClaims.find(st.key);
             remoteClaim = rc != sRemoteClaims.end() && Fresh(rc->second, CLAIM_TICKS);
+            auto rs = sRemoteSoft.find(st.key);
+            bool remoteSoft = rs != sRemoteSoft.end() && Fresh(rs->second.rxTick, CLAIM_TICKS);
+            softClaim = !localClaim && !remoteClaim && Fresh(st.softClaimTick, CLAIM_TICKS) && !RemoteSoftWins(st);
+            remoteClaim = remoteClaim || (remoteSoft && !softClaim);
         }
         // The claimant streams its blocks; the authority streams the rest.
-        if (!(localClaim || (isAuthority && !remoteClaim))) {
+        if (!(localClaim || softClaim || (isAuthority && !remoteClaim))) {
             continue;
         }
         if (!keyframe && st.everSent && !MovedSinceLastSend(actor, st)) {
@@ -337,6 +402,8 @@ void PerFrameTick() {
         e["rot"] = actor->shape.rot;
         if (localClaim) {
             e["own"] = 1;
+        } else if (softClaim) {
+            e["own"] = 2;
         }
         entries.push_back(e);
         st.lastSentPos = actor->world.pos;
@@ -354,6 +421,18 @@ void PerFrameTick() {
 bool IsRemoteDriven(const Actor* actor) {
     auto it = sTracked.find(const_cast<Actor*>(actor));
     return it != sTracked.end() && it->second.suppressed;
+}
+
+// Keep driving a claimable actor from this client for CLAIM_TICKS more ticks:
+// our copy stays live and streams with "own":2 unless someone is pushing it or
+// a lower client id holds its own soft claim. Called every frame by the module
+// running the scripted sequence (the Amy puzzle), so a peer entering the room
+// later mirrors the puzzle in progress instead of overriding it as authority.
+void HoldSoftClaim(Actor* actor) {
+    auto it = sTracked.find(actor);
+    if (it != sTracked.end() && it->second.claimable) {
+        it->second.softClaimTick = sTick;
+    }
 }
 
 void RegisterHooks(bool isConnected) {

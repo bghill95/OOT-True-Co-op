@@ -15,7 +15,7 @@ void BossVa_SetupBodyDeath(BossVa* boss, PlayState* play);
 void BossVa_SetupSupportCut(BossVa* boss, PlayState* play);
 void BossVa_KillBari(BossVa* boss, PlayState* play);
 void BossVa_UpdateEffects(PlayState* play);
-void BossVa_CoopMirrorAmbientFx(BossVa* boss, PlayState* play);
+void BossVa_CoopMirrorAmbientFx(BossVa* boss, PlayState* play, s32 fresh);
 // Co-op accessors added at the bottom of z_boss_va.c.
 s8* BossVa_CoopCsState(void);
 u8* BossVa_CoopFightPhase(void);
@@ -151,6 +151,7 @@ static void BossVaSync_SerializeExtras(Actor* actor, nlohmann::json& x) {
         x["tgt"] = { va->unk_1D8.x, va->unk_1D8.y, va->unk_1D8.z };
         x["t2"] = va->timer2;
         x["b"] = va->burst;
+        x["hr"] = { va->headRot.x, va->headRot.y, va->headRot.z }; // charge-ball orientation
         x["cft"] = va->actor.colorFilterTimer;
         x["cfp"] = va->actor.colorFilterParams;
     } else if (IsBari(params)) {
@@ -220,6 +221,11 @@ static void BossVaSync_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
             }
             if (x.contains("t2")) va->timer2 = x["t2"].get<int16_t>();
             if (x.contains("b")) va->burst = x["b"].get<uint8_t>();
+            if (x.contains("hr") && x["hr"].size() == 3) {
+                va->headRot.x = x["hr"][0].get<int16_t>();
+                va->headRot.y = x["hr"][1].get<int16_t>();
+                va->headRot.z = x["hr"][2].get<int16_t>();
+            }
             if (x.contains("cft")) va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
             if (x.contains("cfp")) va->actor.colorFilterParams = x["cfp"].get<int16_t>();
         } else if (IsBari(params)) {
@@ -237,9 +243,22 @@ static void BossVaSync_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
         SPDLOG_WARN("[BossVaSync] extras parse error: {}", ex.what());
     }
 
-    // Mirror-side ambient FX (arcs/sparks/tether are actionFunc-spawned).
+    // Mirror-side ambient FX (arcs/sparks/tether are actionFunc-spawned). Most
+    // of it is gated on OUR gameplayFrames, so it self-throttles; the zapper's
+    // room flash and charge ball are gated on the streamed timer2 instead, and
+    // EnemySync re-applies cached extras every frame — pass "fresh" so a
+    // dropped packet does not fire them again on the same value.
     if (!IsLocalOnly(params) && gPlayState != NULL) {
-        BossVa_CoopMirrorAmbientFx(va, gPlayState);
+        int32_t fresh = 1;
+        if (IsZapper(params)) {
+            static int16_t sLastZapTimer2[3] = { INT16_MIN, INT16_MIN, INT16_MIN };
+            int32_t slot = params - BOSSVA_ZAPPER_1;
+            if (slot >= 0 && slot < 3) {
+                fresh = va->timer2 != sLastZapTimer2[slot];
+                sLastZapTimer2[slot] = va->timer2;
+            }
+        }
+        BossVa_CoopMirrorAmbientFx(va, gPlayState, fresh);
     }
 
     // A part suppressed before its first local CollisionCheck call has an empty

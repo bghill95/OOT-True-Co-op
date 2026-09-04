@@ -126,6 +126,7 @@ typedef enum {
 
 void BossVa_Init(Actor* thisx, PlayState* play);
 void BossVa_Destroy(Actor* thisx, PlayState* play);
+void BossVa_CoopPurgeEffects(BossVa* part);
 void BossVa_Update(Actor* thisx, PlayState* play);
 void BossVa_Draw(Actor* thisx, PlayState* play);
 void BossVa_Reset(void);
@@ -771,6 +772,7 @@ void BossVa_Init(Actor* thisx, PlayState* play2) {
 void BossVa_Destroy(Actor* thisx, PlayState* play) {
     BossVa* this = (BossVa*)thisx;
 
+    BossVa_CoopPurgeEffects(this); // sparks/tethers anchored on this part must not outlive it
     SkelAnime_Free(&this->skelAnime, play);
     Collider_DestroyJntSph(play, &this->colliderSph);
     Collider_DestroyCylinder(play, &this->colliderBody);
@@ -3337,6 +3339,14 @@ void BossVa_UpdateEffects(PlayState* play) {
 
             if ((effect->type == VA_LARGE_SPARK) || (effect->type == VA_SMALL_SPARK)) {
                 refActor = effect->parent;
+                // Co-op: a part can be killed by the mirror's phase replay while
+                // its sparks (a tether lives ~120 frames) still point at it.
+                // BossVa_CoopPurgeEffects drops them at Destroy; this catches
+                // the kill -> delete window.
+                if (refActor == NULL || refActor->actor.update == NULL) {
+                    effect->type = VA_NONE;
+                    continue;
+                }
 
                 effect->rot.z += (s16)(Rand_ZeroOne() * 0x4E20) + 0x2000;
                 effect->rot.y += (s16)(Rand_ZeroOne() * 0x2710) + 0x2000;
@@ -4080,7 +4090,22 @@ u8* BossVa_CoopBodyBari(void) {
 // this replays the per-frame ambient spawns from streamed state (timer/timer2/
 // burst/unk_1F0/colorFilterTimer + sFightPhase). Attack-specific effects
 // (spark balls, blood, tumors) stay authority-only.
-void BossVa_CoopMirrorAmbientFx(BossVa* this, PlayState* play) {
+// Co-op: forget every pooled effect anchored on a part that is going away, so
+// BossVa_UpdateEffects never follows a freed actor (called from BossVa_Destroy).
+void BossVa_CoopPurgeEffects(BossVa* part) {
+    s32 i;
+
+    for (i = 0; i < ARRAY_COUNT(sVaEffects); i++) {
+        if (sVaEffects[i].type != VA_NONE && sVaEffects[i].parent == part) {
+            sVaEffects[i].type = VA_NONE;
+        }
+    }
+}
+
+// `fresh` is false when the caller is re-applying a cached stream frame: the
+// spawns gated on a streamed value (the zapper's flash and charge ball) must
+// not fire twice for the same value. The rest is gated on OUR gameplayFrames.
+void BossVa_CoopMirrorAmbientFx(BossVa* this, PlayState* play, s32 fresh) {
     s32 i;
 
     switch (this->actor.params) {
@@ -4138,6 +4163,17 @@ void BossVa_CoopMirrorAmbientFx(BossVa* this, PlayState* play) {
                     BossVa_Spark(play, this, 2, 110, 15.0f, 15.0f, SPARK_BLAST, 7.0f, true);
                 } else {
                     BossVa_Spark(play, this, 2, 50, 15.0f, 0.0f, SPARK_BODY, (this->timer2 >> 3) + 1, true);
+                    // Room-wide flash and the charge ball at the zapper's head,
+                    // same frames as ZapperAttack/ZapperEnraged (timer2 and
+                    // headRot are streamed; zapHeadPos comes from PostLimbDraw).
+                    if (fresh && this->timer2 == 30) {
+                        BossVa_SetSparkEnv(play);
+                    }
+                    if (fresh && this->timer2 == 20) {
+                        Vec3f headPos = this->zapHeadPos;
+
+                        BossVa_SpawnZapperCharge(play, sVaEffects, this, &headPos, &this->headRot, 100, 0);
+                    }
                 }
             }
             break;

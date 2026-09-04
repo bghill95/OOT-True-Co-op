@@ -206,8 +206,17 @@ bool IsTrackedEnemy(Actor* actor) {
     return tracked.contains(actor);
 }
 
+// Enemies that are NOT in an enemy category when the hooks fire. The Big Octo
+// (Jabu-Jabu) is placed dormant by the scene and moves itself to ACTORCAT_PROP
+// inside its Init (z_en_bigokuta.c), only becoming an ENEMY again from its own
+// update when the fight starts — nothing re-scans it then, so it stayed
+// untracked and each client fought its own copy.
+static bool IsForcedTracked(Actor* actor) {
+    return actor->id == ACTOR_EN_BIGOKUTA;
+}
+
 static bool IsTrackedCategory(Actor* actor) {
-    return actor->category == ACTORCAT_ENEMY || actor->category == ACTORCAT_BOSS;
+    return actor->category == ACTORCAT_ENEMY || actor->category == ACTORCAT_BOSS || IsForcedTracked(actor);
 }
 
 // Whitelisted enemy projectiles, replicated via fire-and-forget spawn (never
@@ -219,8 +228,14 @@ static bool IsTrackedCategory(Actor* actor) {
 // OnActorInit/OnActorSpawn hooks), so they slip past IsTrackedCategory and are
 // untracked today. The rock shares ACTOR_EN_OKUTA with its live parent Octorok,
 // so gate on the already-changed PROP category to catch only the projectile.
+// King Dodongo's fire breath (EN_BDFIRE, one actor per flame, parented to the
+// boss) is an ENEMY that never sets colChkInfo.health, so the health==0 gate
+// dropped it before the spawn broadcast: the mirror never saw the breath.
+// Announced as a projectile it runs its own animation on each side, reading
+// its parent's firePos/unk_1E2/unk_1A2 (parent resolved from the boss key).
 static bool IsSyncedProjectile(Actor* actor) {
-    return actor->id == ACTOR_EN_NUTSBALL || (actor->id == ACTOR_EN_OKUTA && actor->category == ACTORCAT_PROP);
+    return actor->id == ACTOR_EN_NUTSBALL || actor->id == ACTOR_EN_BDFIRE ||
+           (actor->id == ACTOR_EN_OKUTA && actor->category == ACTORCAT_PROP);
 }
 
 // EN_GOMA params >= 6: hatch debris (>=10) and defeat limb pieces (>=100) are

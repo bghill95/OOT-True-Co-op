@@ -48,6 +48,8 @@ enum FxEventKind : uint8_t {
     FX_EV_POEPAINT = 5,  // Forest Temple portrait chain decided its next painting (pt, pi, ev, nx)
     FX_EV_SHIELD = 6,    // our shield deflected a hit (pos, metal)
     FX_EV_SILVER = 7,    // we picked up a silver rupee (home pos): peers tally it and remove theirs
+    FX_EV_BOTTLEDROP = 8, // we emptied a bottle: fish / blue fire / bug / fairy released (aid, pos, rot)
+    FX_EV_AMYTIMER = 9,   // Amy puzzle driver: the countdown block landed, HUD timer starts (sec)
 };
 
 // --- Spells -----------------------------------------------------------------
@@ -476,6 +478,55 @@ extern "C" void FxSync_OnShieldHit(Vec3f* pos, s32 metal) {
     Anchor::Instance->SendPacket_FxEvent(payload);
 }
 
+// --- Bottle contents released -------------------------------------------------
+// Emptying a bottle spawns the content actor (fish, blue fire, bug, fairy) from
+// the player's own action function only: the peer saw the bottle tip over and
+// nothing come out. Announce the spawn; the receiver spawns an independent copy
+// at the same spot (these actors are short-lived and self-contained). Bugs are
+// spawned as the "from grass" kind so the copy never seeks soft soil: the soil
+// -> gold skulltula chain stays the dropper's, one skulltula, no double spawn.
+static bool sSpawningBottleDrop = false;
+// The copies we spawned for a peer's bottle. A fish and a bug both offer
+// themselves back to a bottle every frame (Actor_OfferGetItem with GI_MAX), so
+// without this each peer could pocket its own copy: one released fish would
+// come back as one fish per player. The replicas are for show only.
+static std::unordered_set<Actor*> sBottleDrops;
+
+extern "C" s32 FxSync_IsBottleDropReplica(Actor* actor) {
+    return sBottleDrops.contains(actor) ? 1 : 0;
+}
+
+extern "C" void FxSync_OnBottleDrop(int16_t aid, int16_t params, Vec3f* pos, Vec3s* rot) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || pos == NULL || sSpawningBottleDrop) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_BOTTLEDROP;
+    payload["aid"] = aid;
+    payload["ap"] = params;
+    payload["pos"] = *pos;
+    if (rot != NULL) {
+        payload["rot"] = *rot;
+    }
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] bottle drop tx aid={} params={}", aid, params);
+}
+
+// --- Amy puzzle countdown -------------------------------------------------------
+// BgPoEvent_BlockFall starts the HUD timer (func_80088B34) the frame the type-1
+// block lands; the mirror never runs BlockFall (FlagReplay follows the stream),
+// so the driver hands it the seconds. Interface_Update counts it down locally.
+void SendAmyTimer(int16_t seconds) {
+    if (!SyncEnabled() || Anchor::Instance == nullptr) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_AMYTIMER;
+    payload["sec"] = seconds;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] amy timer tx sec={}", seconds);
+}
+
 // --- Silver rupees ----------------------------------------------------------
 // En_G_Switch tallies pickups in a file static, per client: split 3/2 between
 // two players, nobody reaches 5 and the door never opens. Announce our pickups
@@ -536,6 +587,7 @@ void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw,
 static void Reset() {
     sSilverAnnounced.clear();
     sSpellReplicas.clear();
+    sBottleDrops.clear();
     sTorches.clear();
     sTorchByKey.clear();
     sBoomReplicas.clear();
@@ -655,6 +707,38 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                 EffectSsHitMark_SpawnCustomScale(gPlayState, 0, 150, &pos);
             }
             ESYNC_LOG("[FxSync] ammo impact rx params={}", ap);
+            return;
+        }
+
+        if (kind == FX_EV_BOTTLEDROP) {
+            int16_t aid = payload.at("aid").get<int16_t>();
+            int16_t ap = payload.value("ap", (int16_t)0);
+            Vec3f pos = payload.at("pos").get<Vec3f>();
+            Vec3s rot = payload.value("rot", Vec3s{ 0, 0, 0 });
+            if (aid == ACTOR_EN_INSECT) {
+                ap = 1; // INSECT_TYPE_SPAWNED: wanders and fades, never hunts soft soil
+            } else if (aid != ACTOR_EN_FISH && aid != ACTOR_EN_ICE_HONO && aid != ACTOR_EN_ELF) {
+                return;
+            }
+            sSpawningBottleDrop = true;
+            Actor* copy = Actor_Spawn(&gPlayState->actorCtx, gPlayState, aid, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z,
+                                      ap, true);
+            sSpawningBottleDrop = false;
+            if (copy != NULL && aid != ACTOR_EN_ELF) {
+                sBottleDrops.insert(copy); // never re-bottleable: it is the peer's item
+            }
+            ESYNC_LOG("[FxSync] bottle drop rx aid={} params={} ok={}", aid, ap, copy != NULL);
+            return;
+        }
+
+        if (kind == FX_EV_AMYTIMER) {
+            int16_t sec = payload.value("sec", (int16_t)0);
+            if (sec > 0) {
+                func_80088B34(sec); // same HUD timer the driver's BlockFall started
+            } else {
+                gSaveContext.timerState = 0xA;
+            }
+            ESYNC_LOG("[FxSync] amy timer rx sec={}", sec);
             return;
         }
 
@@ -831,6 +915,7 @@ void RegisterHooks(bool isConnected) {
     COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
         Actor* a = (Actor*)actorRef;
         sSpellReplicas.erase(a);
+        sBottleDrops.erase(a);
         sSilverAnnounced.erase(a);
         // A dying puppet takes its projectile replicas with it: that reap lives
         // in DummyPlayer_Destroy, keyed by the puppet's own client id (matching

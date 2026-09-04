@@ -36,6 +36,10 @@ void TickPuppetProjectiles(uint32_t clientId, struct Actor* puppet);
 // Kills one client's projectile replicas (its puppet died / it went offline).
 void ReapClientProjectiles(uint32_t clientId);
 
+// Amy puzzle (Forest Temple): the driver announces the countdown its timer
+// block started on landing; the mirror shows the same HUD timer.
+void SendAmyTimer(int16_t seconds);
+
 } // namespace FxSync
 
 #endif

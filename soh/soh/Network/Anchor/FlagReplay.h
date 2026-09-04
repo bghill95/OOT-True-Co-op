@@ -23,15 +23,23 @@
  * sides by the dungeon-items sync), BG_DDAN_KD (Dodongo stairs: explosion-
  * triggered, and bomb replicas have no AT), BG_JYA_MEGAMI (Spirit statue face,
  * same explosion reason), BG_HEAVY_BLOCK (golden-gauntlet pillar, not carried
- * through CarrySync), OBJ_BEAN (child planting).
+ * through CarrySync), OBJ_BEAN (child planting), BG_BDAN_SWITCH (Jabu-Jabu
+ * buttons: pressed/toggled state follows the flag both ways), EN_JJ (Jabu-Jabu
+ * opens for the peer once the fish was offered), BG_JYA_BLOCK (killed at Init
+ * without the flag: its spawn entry is remembered and it is re-spawned when the
+ * flag arrives), BG_PO_EVENT (Amy puzzle: driver election through DynaSync
+ * soft claims, countdown announced to the mirror).
  *
- * Not covered on purpose: actors Actor_Kill'ed at Init when the flag is unset
- * (BG_JYA_BLOCK) - nothing left to react; per-client consumables (OBJ_LIFT,
- * DOOR_KILLER) - replaying would remove a platform/door the peer has not used.
+ * Not covered on purpose: per-client consumables (OBJ_LIFT, DOOR_KILLER) -
+ * replaying would remove a platform/door the peer has not used.
  */
 namespace FlagReplay {
 
 void RegisterHooks(bool isConnected);
+
+// Per-frame work (BG_JYA_BLOCK re-spawn). Driven by the Anchor per-frame
+// dispatcher, after DynaSync::PerFrameTick.
+void PerFrameTick();
 
 } // namespace FlagReplay
 

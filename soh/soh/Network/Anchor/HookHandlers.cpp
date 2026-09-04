@@ -483,6 +483,7 @@ void Anchor::RegisterHooks() {
         CoopLifeSyncTick();           // SETS myLifeState
         EnemySync::PerFrameTick();    // authority election READS myLifeState
         DynaSync::PerFrameTick();     // platform streaming READS EnemySync's election
+        FlagReplay::PerFrameTick();   // BG_JYA_BLOCK re-spawn once its flag arrives
         PuppetFairyTick();            // companion-fairy spawn/reap lifecycle
         CoopWarpTick();               // drain queued, gated system warps
         BossEntryTick();              // reconcile boss echo-latch (Fix A)
