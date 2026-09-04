@@ -42,7 +42,7 @@ namespace FxSync {
 enum FxEventKind : uint8_t {
     FX_EV_SPELL = 0,  // caster spawned a magic spell actor (aid says which)
     FX_EV_TORCH = 1,  // a torch's litTimer flipped (key + new value)
-    FX_EV_NUT = 2,       // deku nut impact flash (pos)
+    FX_EV_AMMOHIT = 2,   // an EN_ARROW projectile hit something (pos, ap = arrow params)
     FX_EV_HAMMER = 3,    // hammer ground shockwave (pos)
     FX_EV_HOOKSPARK = 4, // hookshot reflected off a wall (pos)
     FX_EV_POEPAINT = 5,  // Forest Temple portrait chain decided its next painting (pt, pi, ev, nx)
@@ -276,6 +276,11 @@ void ReapClientProjectiles(uint32_t clientId) {
         }
         pp.hookActive = false;
         pp.hookGrace = 0;
+        // A client that left the roster never gets ticked again: drop its
+        // entry instead of keeping a dead slot forever.
+        if (Anchor::Instance == nullptr || Anchor::Instance->clients.find(clientId) == Anchor::Instance->clients.end()) {
+            sProj.erase(it);
+        }
     }
     auto bit = sBoomReplicas.find(clientId);
     if (bit != sBoomReplicas.end()) {
@@ -436,6 +441,27 @@ extern "C" void FxSync_OnPoePainting(Actor* painting, s32 ev) {
     payload["ev"] = ev;
     payload["nx"] = sBgPoEventPuzzleState;
     Anchor::Instance->SendPacket_FxEvent(payload);
+}
+
+// Every EN_ARROW impact effect -- the deku-seed / deku-nut stone burst, the nut's
+// white flash, the arrow hit mark -- is spawned by the SHOOTER's own EnArrow_Fly.
+// A peer only holds a pinned replica with its update suppressed, so it saw the
+// projectile fly and then simply vanish. Announce the impact instead; the type
+// travels with it so the receiver replays exactly what the shooter got.
+extern "C" void FxSync_OnAmmoImpact(Actor* arrow) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || arrow == NULL || gPlayState == NULL) {
+        return;
+    }
+    // A replica never runs its update, so it cannot reach this — but never echo.
+    if (IsOwnProjReplica(arrow) || (arrow->parent != NULL && arrow->parent != &GET_PLAYER(gPlayState)->actor)) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_AMMOHIT;
+    payload["pos"] = arrow->world.pos;
+    payload["ap"] = (int16_t)arrow->params;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] ammo impact tx params={}", (int16_t)arrow->params);
 }
 
 // Shield deflection sparks spawn from the blocker's own collision pass only.
@@ -611,16 +637,24 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             return;
         }
 
-        if (kind == FX_EV_NUT) {
+        if (kind == FX_EV_AMMOHIT) {
             Vec3f pos = payload.at("pos").get<Vec3f>();
-            // The white flash fills the whole screen — only take it when the
-            // burst is actually near us, like the thrower experiences it.
-            if (Math_Vec3f_DistXYZ(&GET_PLAYER(gPlayState)->actor.world.pos, &pos) < 600.0f) {
-                iREG(50) = -1; // full-screen white flash (TransitionFade, z_fbdemo_fade.c)
+            int16_t ap = payload.value("ap", (int16_t)ARROW_NUT);
+            if (ap >= ARROW_SEED) {
+                // Slingshot seed and deku nut: the same stone burst, different sfx.
+                if (ap == ARROW_NUT &&
+                    // The white flash fills the whole screen — only take it when
+                    // the burst is actually near us, like the thrower gets it.
+                    Math_Vec3f_DistXYZ(&GET_PLAYER(gPlayState)->actor.world.pos, &pos) < 600.0f) {
+                    iREG(50) = -1; // full-screen white flash (TransitionFade, z_fbdemo_fade.c)
+                }
+                EffectSsStone1_Spawn(gPlayState, &pos, 0);
+                SoundSource_PlaySfxAtFixedWorldPos(gPlayState, &pos, 20,
+                                                   (ap == ARROW_NUT) ? NA_SE_IT_DEKU : NA_SE_IT_SLING_REFLECT);
+            } else {
+                EffectSsHitMark_SpawnCustomScale(gPlayState, 0, 150, &pos);
             }
-            EffectSsStone1_Spawn(gPlayState, &pos, 0);
-            SoundSource_PlaySfxAtFixedWorldPos(gPlayState, &pos, 20, NA_SE_IT_DEKU);
-            ESYNC_LOG("[FxSync] nut flash rx");
+            ESYNC_LOG("[FxSync] ammo impact rx params={}", ap);
             return;
         }
 
@@ -798,42 +832,26 @@ void RegisterHooks(bool isConnected) {
         Actor* a = (Actor*)actorRef;
         sSpellReplicas.erase(a);
         sSilverAnnounced.erase(a);
-        // A dying puppet takes its projectile replicas with it: they are only
-        // ticked from DummyPlayer_Update, so nothing else would ever reap them.
-        if (Anchor::Instance != nullptr) {
-            for (auto& [cid, client] : Anchor::Instance->clients) {
-                if ((Actor*)client.player == a) {
-                    ReapClientProjectiles(cid);
-                    break;
-                }
-            }
-        }
+        // A dying puppet takes its projectile replicas with it: that reap lives
+        // in DummyPlayer_Destroy, keyed by the puppet's own client id (matching
+        // `client.player == a` here never fired, see there).
         for (auto it = sBoomReplicas.begin(); it != sBoomReplicas.end();) {
             it = (it->second == a) ? sBoomReplicas.erase(it) : std::next(it);
         }
+        // Drop the pointers to a dying replica. Impact effects are NOT announced
+        // from here: EnArrow_Fly announces them itself (FxSync_OnAmmoImpact),
+        // where the impact point and the projectile type are both known and a
+        // real hit is distinguishable from a room unload.
         if (a->id == ACTOR_EN_ARROW || a->id == ACTOR_ARMS_HOOK) {
-            bool wasReplica = false;
             for (auto& [cid, pp] : sProj) {
                 if (pp.hookReplica == a) {
                     pp.hookReplica = NULL;
-                    wasReplica = true;
                 }
                 for (auto& r : pp.arrowReplicas) {
                     if (r.actor == a) {
                         r.actor = NULL;
-                        wasReplica = true;
                     }
                 }
-            }
-            // Deku nut impact: the white flash + burst are spawned by the
-            // owner's EnArrow update at death — replay them on peers.
-            if (!wasReplica && a->id == ACTOR_EN_ARROW && a->params == ARROW_NUT && a->parent == NULL &&
-                SyncEnabled() && gPlayState != NULL) {
-                nlohmann::json payload;
-                payload["kind"] = FX_EV_NUT;
-                payload["pos"] = a->world.pos;
-                Anchor::Instance->SendPacket_FxEvent(payload);
-                ESYNC_LOG("[FxSync] nut flash tx");
             }
         }
         auto it = sTorches.find(a);

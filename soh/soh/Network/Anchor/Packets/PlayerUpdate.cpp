@@ -86,6 +86,18 @@ void Anchor::SendPacket_PlayerUpdate() {
     payload["giId"] = (player->unk_862 != 0) ? (s16)player->getItemEntry.getItemId : (s16)-1; // item held up
     payload["giMod"] = (s8)player->getItemEntry.modIndex;
     payload["actionVar1"] = player->av1.actionVar1;
+    // Where the actor we carry actually sits, and which way it faces. Both are
+    // written by Player_PostLimbDraw (the draw pass) on this side, so the values
+    // read here -- before this frame's actor updates -- are last frame's drawn
+    // pose. Guessing the position from the puppet's head put cuccos (which
+    // ride lower than a pot) through the puppet's chest; guessing the yaw
+    // from the puppet left the cucco's own per-frame random wriggle in
+    // charge, so it faced nowhere in particular.
+    if ((player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) && player->heldActor != NULL &&
+        player->heldActor->update != NULL) {
+        payload["carryPos"] = player->heldActor->world.pos;
+        payload["carryRot"] = player->heldActor->shape.rot;
+    }
     if ((player->stateFlags1 & PLAYER_STATE1_BOOMERANG_THROWN) && player->boomerangActor != NULL &&
         player->boomerangActor->update != NULL) {
         payload["boomPos"] = player->boomerangActor->world.pos;
@@ -146,6 +158,11 @@ void Anchor::HandlePacket_PlayerUpdate(nlohmann::json payload) {
         client.giId = (s16)payload.value("giId", -1);
         client.giMod = (s8)payload.value("giMod", 0);
         client.actionVar1 = payload["actionVar1"].get<s8>();
+        client.carryActive = payload.contains("carryPos");
+        if (client.carryActive) {
+            client.carryPos = payload["carryPos"].get<Vec3f>();
+            client.carryRot = payload.value("carryRot", client.carryRot);
+        }
         client.boomActive = payload.contains("boomPos");
         if (client.boomActive) {
             client.boomPos = payload["boomPos"].get<Vec3f>();

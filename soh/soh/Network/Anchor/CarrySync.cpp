@@ -39,6 +39,9 @@ static bool IsSyncedCarryActor(const Actor* actor) {
         case ACTOR_EN_NIW:      // cuccos — wander AI diverges between clients, but
                                 // every CARRY/THROW re-converges the copies, which
                                 // is what actually shows on screen
+        case ACTOR_EN_KUSA:     // grass tufts: cut is BreakSync's, but they are
+                                // liftable and throwable like a pot (Actor_OfferCarry
+                                // in EnKusa_Main), and that half was unsynced
             return true;
         default:
             return false;
@@ -52,6 +55,9 @@ struct CarryState {
     bool remoteCarried = false;     // a peer's player is carrying this copy
     uint32_t carrierClientId = 0;
     int32_t carrierLostTicks = 0;   // frames the carrier's puppet has been gone
+    int32_t carriedUpdates = 0;     // actor updates run while parented to the puppet
+    bool hasPendingThrow = false;   // THROW received before the copy ran its held update
+    nlohmann::json pendingThrow;
 };
 
 static std::unordered_map<Actor*, CarryState> sTracked;
@@ -106,6 +112,35 @@ static void SendEvent(Actor* actor, const CarryState& st, uint8_t kind) {
     ESYNC_LOG("[CarrySync] event kind={} key={:#x}", kind, st.key);
 }
 
+// Clearing the parent + applying the streamed kinematics makes the actor's own
+// release logic run: real local physics, real break-on-impact.
+static void ApplyThrow(Actor* actor, CarryState& st, const nlohmann::json& payload) {
+    st.remoteCarried = false;
+    st.hasPendingThrow = false;
+    st.pendingThrow = nullptr;
+    actor->parent = NULL; // its own release logic takes over
+    st.hadParent = false; // no false CARRY/THROW edge on our side
+    actor->world.pos = payload.value("pos", actor->world.pos);
+    actor->world.rot.y = payload.value("rotY", (int16_t)0);
+    actor->shape.rot.y = actor->world.rot.y;
+    actor->velocity = payload.value("vel", actor->velocity);
+    actor->speedXZ = payload.value("speedXZ", actor->speedXZ);
+}
+
+// The pose a remote-carried copy takes on its carrier's puppet: the carrier's
+// streamed position + facing when we have them (Player_PostLimbDraw's output on
+// their side), else the head estimate and the puppet's own yaw.
+static void PinToPuppet(Actor* actor, Actor* puppet) {
+    Vec3s rot;
+    actor->world.pos = PuppetRef::CarryAnchor(puppet);
+    if (PuppetRef::CarryRotation(puppet, &rot)) {
+        actor->shape.rot = rot;
+        actor->world.rot.y = rot.y;
+    } else {
+        actor->shape.rot.y = puppet->shape.rot.y;
+    }
+}
+
 static void OnCarryablePreUpdate(Actor* actor, bool* should) {
     if (!SyncEnabled()) {
         return;
@@ -122,16 +157,31 @@ static void OnCarryablePreUpdate(Actor* actor, bool* should) {
         // (the puppet's Player update never runs the real carry positioning).
         Actor* puppet = PuppetRef::Resolve(st.carrierClientId);
         if (puppet != NULL) {
+            // The copy's own state machine only advances inside its update. A
+            // THROW applied before one carried update ran (CARRY+THROW drained
+            // from the same packet batch, or a copy that sat culled off-screen
+            // when CARRY came in) leaves it in its IDLE state at the release
+            // point: no physics, floating, until the peer's BREAK pops it in
+            // mid-air -- the impact effect then never shows on this side. Hold
+            // the throw until the held update has run once.
+            if (st.hasPendingThrow && st.carriedUpdates >= 1) {
+                ApplyThrow(actor, st, st.pendingThrow);
+                return;
+            }
+            st.carriedUpdates++;
             st.carrierLostTicks = 0;
             actor->parent = puppet;
-            actor->world.pos = PuppetRef::CarryAnchor(puppet);
-            actor->shape.rot.y = puppet->shape.rot.y;
+            PinToPuppet(actor, puppet);
             st.hadParent = true;
             return;
         }
         // Carrier gone: hold the object still (never park it out of the world,
         // or update culling would stop this hook from ever firing again), then
         // hand it back to local physics so it drops where it was last seen.
+        if (st.hasPendingThrow) {
+            ApplyThrow(actor, st, st.pendingThrow); // never hold a throw hostage to a dead puppet
+            return;
+        }
         actor->parent = NULL;
         if (++st.carrierLostTicks >= CARRIER_LOST_TICKS) {
             ESYNC_LOG("[CarrySync] carrier {} lost, releasing key={:#x}", st.carrierClientId, st.key);
@@ -152,6 +202,28 @@ static void OnCarryablePreUpdate(Actor* actor, bool* should) {
         } else if (st.mineLatch) {
             SendEvent(actor, st, CARRY_EV_THROW);
         }
+    }
+}
+
+// Re-pin a remote-carried copy AFTER its own update. On the carrier the held
+// actor's position is written by Player_PostLimbDraw -- during the DRAW pass,
+// after every actor update -- so an actor whose held state still runs physics
+// (a cucco: gravity + bgcheck every EnNiw_Update, rocks and pots do nothing
+// while parented) drops from the anchor inside its update and is lifted back
+// by the draw. The puppet never draws it back up, so the pre-update anchor alone
+// left the cucco hanging at the puppet's waist. Mirror the carrier's frame:
+// anchor before the update, anchor again after it.
+static void OnCarryablePostUpdate(Actor* actor) {
+    if (!SyncEnabled()) {
+        return;
+    }
+    auto it = sTracked.find(actor);
+    if (it == sTracked.end() || !it->second.remoteCarried) {
+        return;
+    }
+    Actor* puppet = PuppetRef::Resolve(it->second.carrierClientId);
+    if (puppet != NULL && actor->parent == puppet) {
+        PinToPuppet(actor, puppet);
     }
 }
 
@@ -177,16 +249,23 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                 st.carrierClientId = senderClientId;
                 st.carrierLostTicks = 0;
                 st.mineLatch = false;
+                st.carriedUpdates = 0;
+                st.hasPendingThrow = false;
+                // Actors only update inside the camera's culling volume (or with
+                // this flag): a copy the local camera cannot see would neither
+                // advance to its held state nor ride the puppet, and the pre-update
+                // hook above never fires for it. Keep every remote-carried copy
+                // updating; the actors' own lift path sets the same flag anyway.
+                actor->flags |= ACTOR_FLAG_UPDATE_CULLING_DISABLED;
                 break;
             case CARRY_EV_THROW:
-                st.remoteCarried = false;
-                actor->parent = NULL; // its own release logic takes over
-                st.hadParent = false; // no false CARRY/THROW edge on our side
-                actor->world.pos = payload.at("pos").get<Vec3f>();
-                actor->world.rot.y = payload.value("rotY", (int16_t)0);
-                actor->shape.rot.y = actor->world.rot.y;
-                actor->velocity = payload.at("vel").get<Vec3f>();
-                actor->speedXZ = payload.at("speedXZ").get<float>();
+                if (st.remoteCarried && st.carriedUpdates < 1) {
+                    // Held update not run yet: see OnCarryablePreUpdate.
+                    st.hasPendingThrow = true;
+                    st.pendingThrow = payload;
+                } else {
+                    ApplyThrow(actor, st, payload);
+                }
                 break;
             case CARRY_EV_GONE:
                 Actor_Kill(actor);
@@ -210,6 +289,7 @@ void RegisterHooks(bool isConnected) {
     COND_ID_HOOK(OnActorInit, ACTOR_EN_ISHI, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_OBJ_TSUBO, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_EN_NIW, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
+    COND_ID_HOOK(OnActorInit, ACTOR_EN_KUSA, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
 
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_ISHI, isConnected,
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
@@ -217,6 +297,14 @@ void RegisterHooks(bool isConnected) {
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_NIW, isConnected,
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_KUSA, isConnected,
+                 [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
+
+    COND_ID_HOOK(OnActorUpdate, ACTOR_EN_ISHI, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
+    COND_ID_HOOK(OnActorUpdate, ACTOR_OBJ_TSUBO, isConnected,
+                 [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
+    COND_ID_HOOK(OnActorUpdate, ACTOR_EN_NIW, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
+    COND_ID_HOOK(OnActorUpdate, ACTOR_EN_KUSA, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
 
     COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
         Actor* a = (Actor*)actorRef;
@@ -226,8 +314,11 @@ void RegisterHooks(bool isConnected) {
         }
         // Died while we still owned it and a peer shows it carried/parked:
         // tell them to drop theirs too. A normal thrown break needs no event
-        // (each copy breaks by its own physics).
-        if (it->second.mineLatch && it->second.hadParent) {
+        // (each copy breaks by its own physics). Actor_Delete WITHOUT a prior
+        // Actor_Kill (update still set) is a room unload or the scene teardown,
+        // not a death: the peer's copy stays, its carrier-lost fallback covers a
+        // carrier who warped out mid-carry.
+        if (a->update == NULL && it->second.mineLatch && it->second.hadParent) {
             SendEvent(a, it->second, CARRY_EV_GONE);
         }
         // A respawned instance (same key, Obj_Mure2 cycle) may already have

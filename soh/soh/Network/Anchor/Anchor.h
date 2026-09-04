@@ -68,6 +68,9 @@ typedef struct {
     s8 actionVar1;
     bool boomActive; // thrower's EN_BOOM is in flight (boomPos/boomYaw valid)
     Vec3f boomPos;
+    bool carryActive;  // this client is carrying an actor (carryPos/carryRot are its pose)
+    Vec3f carryPos;
+    Vec3s carryRot;
     s16 boomYaw;
     s16 boomPitch;
 

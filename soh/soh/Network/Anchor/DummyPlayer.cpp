@@ -20,6 +20,9 @@ void func_8083AE40(Player* player, s16 objectId); // z_player.c: DMA the get-ite
 
 // Get-item id last applied per puppet (the object DMA is only re-issued on change).
 static std::unordered_map<uint32_t, int16_t> sPuppetGi;
+// Model group last pushed through Player_SetModels for each puppet (see the
+// cutscene-item block in DummyPlayer_Update). -1 = never.
+static std::unordered_map<uint32_t, s32> sPuppetModelsGroup;
 
 // Hijacking player->zTargetActiveTimer (unused s32 for the dummy) to store the clientId for convenience
 #define DUMMY_CLIENT_ID player->zTargetActiveTimer
@@ -194,13 +197,34 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
     // Arrows (incl. elemental/nut/seed) and hookshot, same model.
     FxSync::TickPuppetProjectiles(client.clientId, actor);
 
-    if (player->modelGroup != client.modelGroup) {
+    {
         // Hack to account for usage of gSaveContext
         s32 originalAge = gSaveContext.linkAge;
         gSaveContext.linkAge = client.linkAge;
         u8 originalButtonItem0 = gSaveContext.equips.buttonItems[0];
         gSaveContext.equips.buttonItems[0] = client.buttonItem0;
-        Player_SetModelGroup(player, client.modelGroup);
+
+        // "Cutscene items" -- bottle drink / pour / bug release, ocarina, spells
+        // -- go through Player_SetupActionPreserveItemAction, which swaps the
+        // hand + sheath models for itemAction via Player_SetModels WITHOUT
+        // touching modelGroup (itemAction != heldItemAction for the whole
+        // action, then Player_SetupAction restores both). Mirroring modelGroup
+        // alone left the puppet holding its previous item while the owner drank
+        // from a bottle or played the ocarina.
+        s32 modelsGroup = client.modelGroup;
+        if (client.itemAction >= PLAYER_IA_NONE && client.itemAction != client.heldItemAction) {
+            modelsGroup = Player_ActionToModelGroup(player, client.itemAction);
+        }
+        auto cur = sPuppetModelsGroup.try_emplace(client.clientId, -1).first;
+        if (player->modelGroup != client.modelGroup) {
+            Player_SetModelGroup(player, client.modelGroup);
+            cur->second = client.modelGroup;
+        }
+        if (cur->second != modelsGroup) {
+            Player_SetModels(player, modelsGroup);
+            cur->second = modelsGroup;
+        }
+
         gSaveContext.linkAge = originalAge;
         gSaveContext.equips.buttonItems[0] = originalButtonItem0;
     }
@@ -282,7 +306,19 @@ void DummyPlayer_Draw(Actor* actor, PlayState* play) {
 }
 
 void DummyPlayer_Destroy(Actor* actor, PlayState* play) {
-    sPuppetGi.erase((uint32_t)((Player*)actor)->zTargetActiveTimer);
+    uint32_t clientId = (uint32_t)((Player*)actor)->zTargetActiveTimer;
+    sPuppetGi.erase(clientId);
+    sPuppetModelsGroup.erase(clientId);
+    // The projectile replicas (arrows, hookshot, boomerang) are parented to this
+    // puppet and only ticked from its update: reap them here, keyed by the id
+    // the puppet carries itself. Matching `client.player == actor` from the
+    // generic OnActorDestroy hook never fired: RefreshClientActors overwrites
+    // client.player with the NEW puppet (or erases the client altogether)
+    // before the old one reaches Actor_Delete. A hookshot in flight at the
+    // moment a peer dropped therefore survived, parented to a freed block the
+    // next puppet reused: a chain from the reconnected player's hand to a
+    // fixed point in the air.
+    FxSync::ReapClientProjectiles(clientId);
 }
 
 // z_player_lib.c asks whether a Player struct is one of our puppets with a

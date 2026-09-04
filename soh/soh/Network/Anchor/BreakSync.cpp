@@ -382,7 +382,12 @@ void RegisterHooks(bool isConnected) {
         // thrown, never hit-broken, so Ingest bails out of the replay switch --
         // but only AFTER latching remoteBreaking and forcing culling off, which
         // then blocks that rock from every later break sync in the scene.
-        if (SyncEnabled() && (a->id == ACTOR_OBJ_TSUBO || a->id == ACTOR_OBJ_KIBAKO || a->id == ACTOR_OBJ_KIBAKO2 ||
+        // Actor_Delete WITHOUT a prior Actor_Kill (update still set) is a room
+        // unload or the scene teardown, not a break: that used to broadcast one
+        // BREAK per tracked prop whenever the sender changed room or scene, and
+        // shatter every pot and rock the peer still had loaded around it.
+        if (a->update == NULL && SyncEnabled() &&
+            (a->id == ACTOR_OBJ_TSUBO || a->id == ACTOR_OBJ_KIBAKO || a->id == ACTOR_OBJ_KIBAKO2 ||
                               (a->id == ACTOR_EN_ISHI && !(a->params & 1)) || a->id == ACTOR_OBJ_COMB ||
                               a->id == ACTOR_EN_KUSA)) {
             SendBreak(a, it->second);

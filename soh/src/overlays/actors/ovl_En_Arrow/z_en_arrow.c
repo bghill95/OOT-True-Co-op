@@ -17,6 +17,9 @@ void EnArrow_Draw(Actor* thisx, PlayState* play);
 
 void EnArrow_Shoot(EnArrow* this, PlayState* play);
 void EnArrow_Fly(EnArrow* this, PlayState* play);
+
+// Co-op: mirror this projectile's impact effect on the peers (see FxSync.cpp).
+void FxSync_OnAmmoImpact(Actor* arrow);
 void func_809B45E0(EnArrow* this, PlayState* play);
 void func_809B4640(EnArrow* this, PlayState* play);
 
@@ -330,10 +333,12 @@ void EnArrow_Fly(EnArrow* this, PlayState* play) {
                 sfxId = NA_SE_IT_SLING_REFLECT;
             }
 
+            FxSync_OnAmmoImpact(&this->actor);
             EffectSsStone1_Spawn(play, &this->actor.world.pos, 0);
             SoundSource_PlaySfxAtFixedWorldPos(play, &this->actor.world.pos, 20, sfxId);
             Actor_Kill(&this->actor);
         } else {
+            FxSync_OnAmmoImpact(&this->actor);
             EffectSsHitMark_SpawnCustomScale(play, 0, 150, &this->actor.world.pos);
 
             if (atTouched && (this->collider.info.atHitInfo->elemType != ELEMTYPE_UNK4)) {

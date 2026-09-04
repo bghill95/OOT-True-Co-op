@@ -27,11 +27,30 @@ inline Actor* Resolve(uint32_t clientId) {
     return (Actor*)it->second.player;
 }
 
-// Where a carried actor sits on a puppet: just above the head. The puppet's
-// bodyPartsPos are filled by its full player draw each frame, so this tracks
-// age and animation; fall back to a fixed lift before the first draw.
+// Where a carried actor sits on a puppet.
+//
+// First choice is the position the carrier streams in PLAYER_UPDATE: it is the
+// real one, computed by their Player code from their animated skeleton, and it
+// arrives with the same latency as the puppet pose it belongs to. Every carried
+// actor rides differently -- a pot sits above the head, a cucco much lower --
+// so a single guessed offset put cuccos through the puppet's chest.
+//
+// The head-based estimate below is the fallback for the frames before the first
+// carry packet lands (and for a carrier whose stream we have not seen yet).
 inline Vec3f CarryAnchor(Actor* puppet) {
     Player* p = (Player*)puppet;
+
+    if (Anchor::Instance != nullptr) {
+        for (auto& [cid, client] : Anchor::Instance->clients) {
+            if ((Actor*)client.player == puppet) {
+                if (client.carryActive) {
+                    return client.carryPos;
+                }
+                break;
+            }
+        }
+    }
+
     Vec3f headPos = p->bodyPartsPos[PLAYER_BODYPART_HEAD];
     Vec3f anchor = puppet->world.pos;
     if (headPos.x != 0.0f || headPos.y != 0.0f || headPos.z != 0.0f) {
@@ -40,6 +59,27 @@ inline Vec3f CarryAnchor(Actor* puppet) {
         anchor.y += 38.0f;
     }
     return anchor;
+}
+
+// Which way the carried actor faces, from the same stream. On the carrier the
+// yaw is re-written every draw by Player_PostLimbDraw (player yaw + the offset
+// captured at pickup) AFTER the actor's own update — a cucco randomises its
+// whole shape.rot every held update, and the draw is what puts the heading
+// back. False before the first carry packet: caller keeps its own guess.
+inline bool CarryRotation(Actor* puppet, Vec3s* out) {
+    if (Anchor::Instance == nullptr || out == NULL) {
+        return false;
+    }
+    for (auto& [cid, client] : Anchor::Instance->clients) {
+        if ((Actor*)client.player == puppet) {
+            if (client.carryActive) {
+                *out = client.carryRot;
+                return true;
+            }
+            return false;
+        }
+    }
+    return false;
 }
 
 // Take `actor` out of our own player's hands if it is what he is holding.
