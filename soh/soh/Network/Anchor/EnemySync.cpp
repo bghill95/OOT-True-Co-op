@@ -26,6 +26,10 @@ namespace EnemySync {
 static constexpr uint8_t EXPECTED_DAMAGE_LIFETIME = 60;
 // Frames to wait for a lethal synthetic hit to play out before force-killing.
 static constexpr uint8_t REMOTE_DEATH_GRACE = 30;
+// Below this many unsuppressed local updates a remote-spawned copy is assumed to
+// still sit in its spawn/intro state (see ApplyRemoteDeath): its death is applied
+// directly instead of handed to a state machine that never left the ground.
+static constexpr uint16_t REMOTE_DEATH_MIN_LOCAL_UPDATES = 12;
 // Echo guard for death broadcasts. A latch would be wrong here: enemies like
 // En_Karebaba regrow from the same actor instance, so death sync must re-arm.
 static constexpr uint8_t DEATH_COOLDOWN_FRAMES = 60;
@@ -68,6 +72,8 @@ struct TrackedState {
     uint8_t expectedRemoteDamage = 0;
     uint8_t expectedRemoteDamageTimer = 0;
     uint8_t pendingKillFrames = 0; // >0: counting down to a force-kill
+    uint32_t lethalDmgFlags = 0;   // dying: re-armed each frame until the enemy takes its death branch
+    Actor* lethalAttacker = nullptr;
     uint8_t deathCooldown = 0;     // >0: a death was just sent/received; don't re-broadcast or re-apply
     Collider* acCollider = nullptr; // last AC collider this actor registered
 
@@ -75,6 +81,7 @@ struct TrackedState {
     std::vector<Collider*> colliders; // captured at Collider_SetBase* time
     SkelAnime* skelAnime = nullptr;   // captured at SkelAnime_Init* time
     uint8_t submitMask = 0;           // authority: SubmitMaskBits seen this frame
+    std::vector<uint16_t> pendingSfx; // authority: sounds this actor played this frame
     bool suppressed = false;          // mirror: update currently suppressed
     bool dying = false;               // death handoff latch: never re-suppress
     bool cullForced = false;          // we set ACTOR_FLAG_UPDATE_CULLING_DISABLED
@@ -85,6 +92,7 @@ struct TrackedState {
     uint16_t spawnParams = 0;
     bool dynamicKey = false;          // key is host-assigned (bit 63)
     bool remoteSpawned = false;       // spawned from an ENEMY_SPAWN packet
+    uint16_t localUpdates = 0;        // frames this copy's OWN AI ran unsuppressed (saturating)
     bool needsSpawnBroadcast = false; // authority: announce this dynamic spawn
     bool projectile = false;          // whitelisted enemy projectile: fire-and-forget replica, never streamed/mirrored
     uint8_t phase = 0;                // last adapter phase seen/applied
@@ -99,6 +107,14 @@ struct RemoteEnemyState {
     Vec3f focusPos{};
     Vec3f scale{};
     bool hasScale = false;
+    // shape.yOffset: a DRAW-only vertical offset, so it is invisible to the
+    // streamed world.pos. Emerging enemies bury themselves with it (En_Skb sets
+    // -8000 in Init and rises to 0, En_Anubice -4230, Barinade -1420): frozen on
+    // a mirror the enemy is drawn deep underground while its collider, placed
+    // from world.pos, still hits — invisible and dangerous. Base-Actor field, so
+    // base stream, like scale.
+    float yOffset = 0.0f;
+    bool hasYOffset = false;
     uint8_t health = 0;
     uint8_t mask = 0;
     uint8_t phase = 0;
@@ -107,8 +123,35 @@ struct RemoteEnemyState {
     // per quad, in the authority's st.colliders capture order. Empty when this
     // enemy submitted no quad class this frame (the whole Deku Tree roster).
     std::vector<Vec3f> quadVerts;
+    // Per-collider AT/AC/OC enable bits (bit 0/1/2), in the authority's
+    // st.colliders capture order. These live on the collider struct and are
+    // toggled by the enemy's own AI (En_Bili floating vs burnt, En_Eiyer buried
+    // vs ambushing, a Deku Baba's vulnerable window): the suppressed mirror
+    // never runs that AI, so its copy stays frozen at whatever it held when the
+    // stream took over. Frozen ON is harmless (the streamed mask still gates
+    // the frame), frozen OFF is not: the enemy stops hurting the mirror player,
+    // or the mirror player's hits stop registering at all. Empty = the
+    // authority sent none (older build): fall back to the local flags.
+    std::vector<uint8_t> colEnable;
+    uint32_t actorFlags = 0;
+    bool hasActorFlags = false;
+    // Sound ids the authority's AI played for this actor this frame, replayed
+    // once by the mirror step then cleared (see the mirror path).
+    std::vector<uint16_t> sfx;
     nlohmann::json extras;
 };
+
+// Actor::flags bits carried by the stream (see ApplyPose). Deliberately narrow:
+// everything else on that word is either owned by EnemySync on a mirror or
+// describes the local client's own interaction with the actor.
+static constexpr uint32_t STREAMED_ACTOR_FLAGS = ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE |
+                                                 ACTOR_FLAG_HOOKSHOT_PULLS_PLAYER | ACTOR_FLAG_HOOKSHOT_PULLS_ACTOR |
+                                                 ACTOR_FLAG_SFX_FOR_PLAYER_BODY_HIT | ACTOR_FLAG_REACT_TO_LENS;
+
+// Per-actor sound ids carried per frame. A looping sound (SFX_FLAG) is re-played
+// by the AI every frame, so the cap bounds a stuck loop instead of growing the
+// packet; one-shots are far below it.
+static constexpr size_t MAX_STREAMED_SFX = 6;
 
 static std::unordered_map<uint64_t, Actor*> keyToActor;
 static std::unordered_map<Actor*, TrackedState> tracked;
@@ -134,6 +177,12 @@ static int16_t countersRoomNum = -1;
 // stay valid until their update consumes them a frame or two later.
 static ColliderInfo syntheticToucherPool[8];
 static uint8_t syntheticToucherIndex = 0;
+
+// True when a collider's acHitInfo points into our synthetic toucher pool, i.e.
+// the pending AC hit is one WE injected for the enemy's own update to consume.
+static bool IsSyntheticHitInfo(const ColliderInfo* info) {
+    return info != nullptr && info >= &syntheticToucherPool[0] && info < &syntheticToucherPool[8];
+}
 
 // Colliders and skeletons are set up inside the overlay's init func, which runs
 // BEFORE the OnActorInit hook — so captures land in these rings first and are
@@ -680,6 +729,45 @@ static uint32_t CurrentHitDmgFlags(TrackedState& st) {
     return dmgFlags;
 }
 
+// Enemies whose defeat is not a despawn: the sender's copy grows back, so a
+// force-kill on the mirror would delete an enemy that is supposed to return.
+// En_Karebaba's withered stalk is the case the non-permanent death path was
+// written for.
+static bool IsRegrower(Actor* actor) {
+    return actor->id == ACTOR_EN_KAREBABA;
+}
+
+// Keep a dying copy's pending hit lethal until its own damage code takes the
+// death branch. Every frame: health 1, damage 1 (Actor_ApplyDamage: damage >=
+// health -> 0 -> death), and the AC hit re-primed on its collider. The enemy's
+// state machine may not consume for a few frames (a Stalchild ignores AC hits
+// while flinching, and its SetAC wipes the flag at the end of its update), so a
+// single injection could land as a 0-damage flinch; re-arming makes the FIRST
+// consumption, whenever it happens, a death — the same animation the authority
+// showed. No drift/debt bookkeeping here: that was done once by ApplyRemoteHit.
+static void PrimeLethalHit(Actor* actor, TrackedState& st) {
+    actor->colChkInfo.health = 1;
+    actor->colChkInfo.damage = 1;
+    if (st.acCollider == nullptr) {
+        return;
+    }
+    ColliderInfo* synthetic = &syntheticToucherPool[syntheticToucherIndex];
+    syntheticToucherIndex = (syntheticToucherIndex + 1) % 8;
+    memset(synthetic, 0, sizeof(ColliderInfo));
+    synthetic->toucher.dmgFlags = st.lethalDmgFlags != 0 ? st.lethalDmgFlags : DMG_SLASH;
+    synthetic->toucher.damage = 1;
+    synthetic->toucherFlags = TOUCH_ON | TOUCH_HIT;
+    Collider* col = st.acCollider;
+    col->acFlags |= AC_HIT;
+    col->ac = st.lethalAttacker;
+    Vec3s hitPos = { (int16_t)actor->world.pos.x, (int16_t)actor->world.pos.y, (int16_t)actor->world.pos.z };
+    ForEachColliderInfo(col, [&](ColliderInfo* info) {
+        info->bumperFlags |= BUMP_HIT;
+        info->acHitInfo = synthetic;
+        info->bumper.hitPos = hitPos;
+    });
+}
+
 void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent, uint32_t dmgFlags) {
     auto it = tracked.find(actor);
     if (it == tracked.end()) {
@@ -696,6 +784,8 @@ void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent, uint32_t dm
         return; // already dead locally
     }
     state.deathCooldown = DEATH_COOLDOWN_FRAMES; // local death reaction must not re-broadcast
+    state.lethalDmgFlags = dmgFlags;
+    state.lethalAttacker = attacker;
 
     // The dying latch engages only for deaths we actually apply (echoes and
     // duplicates above must not strand a live enemy unculled/unmirrored).
@@ -715,7 +805,40 @@ void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent, uint32_t dm
     // (En_Karebaba regrowers) consume hits in few action states — force-killing
     // one that never consumed the synthetic hit would permanently despawn an
     // enemy the sender's copy regrows.
-    if (permanent) {
+    // A defeat-hook death (permanent=false) still has to land. The synthetic
+    // lethal hit above can be swallowed — i-frames, a custom damage path, or an
+    // action state that only reacts with a flinch — and the mirror's copy then
+    // bends over, gets back up and keeps fighting while the authority's is
+    // already gone (Hyrule Field Stalchildren, 2026-09-05). Arm the force-kill
+    // net for those too; only enemies that genuinely regrow on the sender's copy
+    // are exempt, which is what permanent=false was protecting in the first place.
+    // A copy whose own AI never really ran (suppressed since it spawned) has no
+    // usable death to play: its actionFunc is still the spawn/intro one, which
+    // for most enemies ignores hits — the Stalchild kept "rising from the ground"
+    // for the full grace period and was force-killed at frame 30 (P2 saw it bend,
+    // get up, vanish). The authority's copy is already gone; end ours now, with
+    // the generic defeat dust so it still reads as a kill.
+    if (state.remoteSpawned && state.localUpdates < REMOTE_DEATH_MIN_LOCAL_UPDATES) {
+        ESYNC_LOG("[EnemySync] DEATH immediate id={} key={:#x} (copy never ran its AI: {} updates)", actor->id,
+                  state.key, state.localUpdates);
+        state.pendingKillFrames = 0;
+        actor->colChkInfo.health = 0;
+        // The enemy's own death VFX (Stalchild: burning bone pieces from BodyBreak)
+        // needs its death state, which we are skipping. Stand in with the game's
+        // standard defeat flame at the body centre, with its "poof" sound, so the
+        // kill reads the same as any other enemy's on this screen.
+        {
+            Vec3f zero = { 0.0f, 0.0f, 0.0f };
+            Vec3f at = actor->focus.pos;
+            if (at.x == 0.0f && at.y == 0.0f && at.z == 0.0f) {
+                at = actor->world.pos;
+            }
+            EffectSsDeadDb_Spawn(gPlayState, &at, &zero, &zero, 130, 20, 255, 255, 150, 170, 255, 0, 0, 1, 9, true);
+        }
+        Actor_Kill(actor);
+        return;
+    }
+    if (permanent || !IsRegrower(actor)) {
         state.pendingKillFrames = REMOTE_DEATH_GRACE;
     }
 }
@@ -777,6 +900,29 @@ static void DetectAndForwardLocalHits(Actor* actor, TrackedState& st) {
         if (col == nullptr || col->actor != actor || !(col->acFlags & AC_HIT)) {
             return;
         }
+        // Only OUR player's hits are requests. Two other things set AC_HIT on a
+        // mirrored enemy's collider and must be left alone:
+        //  - a puppet's replicated sword swing landing on our copy (the authority
+        //    already applied that hit itself; forwarding it echoed it back as a
+        //    second hit, and consuming it here flashed the enemy for nothing);
+        //  - our own synthetic hit from ApplyRemoteHit/ApplyRemoteDeath, waiting
+        //    for the enemy's update to consume it. Eating it here zeroed
+        //    colChkInfo.damage, so the enemy consumed a 0-damage hit: a flinch
+        //    instead of a death (Hyrule Field Stalchildren, 2026-09-05).
+        Actor* attacker = col->ac;
+        if (attacker != NULL &&
+            (attacker->id == ACTOR_EN_OE2 || (attacker->parent != NULL && attacker->parent->id == ACTOR_EN_OE2))) {
+            return;
+        }
+        bool synthetic = false;
+        ForEachColliderInfo(col, [&](ColliderInfo* info) {
+            if (IsSyntheticHitInfo(info->acHitInfo)) {
+                synthetic = true;
+            }
+        });
+        if (synthetic) {
+            return;
+        }
         hit = true;
         ForEachColliderInfo(col, [&](ColliderInfo* info) {
             if (dmgFlags == 0 && (info->bumperFlags & BUMP_HIT) && info->acHitInfo != NULL) {
@@ -818,10 +964,23 @@ static void SubmitColliders(Actor* actor, TrackedState& st, RemoteEnemyState& r)
     // one 4-vertex set per quad that passed the AT/AC predicate below, in this same
     // st.colliders order, so the nth qualifying quad here pairs with the nth set.
     size_t quadCursor = 0;
+    size_t colIndex = 0;
     bool customPos = CustomColliderPos(actor);
     for (Collider* col : st.colliders) {
+        size_t myIndex = colIndex++;
         if (col == nullptr || col->actor != actor) {
             continue;
+        }
+        // Arm this collider the way the authority's AI had it. Without this the
+        // mirror uses its own frozen flags: an enemy that disarms while idle
+        // (En_Eiyer buried, a retracted Deku Baba) would stay harmless and
+        // unhittable here for the rest of the fight. Absent (older peer) → keep
+        // the local flags, which is the previous behaviour.
+        if (myIndex < r.colEnable.size()) {
+            uint8_t bits = r.colEnable[myIndex];
+            col->atFlags = (bits & 1) ? (col->atFlags | AT_ON) : (col->atFlags & ~AT_ON);
+            col->acFlags = (bits & 2) ? (col->acFlags | AC_ON) : (col->acFlags & ~AC_ON);
+            col->ocFlags1 = (bits & 4) ? (col->ocFlags1 | OC1_ON) : (col->ocFlags1 & ~OC1_ON);
         }
         if (col->shape == COLSHAPE_CYLINDER) {
             // Repositioned from the streamed world.pos (ApplyPose ran first) — accurate.
@@ -885,6 +1044,19 @@ static void ApplyPose(Actor* actor, TrackedState& st, RemoteEnemyState& r) {
     actor->shape.rot = r.rot;
     actor->focus.pos = r.focusPos;
 
+    // Presentation flags the AI toggles per state (57 enemies do; ATTENTION_ENABLED
+    // alone is 217 sites). Frozen on the mirror they make an enemy unlockable while
+    // it attacks, or Z-targetable while it is buried. Only the bits below travel:
+    // the culling bits are OURS on a mirror (ForceUncull), HOOKSHOT_ATTACHED and the
+    // talk bits describe this client's own player interaction, and IGNORE_QUAKE is
+    // local presentation.
+    if (r.hasActorFlags) {
+        actor->flags = (actor->flags & ~STREAMED_ACTOR_FLAGS) | (r.actorFlags & STREAMED_ACTOR_FLAGS);
+    }
+    if (r.hasYOffset) {
+        actor->shape.yOffset = r.yOffset;
+    }
+
     // Drag the hitboxes along IMMEDIATELY: cylinders re-center from world.pos
     // and JntSph spheres only refresh during PostLimbDraw — one frame late, on
     // top of network delay. On a fast flyer (Keese) that leaves the hitbox
@@ -930,8 +1102,16 @@ static void ApplyPose(Actor* actor, TrackedState& st, RemoteEnemyState& r) {
     if (r.hasScale) {
         actor->scale = r.scale;
     }
-    actor->colChkInfo.health = r.health;
-    st.prevHealth = r.health;
+    // Not while a death is being applied. ApplyRemoteDeath has just set this copy
+    // to its lethal health and injected the killing hit; a stream packet still in
+    // flight from before the kill would put the health back up, the enemy would
+    // consume the hit as a mere flinch, and it would only die from the force-kill
+    // net half a second later (Hyrule Field Stalchildren, 2026-09-05: bent over,
+    // got back up, then vanished).
+    if (st.deathCooldown == 0 && st.pendingKillFrames == 0) {
+        actor->colChkInfo.health = r.health;
+        st.prevHealth = r.health;
+    }
 
     if (st.skelAnime != nullptr && !r.joints.empty()) {
         if ((int32_t)r.joints.size() == st.skelAnime->limbCount && st.skelAnime->jointTable != nullptr) {
@@ -1050,6 +1230,13 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
         return; // we own the AI (or nothing is elected): run it
     }
     if (st.dying || IsMirrorBlocked(actor)) {
+        // Death handoff: the local death plays on its own AI. Until the enemy
+        // actually takes its death branch, keep the pending hit lethal (see
+        // PrimeLethalHit) — this runs right before the enemy's update, after
+        // anything else that could have touched health/damage this frame.
+        if (st.dying && st.pendingKillFrames > 0 && actor->update != NULL && actor->colChkInfo.health > 0) {
+            PrimeLethalHit(actor, st);
+        }
         return; // death handoff / blocklisted: local simulation runs
     }
 
@@ -1109,6 +1296,18 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
         adapter->DeserializeExtras(actor, r.extras);
     }
 
+    // Voice: the AI that plays this enemy's sounds is suppressed here, so a
+    // mirrored enemy was silent — no roar, no footstep, no attack impact. Replay
+    // what the authority played this frame, at OUR copy's position (ApplyPose ran
+    // first). Consumed on play so one packet never sounds twice; adapters with
+    // their own replay path opt out via ownsSfx.
+    if (!r.sfx.empty()) {
+        for (uint16_t id : r.sfx) {
+            Audio_PlayActorSound2(actor, id);
+        }
+        r.sfx.clear();
+    }
+
     SubmitColliders(actor, st, r);
 
     *should = false;
@@ -1130,7 +1329,39 @@ static nlohmann::json SnapshotEnemy(Actor* actor, TrackedState& st) {
     // the frozen buried scale. Base-Actor field → base stream, applied to every
     // mirrored enemy.
     e["scale"] = actor->scale;
+    e["yoff"] = actor->shape.yOffset;
     e["mask"] = st.submitMask;
+    e["aflg"] = (uint32_t)(actor->flags & STREAMED_ACTOR_FLAGS);
+    if (!st.pendingSfx.empty()) {
+        e["sfx"] = st.pendingSfx;
+        st.pendingSfx.clear();
+    }
+    // Per-collider AT/AC/OC enable bits, same capture order as st.colliders (and
+    // as the mirror's SubmitColliders iteration). The mask says which classes the
+    // real AI submitted this frame; these say which colliders were actually armed
+    // when it did, state the mirror cannot recompute with its AI suppressed.
+    {
+        std::vector<uint8_t> cf;
+        cf.reserve(st.colliders.size());
+        for (Collider* col : st.colliders) {
+            uint8_t bits = 0;
+            if (col != nullptr && col->actor == actor) {
+                if (col->atFlags & AT_ON) {
+                    bits |= 1;
+                }
+                if (col->acFlags & AC_ON) {
+                    bits |= 2;
+                }
+                if (col->ocFlags1 & OC1_ON) {
+                    bits |= 4;
+                }
+            }
+            cf.push_back(bits);
+        }
+        if (!cf.empty()) {
+            e["cf"] = cf;
+        }
+    }
     SkelAnime* skel = st.skelAnime;
     if (skel != nullptr && skel->jointTable != nullptr && skel->limbCount > 0 && skel->limbCount <= MAX_STREAM_LIMBS) {
         std::vector<int> jt;
@@ -1251,6 +1482,40 @@ void IngestEnemyState(const nlohmann::json& payload) {
                     SPDLOG_WARN("[EnemySync] Bad qv size {} for key={:#x}", n, key);
                 }
             }
+            r.hasYOffset = e.contains("yoff");
+            if (r.hasYOffset) {
+                r.yOffset = e["yoff"].get<float>();
+            }
+            r.hasActorFlags = e.contains("aflg");
+            if (r.hasActorFlags) {
+                r.actorFlags = e["aflg"].get<uint32_t>() & STREAMED_ACTOR_FLAGS;
+            }
+            // Sounds are appended, not replaced: two stream packets can land
+            // between two mirror steps, and dropping the older one would swallow
+            // a one-shot (a death cry, an attack impact).
+            if (e.contains("sfx") && e["sfx"].is_array() && r.sfx.size() < MAX_STREAMED_SFX) {
+                for (const auto& id : e["sfx"]) {
+                    if (r.sfx.size() >= MAX_STREAMED_SFX) {
+                        break;
+                    }
+                    r.sfx.push_back(id.get<uint16_t>());
+                }
+            }
+            // Per-collider enable bits. Cleared unconditionally: a peer that stops
+            // sending them (or an enemy whose capture list emptied) must fall back
+            // to the local flags rather than keep last frame's arming.
+            r.colEnable.clear();
+            if (e.contains("cf")) {
+                const auto& cf = e["cf"];
+                if (cf.is_array() && cf.size() <= (size_t)MAX_TRACKED_COLLIDERS) {
+                    r.colEnable.reserve(cf.size());
+                    for (const auto& b : cf) {
+                        r.colEnable.push_back(b.get<uint8_t>());
+                    }
+                } else {
+                    SPDLOG_WARN("[EnemySync] Bad cf size {} for key={:#x}", cf.size(), key);
+                }
+            }
         }
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[EnemySync] IngestEnemyState parse error: {}", ex.what());
@@ -1368,7 +1633,12 @@ static void Tick() {
             // keys it already knows. Projectiles are excluded from rebroadcast: they
             // are fire-and-forget (announced once via needsSpawnBroadcast), and a
             // re-announce after the other side's copy already died would resurrect it.
-            bool rebroadcast = st.dynamicKey && !st.projectile && (tickCounter % SPAWN_REBROADCAST_TICKS) == 0;
+            // ...and never for one that is dying: its death is already in flight,
+            // and the mirror that just destroyed its copy would spawn a fresh one
+            // from the re-announce (observed in Hyrule Field: Stalchildren coming
+            // back on one machine only, a second after the other killed them).
+            bool rebroadcast =
+                st.dynamicKey && !st.projectile && !st.dying && (tickCounter % SPAWN_REBROADCAST_TICKS) == 0;
             // Relax the health>0 gate for projectiles (they spawn with health 0) and
             // for adapter-declared healthless actors (energy ball, decoy riders).
             if ((st.needsSpawnBroadcast || rebroadcast) &&
@@ -1689,12 +1959,39 @@ void ReconcileRoster(int16_t roomNum, const nlohmann::json& entries) {
     }
 }
 
+// Authority-side capture of an actor's sound (see Anchor_OnActorSfx below).
+void NoteActorSfx(Actor* actor, uint16_t sfxId) {
+    if (actor == nullptr || !SyncEnabled() || !MirroringEnabled() || gPlayState == NULL || !IsLocalAuthority()) {
+        return;
+    }
+    auto it = tracked.find(actor);
+    if (it == tracked.end() || it->second.projectile || it->second.dying) {
+        return;
+    }
+    const ActorSyncAdapter* adapter = GetAdapter(actor->id);
+    if (adapter != nullptr && adapter->ownsSfx) {
+        return; // its own mirror path already replays this actor's sounds
+    }
+    if (it->second.pendingSfx.size() < MAX_STREAMED_SFX) {
+        it->second.pendingSfx.push_back(sfxId);
+    }
+}
+
 static void OnEnemyActorUpdate(Actor* actor) {
     auto it = tracked.find(actor);
     if (it == tracked.end()) {
         return;
     }
     TrackedState& state = it->second;
+
+    // How far this copy's own state machine has advanced. A remote-spawned enemy
+    // is suppressed within a frame or two of spawning, so its actionFunc is still
+    // the spawn/intro one; released for death, it resumes THAT (a Stalchild
+    // rising from the ground ignores every hit) instead of dying. See
+    // ApplyRemoteDeath.
+    if (!state.suppressed && !state.dying && state.localUpdates < UINT16_MAX) {
+        state.localUpdates++;
+    }
 
     // Step 3: projectiles carry no shared HP — damage is canonical per machine
     // (each copy natively ATs its own local Link). Skip the HP-drop detector and
@@ -1712,6 +2009,8 @@ static void OnEnemyActorUpdate(Actor* actor) {
         state.pendingKillFrames--;
         if (state.pendingKillFrames == 0 && actor->update != NULL) {
             // The lethal synthetic hit didn't take (custom damage path) — force it
+            ESYNC_LOG("[EnemySync] FORCE-KILL id={} key={:#x} hp={} (death never consumed)", actor->id, state.key,
+                      actor->colChkInfo.health);
             actor->colChkInfo.health = 0;
             Actor_Kill(actor);
             return;
@@ -1730,7 +2029,17 @@ static void OnEnemyActorUpdate(Actor* actor) {
         ESYNC_LOG("[EnemySync] HP drop id={} {}->{} localShare={} remoteShare={}", actor->id, state.prevHealth, health,
                   localShare, remoteShare);
 
-        if (localShare > 0) {
+        // A lethal blow already travels as ENEMY_DIED, which sets the mirror's
+        // health and injects its own lethal hit. Sending the ENEMY_HIT as well
+        // made the mirror consume TWO synthetic hits for one sword swing: the
+        // first landed as a non-lethal flinch (the copy bent over and got back
+        // up) and only the second killed it, a visible half-second behind the
+        // authority. Health 0 = the death packet owns this blow.
+        if (localShare > 0 && health == 0) {
+            ESYNC_LOG("[EnemySync] HP drop id={} key={:#x} lethal — hit folded into the death packet",
+                      actor->id, state.key);
+        }
+        if (localShare > 0 && health > 0) {
             uint32_t dmgFlags = 0;
             Vec3s hitPos = { (int16_t)actor->world.pos.x, (int16_t)actor->world.pos.y,
                              (int16_t)actor->world.pos.z };
@@ -1831,7 +2140,7 @@ static void OnEnemyDefeated(Actor* actor) {
         return; // defeat caused by a remote death we already applied — don't echo
     }
     state.deathCooldown = DEATH_COOLDOWN_FRAMES;
-    ESYNC_LOG("[EnemySync] DEFEAT id={} -> broadcasting death", actor->id);
+    ESYNC_LOG("[EnemySync] DEFEAT id={} key={:#x} -> broadcasting death", actor->id, state.key);
     // Defeat-hook deaths (regrowers like En_Karebaba never Actor_Kill): the
     // receiver must not force-kill if its copy can't consume the lethal hit.
     Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/false, CurrentHitDmgFlags(state));
@@ -1978,3 +2287,11 @@ void RegisterHooks(bool isConnected) {
 }
 
 } // namespace EnemySync
+
+// Called from z_actor.c's actor-sound wrappers. On the authority, records the
+// sound so mirrors can replay it on their own copy (their AI is suppressed and
+// would otherwise stay mute). No-op everywhere else, including on a mirror
+// replaying a streamed sound, so this can never echo back.
+extern "C" void Anchor_OnActorSfx(Actor* actor, uint16_t sfxId) {
+    EnemySync::NoteActorSfx(actor, sfxId);
+}

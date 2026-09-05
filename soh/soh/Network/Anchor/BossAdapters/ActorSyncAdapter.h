@@ -40,6 +40,10 @@ struct ActorSyncAdapter {
     // (dynamic AND occurrence keys). Leave false for copies every client kills
     // itself (a boss's mount at the end of a locally-run death cutscene).
     bool (*ReplicateKill)(Actor* actor) = nullptr;
+    // This adapter already replays the actor's sounds itself (its own CoopSfx /
+    // CoopMirrorTick path), so the generic per-actor sfx stream must skip it or
+    // the mirror hears everything twice.
+    bool ownsSfx = false;
 };
 
 namespace EnemySync {

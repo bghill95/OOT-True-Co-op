@@ -2263,7 +2263,12 @@ void Player_PlaySfx(Actor* actor, u16 sfxId) {
     }
 }
 
+// Co-op (Anchor/EnemySync.cpp): records the sound on the authority so mirrors,
+// whose copy of this enemy has its AI suppressed, can replay it. No-op offline.
+void Anchor_OnActorSfx(Actor* actor, u16 sfxId);
+
 void Audio_PlayActorSound2(Actor* actor, u16 sfxId) {
+    Anchor_OnActorSfx(actor, sfxId);
     Sfx_PlaySfxAtPos(&actor->projectedPos, sfxId);
 }
 

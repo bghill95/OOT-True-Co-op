@@ -319,6 +319,7 @@ void RegisterPhantomGanonAdapters() {
         adapter.customColliderPos = true;
         adapter.IsHealthless = PhantomGanon_IsDecoy;
         adapter.ReplicateKill = PhantomGanon_ReplicateKill;
+        adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
         EnemySync::RegisterAdapter(ACTOR_BOSS_GANONDROF, adapter);
     }
     {
@@ -329,6 +330,7 @@ void RegisterPhantomGanonAdapters() {
         adapter.ShouldMirror = PhantomHorse_ShouldMirror;
         adapter.IsHealthless = PhantomHorse_Always;
         adapter.ReplicateKill = PhantomHorse_ReplicateKill;
+        adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
         EnemySync::RegisterAdapter(ACTOR_EN_FHG, adapter);
     }
     {
@@ -338,6 +340,7 @@ void RegisterPhantomGanonAdapters() {
         adapter.ShouldMirror = PhantomFire_ShouldMirror;
         adapter.IsHealthless = PhantomFire_Always;
         adapter.ReplicateKill = PhantomFire_Always;
+        adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
         EnemySync::RegisterAdapter(ACTOR_EN_FHG_FIRE, adapter);
     }
 }

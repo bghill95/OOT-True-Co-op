@@ -20,6 +20,9 @@ void func_809B5670(EnAttackNiw* this, PlayState* play);
 void func_809B5C18(EnAttackNiw* this, PlayState* play);
 void func_809B59B0(EnAttackNiw* this, PlayState* play);
 
+// Co-op (Anchor/DummyPlayer.cpp): nearest live player, local Link or puppet.
+Player* Anchor_NearestPlayer(Actor* from);
+
 const ActorInit En_Attack_Niw_InitVars = {
     ACTOR_EN_ATTACK_NIW,
     ACTORCAT_ENEMY,
@@ -362,9 +365,13 @@ void EnAttackNiw_Update(Actor* thisx, PlayState* play) {
     }
 
     tmpf1 = 20.0f;
-    if (this->actor.xyzDistToPlayerSq < SQ(tmpf1)) {
+    // xyzDistToPlayerSq is the distance to the NEAREST player (EnemySync retargets
+    // it at puppets) while func_8002F6D4 always shoves the LOCAL Link, and only the
+    // authority runs this AI: without the ownership test a peer being pecked shoves
+    // the authority's Link instead.
+    if (this->actor.xyzDistToPlayerSq < SQ(tmpf1) && Anchor_NearestPlayer(&this->actor) == player) {
         cucco = (EnNiw*)this->actor.parent;
-        if ((this->actor.parent->update != NULL) && (this->actor.parent != NULL) && (cucco != NULL) &&
+        if ((this->actor.parent != NULL) && (this->actor.parent->update != NULL) && (cucco != NULL) &&
             (cucco->timer9 == 0) && (player->invincibilityTimer == 0)) {
             func_8002F6D4(play, &this->actor, 2.0f, this->actor.world.rot.y, 0.0f, 0x10);
             cucco->timer9 = 0x46;

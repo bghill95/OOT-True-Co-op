@@ -248,5 +248,6 @@ void RegisterMorphaAdapter() {
     adapter.ShouldMirror = Morpha_ShouldMirror;
     adapter.IsHealthless = Morpha_IsTentacle; // the core's health is the fight's health
     adapter.ReplicateKill = Morpha_ReplicateKill;
+    adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
     EnemySync::RegisterAdapter(ACTOR_BOSS_MO, adapter);
 }

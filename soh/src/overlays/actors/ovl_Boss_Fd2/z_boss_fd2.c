@@ -315,7 +315,14 @@ void BossFd2_Emerge(BossFd2* this, PlayState* play) {
             break;
         case 2:
             Math_ApproachS(&this->actor.shape.rot.y, this->actor.yawTowardsPlayer, 3, 0x7D0);
-            if ((this->timers[0] == 1) && (this->actor.xzDistToPlayer < 120.0f)) {
+            // func_8002F6D4 always shoves the LOCAL Link, while xzDistToPlayer is
+            // the distance to the NEAREST player (EnemySync retargets it at
+            // puppets). Only the authority runs this branch, so without the
+            // ownership test a co-op partner standing here shoves the authority's
+            // Link instead. The head's AT collider still hits whoever is really
+            // close, on that player's own client.
+            if ((this->timers[0] == 1) && (this->actor.xzDistToPlayer < 120.0f) &&
+                (Anchor_NearestPlayer(&this->actor) == player)) {
                 func_8002F6D4(play, &this->actor, 3.0f, this->actor.yawTowardsPlayer, 2.0f, 0x20);
                 Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
             }

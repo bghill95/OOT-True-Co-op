@@ -553,7 +553,12 @@ void EnFhgFire_EnergyBall(EnFhgFire* this, PlayState* play) {
                     if ((bossGnd->flyMode >= GND_FLY_VOLLEY) && (this->work[FHGFIRE_RETURN_COUNT] >= 2)) {
                         Audio_PlayActorSound2(&this->actor, NA_SE_EN_FANTOM_LAUGH);
                     }
-                    func_8002F698(play, &this->actor, 3.0f, this->actor.world.rot.y, 0.0f, 3, 0x10);
+                    // `player` is the player nearest the ball, which is who it hit;
+                    // func_8002F698 always shoves the LOCAL Link. Only the authority
+                    // runs this, so shove ours only when ours is the one hit.
+                    if (player == GET_PLAYER(play)) {
+                        func_8002F698(play, &this->actor, 3.0f, this->actor.world.rot.y, 0.0f, 3, 0x10);
+                    }
                 }
                 break;
             case FHGFIRE_LIGHT_BLUE:
@@ -744,7 +749,10 @@ void EnFhgFire_CoopMirrorFx(EnFhgFire* this, PlayState* play) {
                                             (s16)(Rand_ZeroOne() * 50.0f) + 100, color);
         }
         if (killMode == BALL_BURST) {
-            Player* player = GET_PLAYER(play);
+            // The ball struck whoever it reached, not necessarily the local Link:
+            // take the height from the player nearest the impact, or a mirroring
+            // client draws the burst at its own Link's height instead.
+            Player* player = Anchor_NearestPlayer(&this->actor);
 
             Actor_SpawnAsChild(&play->actorCtx, &this->actor, play, ACTOR_EN_FHG_FIRE, this->actor.world.pos.x,
                                player->actor.world.pos.y + 20.0f, this->actor.world.pos.z, 0xC8, 0, 0,

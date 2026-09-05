@@ -272,6 +272,7 @@ void RegisterVolvagiaAdapters() {
         adapter.GetPhase = Volvagia_GetPhase;
         adapter.OnPhaseChange = Volvagia_OnPhaseChange;
         adapter.ShouldMirror = Volvagia_ShouldMirror;
+        adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
         EnemySync::RegisterAdapter(ACTOR_BOSS_FD, adapter);
     }
     {
@@ -282,6 +283,7 @@ void RegisterVolvagiaAdapters() {
         adapter.OnPhaseChange = VolvagiaHead_OnPhaseChange;
         adapter.ShouldMirror = VolvagiaHead_ShouldMirror;
         adapter.IsHealthless = VolvagiaHead_Always; // the parent's health is the fight's health
+        adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
         EnemySync::RegisterAdapter(ACTOR_BOSS_FD2, adapter);
     }
 }

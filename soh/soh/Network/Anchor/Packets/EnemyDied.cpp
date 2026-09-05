@@ -45,7 +45,7 @@ void Anchor::SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanen
             sent++;
         }
     }
-    ESYNC_LOG("[EnemySync] DIED tx id={} n={}", actor->id, sent);
+    ESYNC_LOG("[EnemySync] DIED tx id={} key={:#x} n={}", actor->id, enemyKey, sent);
 }
 
 void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
@@ -55,7 +55,8 @@ void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
     if (payload["sceneNum"].get<int16_t>() != gPlayState->sceneNum) {
         return;
     }
-    ESYNC_LOG("[EnemySync] DIED rx id={}", payload["actorId"].get<int16_t>());
+    ESYNC_LOG("[EnemySync] DIED rx id={} key={:#x}", payload["actorId"].get<int16_t>(),
+              payload["key"].get<uint64_t>());
 
     uint64_t key = payload["key"].get<uint64_t>();
     Actor* actor = EnemySync::FindActorForPacket(key, payload["actorId"].get<int16_t>(),
