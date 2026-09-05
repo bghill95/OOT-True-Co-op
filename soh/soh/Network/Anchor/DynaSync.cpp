@@ -74,6 +74,19 @@ static bool IsSyncedDynaActor(const Actor* actor) {
             // per-actor claim). NOT Obj_Lift collapsing platforms (per-player
             // stand trigger). NOT boss-room platforms (adapter territory).
             return true;
+
+        case ACTOR_BG_MORI_HASHIRA4:
+            // Forest Temple, the four rotating pillars (params 0 after Init masks
+            // it): BgMoriHashira4_PillarsRotate does
+            //     shape.rot.y = world.rot.y += 0x96
+            // every frame, unconditionally, from the moment the room loads. No
+            // flag, no trigger, no resync point — so the phase is decided by WHEN
+            // each client loaded the room and the offset never converges. Same
+            // family as BG_MIZU_UZU above.
+            // The other params are the gates: one-shot switch-flag movers the flag
+            // sync already replays on both clients, so they stay out.
+            return actor->params == 0;
+
         default:
             return false;
     }
