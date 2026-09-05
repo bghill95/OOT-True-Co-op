@@ -7,6 +7,7 @@
 extern "C" {
 #include "macros.h"
 #include "variables.h"
+#include "src/overlays/actors/ovl_En_Horse/z_en_horse.h"
 extern PlayState* gPlayState;
 }
 
@@ -56,10 +57,24 @@ void Anchor::SendPacket_PlayerUpdate() {
         true,  true,  false, false                                            // sheath/torso
     };
     bool upperOverride = (player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) != 0;
+    // Same deferred-task problem for the root limb: while an animation drives
+    // movement (movementFlags & 8: rolling, climbing, riding, ...) the root's
+    // translation is consumed by AnimationContext_MoveActor AFTER this snapshot
+    // and replaced by baseTransl (SkelAnime_UpdateTranslation) before drawing.
+    // Streaming the raw root put the puppet's hips a full anim-translation off
+    // (rider 37 units above the saddle). Apply the same substitution here.
+    bool rootMoves = (player->skelAnime.movementFlags & 8) != 0;
     std::vector<int> jointArray;
     for (size_t i = 0; i < 24; i++) {
         Vec3s joint = (upperOverride && upperLimbCopyMap[i]) ? player->upperSkelAnime.jointTable[i]
                                                              : player->skelAnime.jointTable[i];
+        if (i == 0 && rootMoves) {
+            joint.x = player->skelAnime.baseTransl.x;
+            joint.z = player->skelAnime.baseTransl.z;
+            if (player->skelAnime.movementFlags & ANIM_FLAG_UPDATEY) {
+                joint.y = player->skelAnime.baseTransl.y;
+            }
+        }
         jointArray.push_back(joint.x);
         jointArray.push_back(joint.y);
         jointArray.push_back(joint.z);
@@ -103,6 +118,18 @@ void Anchor::SendPacket_PlayerUpdate() {
         payload["boomPos"] = player->boomerangActor->world.pos;
         payload["boomYaw"] = player->boomerangActor->world.rot.y;   // flight yaw (EnBoom_Draw basis)
         payload["boomPitch"] = player->boomerangActor->world.rot.x; // flight pitch
+    }
+    // Mount: the horse under us exists only on our game (scene-placed, player
+    // driven). While rideActor is set (mounting through dismount) the peers
+    // drive a replica from this pose and gait (FxSync::TickPuppetHorse).
+    if (player->rideActor != NULL && player->rideActor->update != NULL && player->rideActor->id == ACTOR_EN_HORSE) {
+        EnHorse* horse = (EnHorse*)player->rideActor;
+        payload["horsePos"] = horse->actor.world.pos;
+        payload["horseRot"] = horse->actor.shape.rot; // yaw + body tilt
+        payload["horseType"] = (s8)horse->type;
+        payload["horseAnim"] = (s8)horse->animationIdx;
+        payload["horseFrame"] = horse->skin.skelAnime.curFrame;
+        payload["horseSpeed"] = horse->skin.skelAnime.playSpeed;
     }
     FxSync::CollectProjectiles(payload); // arrows + hookshot in flight
     payload["quiet"] = true;
@@ -168,6 +195,15 @@ void Anchor::HandlePacket_PlayerUpdate(nlohmann::json payload) {
             client.boomPos = payload["boomPos"].get<Vec3f>();
             client.boomYaw = payload.value("boomYaw", (s16)0);
             client.boomPitch = payload.value("boomPitch", (s16)0);
+        }
+        client.horseActive = payload.contains("horsePos");
+        if (client.horseActive) {
+            client.horsePos = payload["horsePos"].get<Vec3f>();
+            client.horseRot = payload.value("horseRot", Vec3s{ 0, 0, 0 });
+            client.horseType = (s8)payload.value("horseType", 0);
+            client.horseAnim = (s8)payload.value("horseAnim", 0);
+            client.horseFrame = payload.value("horseFrame", 0.0f);
+            client.horseSpeed = payload.value("horseSpeed", 1.0f);
         }
         FxSync::IngestPlayerProjectiles(clientId, payload);
     }

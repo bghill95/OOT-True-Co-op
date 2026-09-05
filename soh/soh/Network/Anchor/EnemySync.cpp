@@ -243,6 +243,13 @@ static bool IsSyncedProjectile(Actor* actor) {
 // PostLimbDraw during the locally-run defeat) — tracking or replicating them
 // would double-spawn and pollute the stream.
 static bool IsTrackingExcluded(Actor* actor) {
+    // Demo_Effect: cutscene props (spiritual stones, medallions, light beams).
+    // The Zora sapphire re-categorises itself to ACTORCAT_BOSS for Jabu's
+    // cutscene, which dragged it into tracking / roster replication: a lone
+    // spinning sapphire on the Temple of Time altar before the Song of Time.
+    if (actor->id == ACTOR_DEMO_EFFECT) {
+        return true;
+    }
     return actor->id == ACTOR_EN_GOMA && (uint16_t)actor->params >= 6;
 }
 
@@ -590,7 +597,22 @@ void ApplyRemoteHit(Actor* actor, uint8_t damage, uint32_t dmgFlags, Vec3s hitPo
     state.expectedRemoteDamageTimer = EXPECTED_DAMAGE_LIFETIME;
 }
 
-void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent) {
+// dmgFlags of the hit sitting on the actor's AC collider right now — the
+// lethal blow's flags when called from the same frame's defeat / kill hook.
+// 0 when nothing is recorded (the receiver then falls back to DMG_SLASH).
+static uint32_t CurrentHitDmgFlags(TrackedState& st) {
+    uint32_t dmgFlags = 0;
+    if (st.acCollider != nullptr) {
+        ForEachColliderInfo(st.acCollider, [&](ColliderInfo* info) {
+            if (dmgFlags == 0 && (info->bumperFlags & BUMP_HIT) && info->acHitInfo != NULL) {
+                dmgFlags = info->acHitInfo->toucher.dmgFlags;
+            }
+        });
+    }
+    return dmgFlags;
+}
+
+void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent, uint32_t dmgFlags) {
     auto it = tracked.find(actor);
     if (it == tracked.end()) {
         return;
@@ -611,9 +633,16 @@ void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent) {
     // duplicates above must not strand a live enemy unculled/unmirrored).
     ReleaseForDeath(actor);
 
-    uint8_t health = actor->colChkInfo.health;
+    // One lethal point, whatever the enemy's own accounting: Actor_ApplyDamage
+    // (health -= damage, clamped), "health -= n" and "health--" all reach 0 from
+    // 1. The stream may already have driven the mirror's health to 0 — a
+    // decrement-style death (En_Ba, Parasitic Tentacle) then underflowed to 255
+    // and the copy stood there unkillable while the authority's was gone.
+    // The real dmgFlags travel with the packet so flag-gated enemies (boomerang
+    // only, fire only…) accept the hit.
+    actor->colChkInfo.health = 1;
     Vec3s hitPos = { (int16_t)actor->world.pos.x, (int16_t)actor->world.pos.y, (int16_t)actor->world.pos.z };
-    ApplyRemoteHit(actor, health > 0 ? health : 1, 0, hitPos, 0, attacker);
+    ApplyRemoteHit(actor, 1, dmgFlags, hitPos, 0, attacker);
     // Only Actor_Kill deaths force-kill as a last resort. Defeat-hook enemies
     // (En_Karebaba regrowers) consume hits in few action states — force-killing
     // one that never consumed the synthetic hit would permanently despawn an
@@ -1424,12 +1453,25 @@ static void ReKeyDynamic(Actor* actor, TrackedState& st, uint64_t newKey, bool r
 // local dynamic key here; HandleRemoteSpawn re-keys packet-driven spawns right
 // after Actor_Spawn returns (this hook can't tell them apart — nested child
 // spawns during an actor's init would race a pass-through key).
+extern "C" s32 gActorInitDepth; // z_actor.c: > 0 while an actor's Init runs
+
 static void OnEnemyActorSpawn(Actor* actor) {
     if (!(IsTrackedCategory(actor) || IsSyncedProjectile(actor)) || gPlayState == NULL || IsTrackingExcluded(actor) ||
         !MirroringEnabled()) {
         return;
     }
     if (gPlayState->numSetupActors != 0) {
+        return;
+    }
+    // Children spawned from inside another actor's Init (Tailpasaran: 7 tails
+    // per head, spawned by EnTp_Init) exist identically on every client — the
+    // mirror's Init is never suppressed — so they keep deterministic occurrence
+    // keys exactly like room-listed actors. A dynamic key here would broadcast
+    // an ENEMY_SPAWN the other side materialises as a second, headless copy
+    // (head == NULL crash in EnTp_Tail_FollowHead / EnTp_UpdateDamage the frame
+    // the copy wakes for its death). Room-list drains already pass above; this
+    // covers heads whose Init was deferred until their object finished loading.
+    if (gActorInitDepth > 0) {
         return;
     }
 
@@ -1664,7 +1706,7 @@ static void OnEnemyActorKill(Actor* actor) {
     // Only broadcast real deaths (health exhausted), not despawns/cleanup kills
     if (state.deathCooldown == 0 && actor->colChkInfo.health == 0) {
         state.deathCooldown = DEATH_COOLDOWN_FRAMES;
-        Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/true);
+        Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/true, CurrentHitDmgFlags(state));
     } else if (state.deathCooldown == 0 && state.dynamicKey && MirroringEnabled() && IsLocalAuthority()) {
         // Non-death removal of a replicated dynamic spawn: mirrors must remove their
         // copy too. (Projectiles are handled by the early return above.)
@@ -1693,7 +1735,7 @@ static void OnEnemyDefeated(Actor* actor) {
     ESYNC_LOG("[EnemySync] DEFEAT id={} -> broadcasting death", actor->id);
     // Defeat-hook deaths (regrowers like En_Karebaba never Actor_Kill): the
     // receiver must not force-kill if its copy can't consume the lethal hit.
-    Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/false);
+    Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/false, CurrentHitDmgFlags(state));
 }
 
 static void OnEnemyActorDestroy(Actor* actor) {

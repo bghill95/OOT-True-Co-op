@@ -18,6 +18,11 @@ extern "C" {
 #include "src/overlays/actors/ovl_Bg_Po_Event/z_bg_po_event.h"
 #include "src/overlays/actors/ovl_Bg_Bdan_Switch/z_bg_bdan_switch.h"
 #include "src/overlays/actors/ovl_En_Jj/z_en_jj.h"
+#include "src/overlays/actors/ovl_Demo_Kankyo/z_demo_kankyo.h"
+// Door-of-Time actions: defined non-static in z_demo_kankyo.c, not in its header.
+void DemoKankyo_SetupAction(DemoKankyo* thisx, DemoKankyoActionFunc actionFunc);
+void DemoKankyo_SetupType(DemoKankyo* thisx, PlayState* play);
+void DemoKankyo_UpdateDoorOfTime(DemoKankyo* thisx, PlayState* play);
 extern PlayState* gPlayState;
 
 // Non-static vanilla action functions (declared only in their .c files).
@@ -290,6 +295,22 @@ void RegisterHooks(bool isConnected) {
         if (jj->dyna.actor.params == JABUJABU_MAIN && jj->actionFunc == EnJj_WaitForFish &&
             Flags_GetEventChkInf(EVENTCHKINF_OFFERED_FISH_TO_JABU_JABU)) {
             EnJj_SetupAction(jj, EnJj_WaitToOpenMouth); // no cutscene on this side
+        }
+    });
+
+    // ---- Temple of Time, Door of Time (DEMO_KANKYO type DOOR_OF_TIME) ----
+    // The door halves are this actor; the collision is its DOOR_TOKI child. The
+    // Song of Time cutscene opens it through an env flag (Flags_GetEnv 2) that
+    // only the singer's cutscene raises, and DoorToki_Update drops the collision
+    // the moment EVENTCHKINF_OPENED_THE_DOOR_OF_TIME arrives. On the other side
+    // the flag came through the save sync first: a closed door with no
+    // collision, walked straight through. Play the vanilla opening here (102
+    // frames, then it kills the child and itself exactly as after the cutscene).
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_DEMO_KANKYO, isConnected, [](void* refActor, bool* should) {
+        DemoKankyo* dk = static_cast<DemoKankyo*>(refActor);
+        if (dk->actor.params == DEMOKANKYO_DOOR_OF_TIME && dk->actionFunc == DemoKankyo_SetupType &&
+            dk->actor.child != NULL && Flags_GetEventChkInf(EVENTCHKINF_OPENED_THE_DOOR_OF_TIME)) {
+            DemoKankyo_SetupAction(dk, DemoKankyo_UpdateDoorOfTime);
         }
     });
 

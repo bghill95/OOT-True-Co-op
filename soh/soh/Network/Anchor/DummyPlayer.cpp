@@ -196,6 +196,11 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
     FxSync::TickPuppetBoomerang(client.clientId, client.boomActive, client.boomPos, client.boomYaw, client.boomPitch);
     // Arrows (incl. elemental/nut/seed) and hookshot, same model.
     FxSync::TickPuppetProjectiles(client.clientId, actor);
+    // Charged spin attack glow + release blast (EN_M_THUNDER), parented to us.
+    FxSync::TickPuppetSpinCharge(client.clientId, actor);
+    // Mount: the rider's horse, replicated from its streamed pose and gait.
+    FxSync::TickPuppetHorse(client.clientId, actor, client.horseActive, client.horseType, client.horsePos,
+                            client.horseRot, client.horseAnim, client.horseFrame, client.horseSpeed);
 
     {
         // Hack to account for usage of gSaveContext
@@ -312,6 +317,14 @@ void DummyPlayer_Draw(Actor* actor, PlayState* play) {
 
 void DummyPlayer_Destroy(Actor* actor, PlayState* play) {
     uint32_t clientId = (uint32_t)((Player*)actor)->zTargetActiveTimer;
+    // Player_Init gave the puppet a sword-trail blure (Effect_Add); Player_Destroy
+    // is what frees it and never runs for a puppet. Each respawn (reconnect, room
+    // change, RefreshClientActors) leaked one of the scene's 25 blures; once the
+    // pool was empty the next puppet got TOTAL_EFFECT_COUNT and its first sword
+    // swing crashed in EffectBlure_ChangeType(NULL). Effect_Delete ignores the
+    // "none" index.
+    Effect_Delete(play, ((Player*)actor)->meleeWeaponEffectIndex);
+    ((Player*)actor)->meleeWeaponEffectIndex = TOTAL_EFFECT_COUNT;
     sPuppetGi.erase(clientId);
     sPuppetModelsGroup.erase(clientId);
     // The projectile replicas (arrows, hookshot, boomerang) are parented to this
@@ -324,6 +337,26 @@ void DummyPlayer_Destroy(Actor* actor, PlayState* play) {
     // next puppet reused: a chain from the reconnected player's hand to a
     // fixed point in the air.
     FxSync::ReapClientProjectiles(clientId);
+}
+
+// z_map_exp.c draws one minimap arrow per remote player: the puppets alive in
+// our scene. Fills `out` (at most `max`) and returns the count.
+extern "C" s32 Anchor_GetPuppetActors(Actor** out, s32 max) {
+    s32 n = 0;
+    if (Anchor::Instance == nullptr || gPlayState == NULL || out == NULL) {
+        return 0;
+    }
+    for (auto& [cid, client] : Anchor::Instance->clients) {
+        if (n >= max) {
+            break;
+        }
+        if (client.self || !client.online || client.player == NULL || client.player->actor.update == NULL ||
+            client.sceneNum != gPlayState->sceneNum) {
+            continue;
+        }
+        out[n++] = &client.player->actor;
+    }
+    return n;
 }
 
 // z_player_lib.c asks whether a Player struct is one of our puppets with a

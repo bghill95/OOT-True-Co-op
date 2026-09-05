@@ -73,6 +73,13 @@ typedef struct {
     Vec3s carryRot;
     s16 boomYaw;
     s16 boomPitch;
+    bool horseActive; // this client sits on an EN_HORSE (the fields below are its pose and gait)
+    Vec3f horsePos;
+    Vec3s horseRot;
+    s8 horseType;     // HORSE_EPONA / HORSE_HNI
+    s8 horseAnim;     // EnHorse animationIdx
+    f32 horseFrame;   // skelAnime.curFrame
+    f32 horseSpeed;   // skelAnime.playSpeed
 
     // Ptr to the dummy player
     Player* player;
@@ -233,7 +240,7 @@ class Anchor : public Network {
     void SendPacket_CutsceneSync(u8 kind, s16 sceneNum, s32 entranceIndex, s32 cutsceneIndex, s16 csFlag);
     void SendPacket_DamagePlayer(u32 clientId, u8 damageEffect, u8 damage);
     void SendPacket_EnemyDespawn(uint64_t enemyKey);
-    void SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanent);
+    void SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanent, u32 dmgFlags);
     void SendPacket_EnemyHit(Actor* actor, uint64_t enemyKey, u8 damage, u32 dmgFlags, Vec3s hitPos, u8 health);
     void SendPacket_EnemyHitRequest(Actor* actor, uint64_t enemyKey, u8 damage, u32 dmgFlags, Vec3s hitPos,
                                     int16_t attackerActorId);

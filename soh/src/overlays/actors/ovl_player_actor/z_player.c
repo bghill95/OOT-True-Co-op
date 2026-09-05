@@ -14741,8 +14741,8 @@ void Player_Action_8084EED8(Player* this, PlayState* play) {
         Actor* fairy = Player_SpawnFairy(play, this, &this->leftHandPos, &D_80854A1C, FAIRY_REVIVE_BOTTLE);
         if (fairy != NULL) {
             // Co-op: the peer only sees the bottle tip over; announce the release.
-            void FxSync_OnBottleDrop(int16_t aid, int16_t params, Vec3f* pos, Vec3s* rot);
-            FxSync_OnBottleDrop(ACTOR_EN_ELF, FAIRY_REVIVE_BOTTLE, &fairy->world.pos, NULL);
+            void FxSync_OnBottleDrop(int16_t aid, int16_t params, Vec3f* pos, Vec3s* rot, Actor* dropped);
+            FxSync_OnBottleDrop(ACTOR_EN_ELF, FAIRY_REVIVE_BOTTLE, &fairy->world.pos, NULL, fairy);
         }
         Player_UpdateBottleHeld(play, this, ITEM_BOTTLE, PLAYER_IA_BOTTLE);
         Player_PlaySfx(this, NA_SE_EV_BOTTLE_CAP_OPEN);
@@ -14780,12 +14780,13 @@ void Player_Action_8084EFC0(Player* this, PlayState* play) {
                           (Math_CosS(this->actor.shape.rot.y) * 5.0f) + this->leftHandPos.z };
         Vec3s dropRot = { 0x4000, this->actor.shape.rot.y, 0 };
 
-        Actor_Spawn(&play->actorCtx, play, dropInfo->actorId, dropPos.x, dropPos.y, dropPos.z, dropRot.x, dropRot.y,
-                    dropRot.z, dropInfo->actorParams, true);
+        Actor* dropped = Actor_Spawn(&play->actorCtx, play, dropInfo->actorId, dropPos.x, dropPos.y, dropPos.z,
+                                     dropRot.x, dropRot.y, dropRot.z, dropInfo->actorParams, true);
         {
             // Co-op: the released fish / blue fire / bug exists on our side only.
-            void FxSync_OnBottleDrop(int16_t aid, int16_t params, Vec3f* pos, Vec3s* rot);
-            FxSync_OnBottleDrop(dropInfo->actorId, dropInfo->actorParams, &dropPos, &dropRot);
+            // The actor is remembered so its death (re-bottled, swam off) reaches the peers.
+            void FxSync_OnBottleDrop(int16_t aid, int16_t params, Vec3f* pos, Vec3s* rot, Actor* dropped);
+            FxSync_OnBottleDrop(dropInfo->actorId, dropInfo->actorParams, &dropPos, &dropRot, dropped);
         }
 
         Player_UpdateBottleHeld(play, this, ITEM_BOTTLE, PLAYER_IA_BOTTLE);

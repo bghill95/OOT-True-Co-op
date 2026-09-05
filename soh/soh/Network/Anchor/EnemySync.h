@@ -127,7 +127,7 @@ Actor* FakeAttacker(int16_t actorId, Vec3s hitPos);
 // defeat-hook deaths (regrowers) skip it — a copy that can't consume the hit
 // must not be despawned one-sidedly. Engages the dying latch itself, only for
 // deaths it actually applies.
-void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent);
+void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent, uint32_t dmgFlags);
 
 } // namespace EnemySync
 

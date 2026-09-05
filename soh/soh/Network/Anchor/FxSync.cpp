@@ -21,6 +21,7 @@ extern "C" {
 #include "src/overlays/actors/ovl_Bg_Po_Event/z_bg_po_event.h"
 #include "src/overlays/actors/ovl_En_G_Switch/z_en_g_switch.h"
 #include "src/overlays/effects/ovl_Effect_Ss_HitMark/z_eff_ss_hitmark.h"
+#include "src/overlays/actors/ovl_En_Horse/z_en_horse.h"
 extern PlayState* gPlayState;
 // z_en_g_switch.c: silver-rupee tally accessor + action funcs.
 s16* EnGSwitch_CoopCollectedCount(void);
@@ -50,6 +51,7 @@ enum FxEventKind : uint8_t {
     FX_EV_SILVER = 7,    // we picked up a silver rupee (home pos): peers tally it and remove theirs
     FX_EV_BOTTLEDROP = 8, // we emptied a bottle: fish / blue fire / bug / fairy released (aid, pos, rot)
     FX_EV_AMYTIMER = 9,   // Amy puzzle driver: the countdown block landed, HUD timer starts (sec)
+    FX_EV_BOTTLEGONE = 10, // a bottle drop we announced is gone (re-caught, swam off…): kill the copy (seq)
 };
 
 // --- Spells -----------------------------------------------------------------
@@ -213,6 +215,114 @@ void IngestPlayerProjectiles(uint32_t clientId, const nlohmann::json& payload) {
 // below can drop it together with that client's arrows and hookshot).
 static std::unordered_map<uint32_t, Actor*> sBoomReplicas;
 
+// --- Spin attack charge ----------------------------------------------------
+// The charge glow / sparks / release blast are EN_M_THUNDER, spawned by the
+// player's own action code and reading GET_PLAYER — never spawned for a
+// puppet, so a peer's charged spin attack showed nothing. One replica per
+// remote client, parented to its puppet: EnMThunder reads the puppet instead
+// of the local player when it has a parent (z_en_m_thunder.c), and the puppet
+// streams everything it needs (stateFlags1/2, unk_858 = charge level,
+// bodyPartsPos, heldItemAction). It retires itself like the original does.
+struct ChargeReplica {
+    Actor* actor = NULL;
+    bool wasCharging = false;
+};
+static std::unordered_map<uint32_t, ChargeReplica> sChargeReplicas;
+
+void TickPuppetSpinCharge(uint32_t clientId, Actor* puppet) {
+    if (!SyncEnabled() || gPlayState == NULL || puppet == NULL) {
+        return;
+    }
+    ChargeReplica& cs = sChargeReplicas[clientId];
+    if (cs.actor != NULL && cs.actor->update == NULL) {
+        cs.actor = NULL;
+    }
+    Player* p = (Player*)puppet;
+    bool charging = (p->stateFlags1 & PLAYER_STATE1_CHARGING_SPIN_ATTACK) != 0;
+    // Rising edge only: the replica handles the release (blast) and its own
+    // death; a stale CHARGING packet after the release must not spawn another.
+    if (charging && !cs.wasCharging && cs.actor == NULL) {
+        int16_t params = (int16_t)Player_GetMeleeWeaponHeld(p); // no magic cost byte: never drains the viewer
+        cs.actor = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_M_THUNDER, p->bodyPartsPos[0].x,
+                               p->bodyPartsPos[0].y, p->bodyPartsPos[0].z, 0, 0, 0, params, true);
+        if (cs.actor != NULL) {
+            cs.actor->parent = puppet;
+        }
+        ESYNC_LOG("[FxSync] puppet spin charge spawn client={} ok={}", clientId, cs.actor != NULL);
+    }
+    cs.wasCharging = charging;
+}
+
+// --- Mounts ----------------------------------------------------------------
+// A rider's horse exists only on its own game: EN_HORSE is scene-placed and
+// player-driven, the peers see the puppet sit on nothing. One replica per
+// remote client, spawned with the co-op param bit (z_en_horse.c: skeleton
+// only, no AI, no scene rules, no mount offer); the rider streams pose and
+// gait while rideActor is set. After a dismount the replica stays idle where
+// it was left, as the real horse does; a type change (Epona vs ranch horse)
+// or the puppet's death retires it.
+struct HorseReplica {
+    Actor* actor = NULL;
+    int8_t type = 0;
+    int32_t retryTicks = 0;
+};
+static std::unordered_map<uint32_t, HorseReplica> sHorseReplicas;
+extern "C" void EnHorse_CoopSetAnim(Actor* horseActor, int32_t animIdx, float frame, float speed);
+
+void TickPuppetHorse(uint32_t clientId, Actor* puppet, bool active, int8_t type, Vec3f pos, Vec3s rot,
+                     int8_t anim, float frame, float speed) {
+    if (!SyncEnabled() || gPlayState == NULL || puppet == NULL) {
+        return;
+    }
+    HorseReplica& hr = sHorseReplicas[clientId];
+    if (hr.actor != NULL && hr.actor->update == NULL) {
+        hr.actor = NULL;
+    }
+    if (!active) {
+        if (hr.actor != NULL) {
+            EnHorse_CoopSetAnim(hr.actor, 0 /* ENHORSE_ANIM_IDLE */, 0.0f, 1.0f);
+        }
+        return;
+    }
+    if (hr.actor != NULL && hr.type != type) {
+        Actor_Kill(hr.actor);
+        hr.actor = NULL;
+    }
+    if (hr.actor == NULL) {
+        if (hr.retryTicks > 0) {
+            hr.retryTicks--;
+            return;
+        }
+        // 0x4000: co-op mount; 0x8000: HORSE_HNI (its object must be in the
+        // scene, as it is wherever such a horse can be ridden); low byte 1 = plain.
+        int16_t params = (int16_t)(0x4000 | (type == 1 ? 0x8000 : 0) | 1);
+        hr.actor = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_HORSE, pos.x, pos.y, pos.z, rot.x, rot.y,
+                               rot.z, params, true);
+        hr.type = type;
+        if (hr.actor == NULL || hr.actor->update == NULL) {
+            hr.actor = NULL;
+            hr.retryTicks = 60; // object missing here: don't hammer Actor_Spawn every frame
+            ESYNC_LOG("[FxSync] puppet horse spawn failed client={} type={}", clientId, type);
+            return;
+        }
+        ESYNC_LOG("[FxSync] puppet horse spawn client={} type={}", clientId, type);
+    }
+    hr.actor->world.pos = pos;
+    hr.actor->shape.rot = rot;
+    hr.actor->world.rot.y = rot.y;
+    EnHorse_CoopSetAnim(hr.actor, anim, frame, speed);
+    // Seat the puppet on OUR copy of the horse, the way Player_Action_8084BF1C
+    // seats the rider on its own (saddle limb + the same -27): whatever the two
+    // games disagree on about the horse, the rider sits where this horse's
+    // saddle is drawn. riderPos is refreshed by EnHorse_PostDraw every frame.
+    EnHorse* h = (EnHorse*)hr.actor;
+    if ((((Player*)puppet)->stateFlags1 & PLAYER_STATE1_ON_HORSE) && h->riderPos.y != 0.0f) {
+        puppet->world.pos.x = h->actor.world.pos.x + h->riderPos.x;
+        puppet->world.pos.y = (h->actor.world.pos.y + h->riderPos.y) - 27.0f;
+        puppet->world.pos.z = h->actor.world.pos.z + h->riderPos.z;
+    }
+}
+
 // unk_A73 is the local player's "just fired" counter. A replica arrow needs it
 // non-zero for its single graced vanilla update or EnArrow_Shoot kills itself
 // (z_en_arrow.c:211), but bosses read the SAME field to react to OUR shots
@@ -290,6 +400,20 @@ void ReapClientProjectiles(uint32_t clientId) {
             Actor_Kill(bit->second);
         }
         sBoomReplicas.erase(bit);
+    }
+    auto cit = sChargeReplicas.find(clientId);
+    if (cit != sChargeReplicas.end()) {
+        if (cit->second.actor != NULL && cit->second.actor->update != NULL) {
+            Actor_Kill(cit->second.actor); // its parent (the puppet) is going away
+        }
+        sChargeReplicas.erase(cit);
+    }
+    auto hit = sHorseReplicas.find(clientId);
+    if (hit != sHorseReplicas.end()) {
+        if (hit->second.actor != NULL && hit->second.actor->update != NULL) {
+            Actor_Kill(hit->second.actor); // the rider left the scene / the game
+        }
+        sHorseReplicas.erase(hit);
     }
 }
 
@@ -486,30 +610,61 @@ extern "C" void FxSync_OnShieldHit(Vec3f* pos, s32 metal) {
 // spawned as the "from grass" kind so the copy never seeks soft soil: the soil
 // -> gold skulltula chain stays the dropper's, one skulltula, no double spawn.
 static bool sSpawningBottleDrop = false;
-// The copies we spawned for a peer's bottle. A fish and a bug both offer
-// themselves back to a bottle every frame (Actor_OfferGetItem with GI_MAX), so
-// without this each peer could pocket its own copy: one released fish would
-// come back as one fish per player. The replicas are for show only.
-static std::unordered_set<Actor*> sBottleDrops;
+// The copies we spawned for a peer's bottle, keyed back to (owner, seq) so the
+// owner's FX_EV_BOTTLEGONE can retire the right one. A fish and a bug both
+// offer themselves back to a bottle every frame (Actor_OfferGetItem with
+// GI_MAX), so without this each peer could pocket its own copy: one released
+// fish would come back as one fish per player. The replicas are for show only.
+struct BottleDropOrigin {
+    uint32_t clientId = 0;
+    uint32_t seq = 0;
+};
+static std::unordered_map<Actor*, BottleDropOrigin> sBottleDrops;
+// The drops WE announced: their death (re-bottled by us, swam away, faded)
+// must reach the peers, or the copy stays on their floor forever.
+static std::unordered_map<Actor*, uint32_t> sLocalBottleDrops;
+static uint32_t sBottleDropSeq = 0;
 
 extern "C" s32 FxSync_IsBottleDropReplica(Actor* actor) {
     return sBottleDrops.contains(actor) ? 1 : 0;
 }
 
-extern "C" void FxSync_OnBottleDrop(int16_t aid, int16_t params, Vec3f* pos, Vec3s* rot) {
+extern "C" void FxSync_OnBottleDrop(int16_t aid, int16_t params, Vec3f* pos, Vec3s* rot, Actor* dropped) {
     if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || pos == NULL || sSpawningBottleDrop) {
         return;
+    }
+    uint32_t seq = ++sBottleDropSeq;
+    if (dropped != NULL) {
+        sLocalBottleDrops[dropped] = seq;
     }
     nlohmann::json payload;
     payload["kind"] = FX_EV_BOTTLEDROP;
     payload["aid"] = aid;
     payload["ap"] = params;
     payload["pos"] = *pos;
+    payload["seq"] = seq;
     if (rot != NULL) {
         payload["rot"] = *rot;
     }
     Anchor::Instance->SendPacket_FxEvent(payload);
-    ESYNC_LOG("[FxSync] bottle drop tx aid={} params={}", aid, params);
+    ESYNC_LOG("[FxSync] bottle drop tx aid={} params={} seq={}", aid, params, seq);
+}
+
+static void OnLocalBottleDropGone(Actor* actor) {
+    auto it = sLocalBottleDrops.find(actor);
+    if (it == sLocalBottleDrops.end()) {
+        return;
+    }
+    uint32_t seq = it->second;
+    sLocalBottleDrops.erase(it);
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_BOTTLEGONE;
+    payload["seq"] = seq;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] bottle drop gone tx seq={}", seq);
 }
 
 // --- Amy puzzle countdown -------------------------------------------------------
@@ -588,6 +743,9 @@ static void Reset() {
     sSilverAnnounced.clear();
     sSpellReplicas.clear();
     sBottleDrops.clear();
+    sLocalBottleDrops.clear();
+    sChargeReplicas.clear();
+    sHorseReplicas.clear();
     sTorches.clear();
     sTorchByKey.clear();
     sBoomReplicas.clear();
@@ -720,14 +878,32 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             } else if (aid != ACTOR_EN_FISH && aid != ACTOR_EN_ICE_HONO && aid != ACTOR_EN_ELF) {
                 return;
             }
+            uint32_t seq = payload.value("seq", (uint32_t)0);
             sSpawningBottleDrop = true;
             Actor* copy = Actor_Spawn(&gPlayState->actorCtx, gPlayState, aid, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z,
                                       ap, true);
             sSpawningBottleDrop = false;
             if (copy != NULL && aid != ACTOR_EN_ELF) {
-                sBottleDrops.insert(copy); // never re-bottleable: it is the peer's item
+                sBottleDrops[copy] = { senderClientId, seq }; // never re-bottleable: it is the peer's item
             }
-            ESYNC_LOG("[FxSync] bottle drop rx aid={} params={} ok={}", aid, ap, copy != NULL);
+            ESYNC_LOG("[FxSync] bottle drop rx aid={} params={} seq={} ok={}", aid, ap, seq, copy != NULL);
+            return;
+        }
+
+        if (kind == FX_EV_BOTTLEGONE) {
+            // The owner's drop is gone (it re-bottled it, it swam off / faded):
+            // retire our copy, otherwise it stays on the floor for good.
+            uint32_t seq = payload.value("seq", (uint32_t)0);
+            for (auto it = sBottleDrops.begin(); it != sBottleDrops.end(); ++it) {
+                if (it->second.clientId == senderClientId && it->second.seq == seq) {
+                    if (it->first->update != NULL) {
+                        Actor_Kill(it->first);
+                    }
+                    sBottleDrops.erase(it);
+                    break;
+                }
+            }
+            ESYNC_LOG("[FxSync] bottle drop gone rx client={} seq={}", senderClientId, seq);
             return;
         }
 
@@ -916,6 +1092,17 @@ void RegisterHooks(bool isConnected) {
         Actor* a = (Actor*)actorRef;
         sSpellReplicas.erase(a);
         sBottleDrops.erase(a);
+        OnLocalBottleDropGone(a); // our own released fish / bug / fire: tell the peers
+        for (auto& [cid, cs] : sChargeReplicas) {
+            if (cs.actor == a) {
+                cs.actor = NULL;
+            }
+        }
+        for (auto& [cid, hr] : sHorseReplicas) {
+            if (hr.actor == a) {
+                hr.actor = NULL;
+            }
+        }
         sSilverAnnounced.erase(a);
         // A dying puppet takes its projectile replicas with it: that reap lives
         // in DummyPlayer_Destroy, keyed by the puppet's own client id (matching

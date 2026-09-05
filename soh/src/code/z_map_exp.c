@@ -602,6 +602,30 @@ void Map_Init(PlayState* play) {
     }
 }
 
+// Co-op (Anchor): the other players' puppets alive in this scene, one minimap
+// arrow each. The translate mirrors the yellow arrow's placement rules
+// (minimap anchoring / margins / offsets) so both arrows sit on the same map.
+s32 Anchor_GetPuppetActors(Actor** out, s32 max);
+static void Minimap_TranslatePeerIcon(s16 tempX, s16 tempZ, s16 tempXOffset, s16 xMargins, s16 yMargins) {
+    s32 posType = CVarGetInteger(CVAR_COSMETIC("HUD.Minimap.PosType"), 0);
+    s32 posX = CVarGetInteger(CVAR_COSMETIC("HUD.Minimap.PosX"), 0) * 10;
+    s32 posY = CVarGetInteger(CVAR_COSMETIC("HUD.Minimap.PosY"), 0) * 10;
+    f32 y = (R_COMPASS_OFFSET_Y + ((yMargins * 10) * -1) - tempZ + (posY * -1)) / 10.0f;
+
+    if (posType == ANCHOR_LEFT) {
+        Matrix_Translate(OTRGetDimensionFromLeftEdge((tempXOffset + (xMargins * 10) + tempX + posX) / 10.0f), y, 0.0f,
+                         MTXMODE_NEW);
+    } else if (posType == ANCHOR_RIGHT) {
+        Matrix_Translate(OTRGetDimensionFromRightEdge((tempXOffset + (xMargins * 10) + tempX + posX) / 10.0f), y, 0.0f,
+                         MTXMODE_NEW);
+    } else if (posType == ANCHOR_NONE) {
+        Matrix_Translate((tempXOffset + tempX + posX / 10.0f), y, 0.0f, MTXMODE_NEW); // same precedence as vanilla
+    } else {
+        Matrix_Translate(OTRGetDimensionFromRightEdge((tempXOffset + (xMargins * 10) + tempX) / 10.0f),
+                         (R_COMPASS_OFFSET_Y + ((yMargins * 10) * -1) - tempZ) / 10.0f, 0.0f, MTXMODE_NEW);
+    }
+}
+
 void Minimap_DrawCompassIcons(PlayState* play) {
     s32 pad;
     Player* player = GET_PLAYER(play);
@@ -707,6 +731,32 @@ void Minimap_DrawCompassIcons(PlayState* play) {
         gDPSetPrimColor(OVERLAY_DISP++, 0, 0xFF, currentPositionColor.r, currentPositionColor.g, currentPositionColor.b,
                         255);
         gSPDisplayList(OVERLAY_DISP++, gCompassArrowDL);
+
+        // Co-op: the other players (their puppets), one arrow each. The red
+        // arrow below is vanilla's "where you entered" marker, not a player.
+        {
+            Actor* puppets[8];
+            s32 nPuppets = Anchor_GetPuppetActors(puppets, 8);
+            s32 mirrorSign = CVarGetInteger(CVAR_ENHANCEMENT("MirroredWorld"), 0) ? -1 : 1;
+            Color_RGB8 peerColor = { 255, 90, 220 };
+            s32 i;
+
+            for (i = 0; i < nPuppets; i++) {
+                s16 peerX = puppets[i]->world.pos.x;
+                s16 peerZ = puppets[i]->world.pos.z;
+                peerX /= R_COMPASS_SCALE_X * mirrorSign;
+                peerZ /= R_COMPASS_SCALE_Y;
+                Minimap_TranslatePeerIcon(peerX, peerZ, tempXOffset, X_Margins_Minimap, Y_Margins_Minimap);
+                Matrix_Scale(0.4f, 0.4f, 0.4f, MTXMODE_APPLY);
+                Matrix_RotateX(-1.6f, MTXMODE_APPLY);
+                peerX = ((0x7FFF - puppets[i]->shape.rot.y) / 0x400) * mirrorSign;
+                Matrix_RotateY(peerX / 10.0f, MTXMODE_APPLY);
+                gSPMatrix(OVERLAY_DISP++, MATRIX_NEWMTX(play->state.gfxCtx),
+                          G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+                gDPSetPrimColor(OVERLAY_DISP++, 0, 0xFF, peerColor.r, peerColor.g, peerColor.b, 255);
+                gSPDisplayList(OVERLAY_DISP++, gCompassArrowDL);
+            }
+        }
 
         // Player map entry (red arrow)
         tempX = sPlayerInitialPosX;

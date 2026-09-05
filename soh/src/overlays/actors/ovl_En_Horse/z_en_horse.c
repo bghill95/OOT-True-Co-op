@@ -762,6 +762,13 @@ void EnHorse_Init(Actor* thisx, PlayState* play2) {
         DREG(4) = 70;
     }
 
+    // Co-op: bit 0x4000 marks a remote player's mount replica (spawned by
+    // FxSync::TickPuppetHorse); the type bit (0x8000) stays meaningful.
+    if (this->actor.params & 0x4000) {
+        this->actor.params &= ~0x4000;
+        this->coopMount = 1;
+    }
+
     if (this->actor.params & 0x8000) {
         this->actor.params &= ~0x8000;
         this->type = HORSE_HNI;
@@ -829,6 +836,19 @@ void EnHorse_Init(Actor* thisx, PlayState* play2) {
     this->actor.focus.pos = this->actor.world.pos;
     this->actor.focus.pos.y += 70.0f;
     this->playerControlled = false;
+
+    // Co-op mount replica: skeleton and idle only. No scene rules (they would
+    // kill it), no AI, no mount offer, no physics — EnHorse_CoopMountUpdate
+    // and EnHorse_CoopSetAnim take the rider's stream from here on.
+    if (this->coopMount) {
+        Skin_Init(play, &this->skin, sSkeletonHeaders[this->type], sAnimationHeaders[this->type][ENHORSE_ANIM_IDLE]);
+        this->animationIdx = ENHORSE_ANIM_IDLE;
+        Animation_PlayLoop(&this->skin.skelAnime, sAnimationHeaders[this->type][ENHORSE_ANIM_IDLE]);
+        this->stateFlags = ENHORSE_UNRIDEABLE;
+        this->action = ENHORSE_ACT_FROZEN;
+        this->actor.gravity = 0.0f;
+        return;
+    }
 
     if ((play->sceneNum == SCENE_LON_LON_RANCH) && (gSaveContext.sceneSetupIndex < 4)) {
         if (this->type == HORSE_HNI) {
@@ -3486,12 +3506,55 @@ s32 EnHorse_RandInt(f32 range) {
     return Rand_ZeroOne() * range;
 }
 
+// Co-op mount replica: the rider streams the horse's animation index, frame
+// and play speed every frame; follow it (loop mode, a frame resync when the
+// drift passes a few frames so a dropped packet never snaps the gait).
+void EnHorse_CoopSetAnim(Actor* horseActor, s32 animIdx, f32 frame, f32 speed) {
+    EnHorse* this = (EnHorse*)horseActor;
+    AnimationHeader* anim;
+
+    if (this == NULL || !this->coopMount || animIdx < ENHORSE_ANIM_IDLE || animIdx > ENHORSE_ANIM_HIGH_JUMP) {
+        return;
+    }
+    if (speed < 0.0f) {
+        speed = 0.0f;
+    }
+    anim = sAnimationHeaders[this->type][animIdx];
+    if (this->animationIdx != animIdx) {
+        this->animationIdx = animIdx;
+        Animation_Change(&this->skin.skelAnime, anim, speed, frame, Animation_GetLastFrame(anim), ANIMMODE_LOOP, -3.0f);
+    } else {
+        this->skin.skelAnime.playSpeed = speed;
+        if (fabsf(this->skin.skelAnime.curFrame - frame) > 6.0f) {
+            this->skin.skelAnime.curFrame = frame;
+        }
+    }
+}
+
+// Co-op mount replica update: pose already written by FxSync::TickPuppetHorse,
+// only the skeleton animates. No collision, no sounds, no dust.
+static void EnHorse_CoopMountUpdate(EnHorse* this, PlayState* play) {
+    SkelAnime_Update(&this->skin.skelAnime);
+    this->curFrame = this->skin.skelAnime.curFrame;
+    this->lastPos = this->actor.world.pos;
+    this->lastYaw = this->actor.shape.rot.y;
+    this->actor.world.rot.y = this->actor.shape.rot.y;
+    this->actor.focus.pos = this->actor.world.pos;
+    this->actor.focus.pos.y += 70.0f;
+    this->stateFlags &= ~ENHORSE_DRAW;
+}
+
 void EnHorse_Update(Actor* thisx, PlayState* play2) {
     EnHorse* this = (EnHorse*)thisx;
     PlayState* play = play2;
     Vec3f dustAcc = { 0.0f, 0.0f, 0.0f };
     Vec3f dustVel = { 0.0f, 1.0f, 0.0f };
     Player* player = GET_PLAYER(play);
+
+    if (this->coopMount) {
+        EnHorse_CoopMountUpdate(this, play);
+        return;
+    }
 
     this->lastYaw = thisx->shape.rot.y;
     EnHorse_UpdateStick(this, play);

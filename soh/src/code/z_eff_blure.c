@@ -74,7 +74,12 @@ void EffectBlure_AddVertex(EffectBlure* this, Vec3f* p1, Vec3f* p2) {
 
 // dumb doo doo command to change the type of an object's blur on the fly. Link's Swords with unique trail colors.
 void EffectBlure_ChangeType(EffectBlure* this, int type) {
-    this->trailType = type;
+    // Effect_GetByIndex hands back NULL when the blure pool was exhausted at
+    // Player_Init (index == TOTAL_EFFECT_COUNT); every other blure entry point
+    // already tolerates that, this one crashed on the first sword swing.
+    if (this != NULL) {
+        this->trailType = type;
+    }
 }
 
 void EffectBlure_AddSpace(EffectBlure* this) {

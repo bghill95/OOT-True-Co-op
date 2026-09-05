@@ -35,6 +35,13 @@ void IngestPlayerProjectiles(uint32_t clientId, const nlohmann::json& payload);
 void TickPuppetProjectiles(uint32_t clientId, struct Actor* puppet);
 // Kills one client's projectile replicas (its puppet died / it went offline).
 void ReapClientProjectiles(uint32_t clientId);
+// Charged spin attack glow / blast (EN_M_THUNDER) for a puppet, from its streamed
+// PLAYER_STATE1_CHARGING_SPIN_ATTACK edge. Called from DummyPlayer per frame.
+void TickPuppetSpinCharge(uint32_t clientId, struct Actor* puppet);
+// Mount replica (EN_HORSE with the co-op param bit) driven by the rider's streamed
+// pose and gait (PLAYER_UPDATE horse* fields). Kept idle where the rider dismounted.
+void TickPuppetHorse(uint32_t clientId, struct Actor* puppet, bool active, int8_t type, Vec3f pos, Vec3s rot,
+                     int8_t anim, float frame, float speed);
 
 // Amy puzzle (Forest Temple): the driver announces the countdown its timer
 // block started on landing; the mirror shows the same HUD timer.

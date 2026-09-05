@@ -658,6 +658,15 @@ void EnTp_Update(Actor* thisx, PlayState* play) {
     Player* player = GET_PLAYER(play);
     s16 yawToWall;
 
+    // Co-op safety net: a tail that never got its head chain (a copy spawned
+    // outside EnTp_Init) would dereference head/parent in FollowHead and
+    // UpdateDamage. Retire it instead of crashing.
+    if ((this->actor.params == TAILPASARAN_TAIL || this->actor.params == TAILPASARAN_TAIL_DYING) &&
+        this->head == NULL) {
+        Actor_Kill(&this->actor);
+        return;
+    }
+
     if (player->stateFlags1 & PLAYER_STATE1_DAMAGED) { // Damaged
         this->damageEffect = TAILPASARAN_DMGEFF_NONE;
     }

@@ -45,6 +45,9 @@ static bool IsSyncedCarryActor(const Actor* actor) {
         case ACTOR_EN_RU1:      // Princess Ruto (Jabu-Jabu): carried and thrown like a
                                 // pot (Actor_OfferCarry), lands by her own physics and
                                 // presses the blue button herself; keyed by id (PosKey)
+        case ACTOR_OBJ_KIBAKO:  // small wooden crate (Jabu-Jabu elevator room…): same
+                                // Idle/Held/Thrown trio as a pot; its break stays
+                                // BreakSync's (AC_HIT) like the pot's
             return true;
         default:
             return false;
@@ -334,6 +337,7 @@ void RegisterHooks(bool isConnected) {
     COND_ID_HOOK(OnActorInit, ACTOR_EN_NIW, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_EN_KUSA, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_EN_RU1, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
+    COND_ID_HOOK(OnActorInit, ACTOR_OBJ_KIBAKO, isConnected, [](void* actor) { OnCarryableInit((Actor*)actor); });
 
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_ISHI, isConnected,
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
@@ -345,6 +349,8 @@ void RegisterHooks(bool isConnected) {
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_RU1, isConnected,
                  [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_OBJ_KIBAKO, isConnected,
+                 [](void* actor, bool* should) { OnCarryablePreUpdate((Actor*)actor, should); });
 
     COND_ID_HOOK(OnActorUpdate, ACTOR_EN_ISHI, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
     COND_ID_HOOK(OnActorUpdate, ACTOR_OBJ_TSUBO, isConnected,
@@ -352,6 +358,8 @@ void RegisterHooks(bool isConnected) {
     COND_ID_HOOK(OnActorUpdate, ACTOR_EN_NIW, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
     COND_ID_HOOK(OnActorUpdate, ACTOR_EN_KUSA, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
     COND_ID_HOOK(OnActorUpdate, ACTOR_EN_RU1, isConnected, [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
+    COND_ID_HOOK(OnActorUpdate, ACTOR_OBJ_KIBAKO, isConnected,
+                 [](void* actor) { OnCarryablePostUpdate((Actor*)actor); });
 
     COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
         Actor* a = (Actor*)actorRef;
