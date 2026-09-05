@@ -125,7 +125,19 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
         return;
     }
 
-    isHandlingUpdateTeamState = true;
+    // Scoped: an exception anywhere below (a mistyped field from a peer on
+    // another build) used to leave this latched true, and HookHandlers /
+    // RupeeChange read it as "a team-state apply is in progress" forever —
+    // every local rupee and flag broadcast silently stopped for the session.
+    struct HandlingGuard {
+        bool& flag;
+        explicit HandlingGuard(bool& f) : flag(f) {
+            flag = true;
+        }
+        ~HandlingGuard() {
+            flag = false;
+        }
+    } handlingGuard(isHandlingUpdateTeamState);
     // This can happen in between file select and the game starting, so we cant use this check, but we need to ensure we
     // be careful to wrap PlayState usage in this check
     // if (!IsSaveLoaded()) {
@@ -240,7 +252,7 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
                 OTRGlobals::Instance->gRandoContext->GetItemLocation(i)->SetCheckStatus(
                     payload["state"]["rando"]["itemLocations"][i][0].get<RandomizerCheckStatus>());
                 OTRGlobals::Instance->gRandoContext->GetItemLocation(i)->SetIsSkipped(
-                    payload["state"]["rando"]["itemLocations"][i][0].get<u8>());
+                    payload["state"]["rando"]["itemLocations"][i][1].get<u8>());
 
                 // if (payload["state"]["rando"]["itemLocations"][i].contains("fakeRgID")) {
                 //     randoContext->overrides.emplace(static_cast<RandomizerCheck>(i),
@@ -308,5 +320,4 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
             incomingPacketQueue.push(itemPayload);
         }
     }
-    isHandlingUpdateTeamState = false;
 }

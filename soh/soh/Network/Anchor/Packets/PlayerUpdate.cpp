@@ -158,8 +158,11 @@ void Anchor::HandlePacket_PlayerUpdate(nlohmann::json payload) {
         client.entranceIndex = payload["entranceIndex"].get<s32>();
         client.linkAge = payload["linkAge"].get<s32>();
         client.posRot = payload["posRot"].get<PosRot>();
+        // Fixed 24-limb walk over a vector whose length comes off the wire: a short
+        // packet (peer on another build) read past the end. Take what fits.
         std::vector<int> jointArray = payload["jointTable"];
-        for (int i = 0; i < 24; i++) {
+        size_t limbs = std::min<size_t>(24, jointArray.size() / 3);
+        for (size_t i = 0; i < limbs; i++) {
             client.jointTable[i].x = jointArray[i * 3];
             client.jointTable[i].y = jointArray[i * 3 + 1];
             client.jointTable[i].z = jointArray[i * 3 + 2];

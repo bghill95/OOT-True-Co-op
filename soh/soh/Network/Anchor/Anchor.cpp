@@ -92,10 +92,23 @@ void Anchor::ProcessIncomingPacketQueue() {
         nlohmann::json payload = incomingPacketQueue.front();
         incomingPacketQueue.pop();
 
-        std::string packetType = payload["type"].get<std::string>();
+        std::string packetType;
+        try {
+            packetType = payload["type"].get<std::string>();
+        } catch (const std::exception& ex) {
+            SPDLOG_WARN("[Anchor] dropping packet with no usable type: {}", ex.what());
+            continue;
+        }
 
         isProcessingIncomingPacket = true;
 
+        // Every handler below reads its payload with json::get<>, which throws on a
+        // missing or mistyped field — a truncated packet, or a peer on a different
+        // build. Unhandled, that exception unwinds out of the game frame and takes
+        // the process with it, and leaves isProcessingIncomingPacket latched true,
+        // which silently disables every local broadcast for the rest of the session.
+        // One bad packet must cost one packet, nothing more.
+        try {
         // packetType here is a string so we can't use a switch statement
         if (packetType == ALL_CLIENT_STATE)
             HandlePacket_AllClientState(payload);
@@ -179,6 +192,9 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_UpdateRoomState(payload);
         else if (packetType == UPDATE_DUNGEON_ITEMS)
             HandlePacket_UpdateDungeonItems(payload);
+        } catch (const std::exception& ex) {
+            SPDLOG_WARN("[Anchor] handler for '{}' threw: {}", packetType, ex.what());
+        }
 
         isProcessingIncomingPacket = false;
     }

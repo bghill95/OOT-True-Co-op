@@ -32,7 +32,15 @@ void Anchor::HandlePacket_UpdateDungeonItems(nlohmann::json payload) {
         return;
     }
 
+    // mapIndex comes straight off the wire and indexes two fixed arrays inside
+    // gSaveContext: unchecked, a malformed or mismatched-build packet writes past
+    // them, into the middle of the save.
     u16 mapIndex = payload["mapIndex"].get<u16>();
+    if (mapIndex >= ARRAY_COUNT(gSaveContext.inventory.dungeonItems) ||
+        mapIndex >= ARRAY_COUNT(gSaveContext.inventory.dungeonKeys)) {
+        SPDLOG_WARN("[Anchor] UPDATE_DUNGEON_ITEMS: mapIndex {} out of range, dropped", mapIndex);
+        return;
+    }
     gSaveContext.inventory.dungeonItems[mapIndex] = payload["dungeonItems"].get<u8>();
     gSaveContext.inventory.dungeonKeys[mapIndex] = payload["dungeonKeys"].get<s8>();
 }

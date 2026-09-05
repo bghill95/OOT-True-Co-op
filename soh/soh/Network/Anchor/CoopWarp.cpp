@@ -63,7 +63,14 @@ void ExecutePositionWarp(const PendingWarp& w) {
     gSaveContext.nextTransitionType = TRANS_TYPE_FADE_BLACK_FAST;
     gSaveContext.respawnFlag = 1;
 
+    // One-shot hook, but the id is a single static: two position warps before the
+    // void check fires overwrote it, the first hook was never unregistered and
+    // suppressed void damage for good. Drop any hook still pending first.
     static HOOK_ID hookId = 0;
+    if (hookId != 0) {
+        GameInteractor::Instance->UnregisterGameHookForID<GameInteractor::OnVanillaBehavior>(hookId);
+        hookId = 0;
+    }
     hookId = REGISTER_VB_SHOULD(VB_INFLICT_VOID_DAMAGE, {
         *should = false;
         GameInteractor::Instance->UnregisterGameHookForID<GameInteractor::OnVanillaBehavior>(hookId);

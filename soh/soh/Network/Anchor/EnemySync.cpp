@@ -30,6 +30,10 @@ static constexpr uint8_t REMOTE_DEATH_GRACE = 30;
 // still sit in its spawn/intro state (see ApplyRemoteDeath): its death is applied
 // directly instead of handed to a state machine that never left the ground.
 static constexpr uint16_t REMOTE_DEATH_MIN_LOCAL_UPDATES = 12;
+// ...and the window such a copy gets to die on its own before the force-kill.
+// Short: past this the enemy is visibly replaying its spawn animation instead of
+// dying. Long enough for one damage-consuming update on any enemy that can.
+static constexpr uint8_t REMOTE_DEATH_QUICK_GRACE = 8;
 // Echo guard for death broadcasts. A latch would be wrong here: enemies like
 // En_Karebaba regrow from the same actor instance, so death sync must re-arm.
 static constexpr uint8_t DEATH_COOLDOWN_FRAMES = 60;
@@ -93,6 +97,8 @@ struct TrackedState {
     bool dynamicKey = false;          // key is host-assigned (bit 63)
     bool remoteSpawned = false;       // spawned from an ENEMY_SPAWN packet
     uint16_t localUpdates = 0;        // frames this copy's OWN AI ran unsuppressed (saturating)
+    Vec3f lastSentScale{};            // authority: last scale actually put on the wire
+    bool scaleSent = false;
     bool needsSpawnBroadcast = false; // authority: announce this dynamic spawn
     bool projectile = false;          // whitelisted enemy projectile: fire-and-forget replica, never streamed/mirrored
     uint8_t phase = 0;                // last adapter phase seen/applied
@@ -818,28 +824,18 @@ void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent, uint32_t dm
     // for the full grace period and was force-killed at frame 30 (P2 saw it bend,
     // get up, vanish). The authority's copy is already gone; end ours now, with
     // the generic defeat dust so it still reads as a kill.
-    if (state.remoteSpawned && state.localUpdates < REMOTE_DEATH_MIN_LOCAL_UPDATES) {
-        ESYNC_LOG("[EnemySync] DEATH immediate id={} key={:#x} (copy never ran its AI: {} updates)", actor->id,
-                  state.key, state.localUpdates);
-        state.pendingKillFrames = 0;
-        actor->colChkInfo.health = 0;
-        // The enemy's own death VFX (Stalchild: burning bone pieces from BodyBreak)
-        // needs its death state, which we are skipping. Stand in with the game's
-        // standard defeat flame at the body centre, with its "poof" sound, so the
-        // kill reads the same as any other enemy's on this screen.
-        {
-            Vec3f zero = { 0.0f, 0.0f, 0.0f };
-            Vec3f at = actor->focus.pos;
-            if (at.x == 0.0f && at.y == 0.0f && at.z == 0.0f) {
-                at = actor->world.pos;
-            }
-            EffectSsDeadDb_Spawn(gPlayState, &at, &zero, &zero, 130, 20, 255, 255, 150, 170, 255, 0, 0, 1, 9, true);
-        }
-        Actor_Kill(actor);
-        return;
-    }
+    // A copy spawned by ENEMY_SPAWN was suppressed a frame or two after spawning,
+    // so its actionFunc is still the spawn one, which for some enemies reads no
+    // hits at all (En_Skb: rising from the ground). Give it a SHORT window to take
+    // its own death rather than killing it outright: dying natively is what makes
+    // this client drop its own collectibles (CarrySync.h states the discipline —
+    // drops are per-client, not replicated) and play the enemy's real death. Only
+    // if that window passes untouched does the force-kill below step in with a
+    // generic flame. Copies that have been running locally keep the full grace.
     if (permanent || !IsRegrower(actor)) {
-        state.pendingKillFrames = REMOTE_DEATH_GRACE;
+        state.pendingKillFrames = (state.remoteSpawned && state.localUpdates < REMOTE_DEATH_MIN_LOCAL_UPDATES)
+                                      ? REMOTE_DEATH_QUICK_GRACE
+                                      : REMOTE_DEATH_GRACE;
     }
 }
 
@@ -1317,18 +1313,40 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
 // M2: authority stream (snapshot + send, once per game frame)
 // ---------------------------------------------------------------------------
 
+// A float promoted to double serialises at full double precision: a world.pos of
+// -1234.5677f becomes "-1234.5677490234375", 62 bytes for one vector. Rounding to
+// centimetres in double first makes nlohmann print "-1234.57". OoT units are about
+// a centimetre, so this is below anything visible, and it is emit-side only — the
+// mirror reads the same field either way. NOT used for scale, where two decimals
+// would round a 0.005 scale to 0.01.
+static nlohmann::json RoundedVec(const Vec3f& v) {
+    nlohmann::json j;
+    j["x"] = std::round((double)v.x * 100.0) / 100.0;
+    j["y"] = std::round((double)v.y * 100.0) / 100.0;
+    j["z"] = std::round((double)v.z * 100.0) / 100.0;
+    return j;
+}
+
 static nlohmann::json SnapshotEnemy(Actor* actor, TrackedState& st) {
     nlohmann::json e;
     e["key"] = st.key;
-    e["pos"] = actor->world.pos;
+    e["pos"] = RoundedVec(actor->world.pos);
     e["rot"] = actor->shape.rot;
-    e["fpos"] = actor->focus.pos;
+    e["fpos"] = RoundedVec(actor->focus.pos);
     e["hp"] = actor->colChkInfo.health;
     // actor.scale is animated in Update (e.g. Deku Baba emerge 0.5x->1x); the
     // suppressed mirror never recomputes it, so the head skeleton would inherit
     // the frozen buried scale. Base-Actor field → base stream, applied to every
-    // mirrored enemy.
-    e["scale"] = actor->scale;
+    // mirrored enemy. Sent only when it actually changes: it is constant for
+    // nearly the whole bestiary, and 0.01f spelled out as a double is 85 bytes
+    // per enemy per frame — more than every field added in T31 put together. The
+    // receiver's hasScale latch never re-arms, so omitting it keeps the last value.
+    if (!st.scaleSent || actor->scale.x != st.lastSentScale.x || actor->scale.y != st.lastSentScale.y ||
+        actor->scale.z != st.lastSentScale.z) {
+        e["scale"] = actor->scale;
+        st.lastSentScale = actor->scale;
+        st.scaleSent = true;
+    }
     e["yoff"] = actor->shape.yOffset;
     e["mask"] = st.submitMask;
     e["aflg"] = (uint32_t)(actor->flags & STREAMED_ACTOR_FLAGS);
@@ -2012,6 +2030,25 @@ static void OnEnemyActorUpdate(Actor* actor) {
             ESYNC_LOG("[EnemySync] FORCE-KILL id={} key={:#x} hp={} (death never consumed)", actor->id, state.key,
                       actor->colChkInfo.health);
             actor->colChkInfo.health = 0;
+            // Its own death VFX needed the death state we are skipping. Stand in
+            // with the game's standard defeat flame at the body centre so the kill
+            // still reads as one on this screen.
+            Vec3f zero = { 0.0f, 0.0f, 0.0f };
+            Vec3f at = actor->focus.pos;
+            if (at.x == 0.0f && at.y == 0.0f && at.z == 0.0f) {
+                at = actor->world.pos;
+            }
+            EffectSsDeadDb_Spawn(gPlayState, &at, &zero, &zero, 130, 20, 255, 255, 150, 170, 255, 0, 0, 1, 9, true);
+            // ...and the drop went with that death state. Collectibles are NOT
+            // replicated in this project: every client rolls its own from its own
+            // copy's death (CarrySync.h states the discipline), which is why the
+            // two screens can already show a different rupee. Rolling it here keeps
+            // that model instead of leaving this player with nothing at all.
+            // Skipped for bosses (adapter-driven, they drop through their cutscene)
+            // and for projectiles, which never drop.
+            if (GetAdapter(actor->id) == nullptr && !state.projectile) {
+                Item_DropCollectibleRandom(gPlayState, actor, &actor->world.pos, 0x10);
+            }
             Actor_Kill(actor);
             return;
         }

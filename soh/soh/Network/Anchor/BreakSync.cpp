@@ -92,9 +92,15 @@ bool SyncEnabled() {
     return CVarGetInteger(CVAR_REMOTE_ANCHOR("BreakSync"), 1);
 }
 
+// Forward decl: the kanban sword-anim borrow lives further down but must be
+// released by Reset (scene change / disconnect) or the local player keeps a
+// faked meleeWeaponAnimation for the rest of the session.
+static void ReleaseKanbanAnimBorrow();
+
 static void Reset() {
     sTracked.clear();
     sByKey.clear();
+    ReleaseKanbanAnimBorrow();
 }
 
 static uint64_t PosKey(const Actor* actor) {
@@ -180,6 +186,17 @@ static void OnKanbanPreUpdate(Actor* actor) {
 static bool sKanbanAnimOverride = false;
 static s8 sKanbanSavedAnim = 0;
 static Actor* sKanbanOverrideTarget = NULL;
+
+// The borrow is normally returned when that very sign runs its post-update. If
+// the sign dies, gets culled, or the scene changes first, nothing gives the
+// animation back — hence this, called from Reset.
+static void ReleaseKanbanAnimBorrow() {
+    if (sKanbanAnimOverride && gPlayState != NULL) {
+        GET_PLAYER(gPlayState)->meleeWeaponAnimation = sKanbanSavedAnim;
+    }
+    sKanbanAnimOverride = false;
+    sKanbanOverrideTarget = NULL;
+}
 
 static void OnKanbanPostUpdate(Actor* actor) {
     // Restore ONLY once the targeted sign ran its update: any other EnKanban

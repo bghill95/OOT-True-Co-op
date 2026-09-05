@@ -191,8 +191,14 @@ void CollectProjectiles(nlohmann::json& payload) {
 void IngestPlayerProjectiles(uint32_t clientId, const nlohmann::json& payload) {
     PuppetProjectiles& pp = sProj[clientId];
     pp.arrows.clear();
+    // One entry here becomes one Actor_Spawn in TickPuppetProjectiles: cap it so a
+    // peer on a broken build cannot flood this scene's actor list.
+    static constexpr size_t MAX_PUPPET_ARROWS = 16;
     if (payload.contains("projA")) {
         for (auto& e : payload["projA"]) {
+            if (pp.arrows.size() >= MAX_PUPPET_ARROWS) {
+                break;
+            }
             ProjSnap s;
             s.id = e.contains("id") ? e["id"].get<uint32_t>() : 0;
             s.params = e["p"].get<int16_t>();
@@ -746,6 +752,12 @@ static void Reset() {
     sLocalBottleDrops.clear();
     sChargeReplicas.clear();
     sHorseReplicas.clear();
+    // Give unk_A73 back before the map goes: BorrowFiredCounter overwrote the
+    // local player's "just fired" counter, and a scene change or disconnect in
+    // the middle of a borrow would leave the flag armed and later write a stale
+    // value into the NEW scene's Link.
+    sA73Borrowed = false;
+    sA73Saved = 0;
     sTorches.clear();
     sTorchByKey.clear();
     sBoomReplicas.clear();
