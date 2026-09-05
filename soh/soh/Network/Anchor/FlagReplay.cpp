@@ -2,6 +2,7 @@
 #include "DynaSync.h"
 #include "FxSync.h"
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
+#include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h" // GameInteractor_Should
 
 #include <cmath>
 #include <unordered_map>
@@ -295,6 +296,30 @@ void RegisterHooks(bool isConnected) {
         if (jj->dyna.actor.params == JABUJABU_MAIN && jj->actionFunc == EnJj_WaitForFish &&
             Flags_GetEventChkInf(EVENTCHKINF_OFFERED_FISH_TO_JABU_JABU)) {
             EnJj_SetupAction(jj, EnJj_WaitToOpenMouth); // no cutscene on this side
+        }
+    });
+
+    // ---- Collectibles already lying on the ground (En_Item00) ----
+    // A rupee, heart, key or magic jar taken by one player raises its collectible
+    // flag, and the flag itself rides the sync fine. But En_Item00 consults that
+    // flag exactly once, in its Init (z_en_item00.c:365): a copy that had already
+    // spawned on the peer never hears about it and sits there for the rest of the
+    // visit. Whoever took it -- on foot, or with the boomerang, whose replica on
+    // the peer is a pure visual with no collider and so drags nothing home.
+    // Replay the Init verdict every frame instead.
+    //
+    // Flag 0 is deliberately left alone: enemy drops carry no collectible flag,
+    // and reaping them on bit 0 of an unrelated scene would eat the loot. Items
+    // already offered to our own player (Actor_HasParent) are left alone too --
+    // killing one mid get-item would strand the cutscene.
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_ITEM00, isConnected, [](void* refActor, bool* should) {
+        EnItem00* item = static_cast<EnItem00*>(refActor);
+        if (item->collectibleFlag == 0 || gPlayState == NULL || Actor_HasParent(&item->actor, gPlayState)) {
+            return;
+        }
+        if (GameInteractor_Should(VB_ITEM00_DESPAWN, Flags_GetCollectible(gPlayState, item->collectibleFlag),
+                                  item)) {
+            Actor_Kill(&item->actor);
         }
     });
 
