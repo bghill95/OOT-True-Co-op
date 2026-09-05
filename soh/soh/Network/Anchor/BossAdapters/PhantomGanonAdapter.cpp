@@ -82,8 +82,6 @@ enum PhantomGanonPhase : uint8_t {
     PG_PHASE_DEFEATED = 3,
 };
 
-static constexpr u32 PG_STREAMED_FLAGS = ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOOKSHOT_PULLS_PLAYER;
-
 static bool PhantomGanon_IsDecoy(Actor* actor) {
     return actor->params >= GND_FAKE_BOSS;
 }
@@ -117,7 +115,6 @@ static void PhantomGanon_SerializeExtras(Actor* actor, nlohmann::json& x) {
     x["eye"] = { pg->fwork[GND_EYE_BRIGHTNESS], pg->fwork[GND_EYE_ALPHA] };
     x["col"] = { pg->colliderBody.dim.radius, pg->colliderBody.dim.height, pg->colliderBody.dim.yShift,
                  (int)pg->colliderBody.base.colType };
-    x["flg"] = (uint32_t)(actor->flags & PG_STREAMED_FLAGS);
     x["nav"] = actor->naviEnemyId;
 }
 
@@ -146,9 +143,6 @@ static void PhantomGanon_DeserializeExtras(Actor* actor, const nlohmann::json& x
             pg->colliderBody.dim.height = x["col"][1].get<int16_t>();
             pg->colliderBody.dim.yShift = x["col"][2].get<int16_t>();
             pg->colliderBody.base.colType = (uint8_t)x["col"][3].get<int>();
-        }
-        if (x.contains("flg")) {
-            actor->flags = (actor->flags & ~PG_STREAMED_FLAGS) | (x["flg"].get<uint32_t>() & PG_STREAMED_FLAGS);
         }
         if (x.contains("nav")) actor->naviEnemyId = x["nav"].get<int8_t>();
 
@@ -221,7 +215,6 @@ static void PhantomHorse_SerializeExtras(Actor* actor, nlohmann::json& x) {
     x["wc"] = { horse->warpColorFilterR, horse->warpColorFilterG, horse->warpColorFilterB, horse->warpColorFilterUnk1,
                 horse->warpColorFilterUnk2 };
     x["turn"] = horse->turnRot;
-    x["yo"] = actor->shape.yOffset;
     x["kw"] = horse->fhgFireKillWarp;
     x["inp"] = horse->bossGndInPainting;
     x["hid"] = actor->draw == NULL;
@@ -238,7 +231,6 @@ static void PhantomHorse_DeserializeExtras(Actor* actor, const nlohmann::json& x
             horse->warpColorFilterUnk2 = x["wc"][4].get<float>();
         }
         if (x.contains("turn")) horse->turnRot = x["turn"].get<int16_t>();
-        if (x.contains("yo")) actor->shape.yOffset = x["yo"].get<float>();
         if (x.contains("kw")) horse->fhgFireKillWarp = x["kw"].get<uint8_t>();
         if (x.contains("inp")) horse->bossGndInPainting = x["inp"].get<uint8_t>();
         if (x.contains("hid") && x["hid"].get<bool>() && actor->draw != NULL) {

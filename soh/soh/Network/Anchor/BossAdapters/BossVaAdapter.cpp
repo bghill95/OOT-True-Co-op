@@ -127,7 +127,6 @@ static void BossVaSync_SerializeExtras(Actor* actor, nlohmann::json& x) {
         x["glow"] = va->bodyGlow;
         x["p0"] = va->unk_1A0;
         x["p1"] = va->unk_1A4;
-        x["yo"] = va->actor.shape.yOffset;
         x["cr"] = va->colliderBody.dim.radius;
         x["ch"] = va->colliderBody.dim.height;
         x["cdf"] = va->colliderBody.info.bumper.dmgFlags;
@@ -188,7 +187,6 @@ static void BossVaSync_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
             if (x.contains("glow")) va->bodyGlow = x["glow"].get<int16_t>();
             if (x.contains("p0")) va->unk_1A0 = x["p0"].get<float>();
             if (x.contains("p1")) va->unk_1A4 = x["p1"].get<float>();
-            if (x.contains("yo")) va->actor.shape.yOffset = x["yo"].get<float>();
             if (x.contains("cr")) va->colliderBody.dim.radius = x["cr"].get<int16_t>();
             if (x.contains("ch")) va->colliderBody.dim.height = x["ch"].get<int16_t>();
             if (x.contains("cdf")) va->colliderBody.info.bumper.dmgFlags = x["cdf"].get<uint32_t>();

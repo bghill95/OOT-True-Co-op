@@ -59,9 +59,6 @@ enum MorphaPhase : uint8_t {
     MO_PHASE_DEFEATED = 2,
 };
 
-static constexpr u32 MO_STREAMED_FLAGS =
-    ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOOKSHOT_PULLS_ACTOR | ACTOR_FLAG_SFX_FOR_PLAYER_BODY_HIT;
-
 // The death-cutscene / intro enum lives in z_boss_mo.c; only the two edges matter here.
 static constexpr int16_t MO_CS_BATTLE = 0;
 static constexpr int16_t MO_CS_DEATH_START = 100;
@@ -99,7 +96,6 @@ static void Morpha_SerializeExtras(Actor* actor, nlohmann::json& x) {
     std::vector<int> w(mo->work, mo->work + MO_SHORT_MAX);
     x["w"] = w;
     x["t0"] = mo->timers[0];
-    x["flg"] = (uint32_t)(actor->flags & MO_STREAMED_FLAGS);
     x["sfx"] = { mo->coopSfxSeq, mo->coopSfxId };
     if (Morpha_IsTentacle(actor)) {
         std::vector<int> rot;
@@ -138,9 +134,6 @@ static void Morpha_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             }
         }
         if (x.contains("t0")) mo->timers[0] = x["t0"].get<int16_t>();
-        if (x.contains("flg")) {
-            actor->flags = (actor->flags & ~MO_STREAMED_FLAGS) | (x["flg"].get<uint32_t>() & MO_STREAMED_FLAGS);
-        }
         if (x.contains("sfx") && x["sfx"].size() == 2) {
             mo->coopSfxSeq = x["sfx"][0].get<uint8_t>();
             mo->coopSfxId = x["sfx"][1].get<uint16_t>();

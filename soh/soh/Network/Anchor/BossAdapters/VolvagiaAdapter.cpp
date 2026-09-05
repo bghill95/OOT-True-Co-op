@@ -73,8 +73,6 @@ enum VolvagiaPhase : uint8_t {
     FD_PHASE_DEFEATED = 2,
 };
 
-static constexpr u32 FD_STREAMED_FLAGS = ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOOKSHOT_PULLS_PLAYER;
-
 // ---------------------------------------------------------------------------
 // BOSS_FD (the flying serpent)
 // ---------------------------------------------------------------------------
@@ -198,7 +196,6 @@ static void VolvagiaHead_SerializeExtras(Actor* actor, nlohmann::json& x) {
     x["w"] = w;
     x["hr"] = fd2->headRot;
     x["cf"] = fd2->skelAnime.curFrame;
-    x["flg"] = (uint32_t)(actor->flags & FD_STREAMED_FLAGS);
     x["hurt"] = (fd2->actionFunc == BossFd2_Vulnerable) || (fd2->actionFunc == BossFd2_Damaged);
     x["br"] = fd2->actionFunc == BossFd2_BreatheFire;
     x["vis"] = fd2->actionFunc != BossFd2_Wait;
@@ -215,9 +212,6 @@ static void VolvagiaHead_DeserializeExtras(Actor* actor, const nlohmann::json& x
         }
         if (x.contains("hr")) fd2->headRot = x["hr"].get<Vec3s>();
         if (x.contains("cf")) fd2->skelAnime.curFrame = x["cf"].get<float>();
-        if (x.contains("flg")) {
-            actor->flags = (actor->flags & ~FD_STREAMED_FLAGS) | (x["flg"].get<uint32_t>() & FD_STREAMED_FLAGS);
-        }
         if (x.contains("vis")) fd2->coopVisible = x["vis"].get<bool>() ? 1 : 0;
         if (x.contains("sfx") && x["sfx"].size() == 2) {
             fd2->coopSfxSeq = x["sfx"][0].get<uint8_t>();
