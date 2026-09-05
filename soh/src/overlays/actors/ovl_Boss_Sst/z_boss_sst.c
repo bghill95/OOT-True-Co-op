@@ -272,6 +272,11 @@ static InitChainEntry sInitChain[] = {
     ICHAIN_VEC3F_DIV1000(scale, 20, ICHAIN_STOP),
 };
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void BossSst_Init(Actor* thisx, PlayState* play2) {
     PlayState* play = play2;
     BossSst* this = (BossSst*)thisx;
@@ -782,8 +787,13 @@ void BossSst_HeadCharge(BossSst* this, PlayState* play) {
         this->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
         sHands[LEFT]->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
         sHands[RIGHT]->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
-        func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
-        Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        // Co-op: a puppet carries its own AC cylinder, so AT_HIT fires for
+        // whichever player the head hit -- while func_8002F71C and Player_PlaySfx
+        // always act on the LOCAL Link. Only shove them if they were the victim.
+        if (this->colliderJntSph.base.at == &GET_PLAYER(play)->actor) {
+            func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
+            Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        }
     }
 }
 
@@ -1533,11 +1543,20 @@ void BossSst_HandSlam(BossSst* this, PlayState* play) {
         if (this->colliderJntSph.base.atFlags & AT_HIT) {
             Player* player = GET_PLAYER(play);
 
-            player->actor.world.pos.x = (Math_SinS(this->actor.yawTowardsPlayer) * 100.0f) + this->actor.world.pos.x;
-            player->actor.world.pos.z = (Math_CosS(this->actor.yawTowardsPlayer) * 100.0f) + this->actor.world.pos.z;
-
             this->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
-            func_8002F71C(play, &this->actor, 5.0f, this->actor.yawTowardsPlayer, 0.0f);
+            // Co-op: this yanks the victim 100 units clear of the drum, then
+            // shoves them. Both act on the LOCAL Link, but AT_HIT can just as
+            // well come from the other player's puppet -- which teleported us
+            // across the arena whenever the peer got swatted. yawTowardsPlayer is
+            // retargeted at the nearest player too, so take the yaw toward the
+            // player actually being thrown.
+            if (this->colliderJntSph.base.at == &player->actor) {
+                s16 throwYaw = Anchor_LocalPlayerYaw(&this->actor);
+
+                player->actor.world.pos.x = (Math_SinS(throwYaw) * 100.0f) + this->actor.world.pos.x;
+                player->actor.world.pos.z = (Math_CosS(throwYaw) * 100.0f) + this->actor.world.pos.z;
+                func_8002F71C(play, &this->actor, 5.0f, throwYaw, 0.0f);
+            }
         }
 
         Math_ScaledStepToS(&this->actor.shape.rot.x, 0, 0x200);
@@ -1596,8 +1615,12 @@ void BossSst_HandSweep(BossSst* this, PlayState* play) {
     } else if (this->colliderJntSph.base.atFlags & AT_HIT) {
         this->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
         this->ready = true;
-        func_8002F71C(play, &this->actor, 5.0f, this->actor.shape.rot.y - (this->vParity * 0x3800), 0.0f);
-        Player_PlaySfx(&player->actor, NA_SE_PL_BODY_HIT);
+        // Co-op: only the player the hand actually swept gets shoved (see the
+        // head slam above).
+        if (this->colliderJntSph.base.at == &player->actor) {
+            func_8002F71C(play, &this->actor, 5.0f, this->actor.shape.rot.y - (this->vParity * 0x3800), 0.0f);
+            Player_PlaySfx(&player->actor, NA_SE_PL_BODY_HIT);
+        }
         newTargetYaw = this->actor.shape.rot.y - (this->vParity * 0x1400);
         if (((s16)(newTargetYaw - this->targetYaw) * this->vParity) > 0) {
             this->targetYaw = newTargetYaw;
@@ -1654,8 +1677,12 @@ void BossSst_HandPunch(BossSst* this, PlayState* play) {
     if (this->actor.bgCheckFlags & 8) {
         BossSst_HandSetupRetreat(this);
     } else if (this->colliderJntSph.base.atFlags & AT_HIT) {
-        Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
-        func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
+        // Co-op: the retreat is the hand's own business and happens either way;
+        // only the shove is the victim's (see the head slam above).
+        if (this->colliderJntSph.base.at == &GET_PLAYER(play)->actor) {
+            Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+            func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
+        }
         BossSst_HandSetupRetreat(this);
     }
 
@@ -2095,8 +2122,11 @@ void BossSst_HandReadyCharge(BossSst* this, PlayState* play) {
         this->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
         OTHER_HAND(this)->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
         sHead->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
-        func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
-        Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        // Co-op: only the player caught in the clap gets shoved (see above).
+        if (this->colliderJntSph.base.at == &GET_PLAYER(play)->actor) {
+            func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
+            Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        }
     }
 }
 

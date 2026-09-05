@@ -7,6 +7,7 @@
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
 #include <cmath>
+#include <vector>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -745,7 +746,47 @@ void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw,
     }
 }
 
-static void Reset() {
+// killLive tells the two cases apart.
+//
+// A scene change already freed every actor in these tables during the teardown:
+// the pointers are dangling and must only be dropped, never touched.
+//
+// A disconnect is the opposite. The scene keeps running and every replica we
+// spawned is still alive, with nothing left to reap it: Anchor::Disable() only
+// Actor_Kills the puppets, and DummyPlayer_Destroy -- which is what normally
+// calls ReapClientProjectiles -- does not run until Actor_Delete next frame, by
+// which time these tables are already empty. The arrows and the horse would
+// linger forever, and the hookshot replica would keep `parent` pointing at the
+// freed puppet, which ArmsHook_Draw dereferences on every draw frame.
+static void Reset(bool killLive) {
+    if (killLive && gPlayState != NULL) {
+        // ReapClientProjectiles erases from all four per-client maps, so collect
+        // the owners first rather than iterating a map it mutates. Duplicates are
+        // harmless, it looks each table up by key.
+        std::vector<uint32_t> owners;
+        for (auto& [clientId, pp] : sProj) {
+            owners.push_back(clientId);
+        }
+        for (auto& [clientId, boom] : sBoomReplicas) {
+            owners.push_back(clientId);
+        }
+        for (auto& [clientId, charge] : sChargeReplicas) {
+            owners.push_back(clientId);
+        }
+        for (auto& [clientId, horse] : sHorseReplicas) {
+            owners.push_back(clientId);
+        }
+        for (uint32_t clientId : owners) {
+            ReapClientProjectiles(clientId);
+        }
+        // Not covered by ReapClientProjectiles: spell replicas are keyed by the
+        // actor, and MAGIC_FIRE carries a live damage collider.
+        for (auto& [actor, spell] : sSpellReplicas) {
+            if (actor != NULL && actor->update != NULL) {
+                Actor_Kill(actor);
+            }
+        }
+    }
     sSilverAnnounced.clear();
     sSpellReplicas.clear();
     sBottleDrops.clear();
@@ -1052,10 +1093,10 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
 
 void RegisterHooks(bool isConnected) {
     if (!isConnected) {
-        Reset();
+        Reset(/*killLive=*/true); // the scene keeps running: our replicas are still in it
     }
 
-    COND_HOOK(OnSceneInit, isConnected, [](int16_t sceneNum) { Reset(); });
+    COND_HOOK(OnSceneInit, isConnected, [](int16_t sceneNum) { Reset(/*killLive=*/false); });
 
     COND_ID_HOOK(OnActorInit, ACTOR_MAGIC_FIRE, isConnected, [](void* actor) { OnSpellInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_MAGIC_WIND, isConnected, [](void* actor) { OnSpellInit((Actor*)actor); });

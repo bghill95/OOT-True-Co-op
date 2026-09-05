@@ -299,6 +299,16 @@ void Ingest(const nlohmann::json& payload) {
             return;
         }
 
+        // Killed (it blew up, or the chu bailed on a missing floor) but still in
+        // the table until its Actor_Delete next frame. Writing pos/velocity, or
+        // worse re-arming EnBomChu_Move, drives a corpse; drop the stale entry
+        // and let the spawn path below build a live body for this event.
+        if (replica != NULL && replica->update == NULL) {
+            sReplicas.erase(replica);
+            sRemoteBodies.erase(known);
+            replica = NULL;
+        }
+
         if (replica == NULL) {
             Vec3f pos;
             int16_t rotY = 0;

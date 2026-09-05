@@ -580,6 +580,14 @@ static void ClaimPendingCaptures(Actor* actor, TrackedState& st) {
 Actor* FindActorForPacket(uint64_t key, int16_t actorId, Vec3f homePos) {
     auto it = keyToActor.find(key);
     if (it != keyToActor.end()) {
+        // Killed but not yet deleted: the table only drops it on Actor_Destroy,
+        // so its key still answers for a frame. Never hand a corpse to a hit or
+        // a death replay — and never fall through to the fuzzy path either, or
+        // the packet would land on a DIFFERENT live instance of the same enemy.
+        if (it->second->update == NULL) {
+            ESYNC_LOG("[EnemySync] DROP packet for dying key={:#x} id={}", key, actorId);
+            return nullptr;
+        }
         return it->second;
     }
 
@@ -607,7 +615,8 @@ Actor* FindActorForPacket(uint64_t key, int16_t actorId, Vec3f homePos) {
     for (auto& [actor, state] : tracked) {
         // Compare against spawn-time params from the key: many actors mutate
         // actor->params at runtime (En_Karebaba uses it as a state/timer field).
-        if (state.dynamicKey || actor->id != actorId || (uint16_t)(state.key & 0xFFFF) != params) {
+        if (state.dynamicKey || actor->id != actorId || (uint16_t)(state.key & 0xFFFF) != params ||
+            actor->update == NULL) { // a corpse is still tracked until Actor_Delete
             continue;
         }
         float dx = state.spawnPos.x - homePos.x;
@@ -1897,8 +1906,8 @@ void HandleRemoteSpawn(uint64_t key, int16_t actorId, uint16_t params, Vec3f pos
     // update their parent's childrenGohmaState on death).
     if (parentKey != 0) {
         auto parent = keyToActor.find(parentKey);
-        if (parent != keyToActor.end()) {
-            actor->parent = parent->second;
+        if (parent != keyToActor.end() && parent->second->update != NULL) {
+            actor->parent = parent->second; // a killed parent would be freed under the child
         }
     }
 

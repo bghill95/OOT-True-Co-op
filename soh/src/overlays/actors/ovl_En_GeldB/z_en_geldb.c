@@ -215,6 +215,11 @@ static InitChainEntry sInitChain[] = {
 
 // static Vec3f sUnusedOffset = { 1100.0f, -700.0f, 0.0f };
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void EnGeldB_SetupAction(EnGeldB* this, EnGeldBActionFunc actionFunc) {
     this->actionFunc = actionFunc;
 }
@@ -916,7 +921,7 @@ void EnGeldB_SpinAttack(EnGeldB* this, PlayState* play) {
         } else if (this->swordCollider.base.atFlags & AT_HIT) {
             this->swordCollider.base.atFlags &= ~AT_HIT;
             if (&player->actor == this->swordCollider.base.at) {
-                func_8002F71C(play, &this->actor, 6.0f, this->actor.yawTowardsPlayer, 6.0f);
+                func_8002F71C(play, &this->actor, 6.0f, Anchor_LocalPlayerYaw(&this->actor), 6.0f);
                 this->spinAttackState = 2;
                 Player_SetCsActionWithHaltedActors(play, &this->actor, 0x18);
                 Message_StartTextbox(play, 0x6003, &this->actor);

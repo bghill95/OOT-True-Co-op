@@ -74,6 +74,11 @@ Vec3f D_80910608[4];
 
 s8 D_80910638;
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void BossGanon2_InitRand(s32 seedInit0, s32 seedInit1, s32 seedInit2) {
     sBossGanon2Seed1 = seedInit0;
     sBossGanon2Seed2 = seedInit1;
@@ -1905,7 +1910,14 @@ void func_80902348(BossGanon2* this, PlayState* play) {
                     phi_v0_2 = 0;
                 }
 
-                func_8002F6D4(play, &this->actor, 15.0f, this->actor.yawTowardsPlayer + phi_v0_2, 2.0f, 0);
+                // Co-op: a puppet carries its own AC cylinder, so the sword's
+                // toucher fires for whichever player it caught, while
+                // func_8002F6D4 always acts on the LOCAL Link and
+                // yawTowardsPlayer is retargeted at the nearest player.
+                if (this->unk_444.base.at == &GET_PLAYER(play)->actor) {
+                    func_8002F6D4(play, &this->actor, 15.0f, Anchor_LocalPlayerYaw(&this->actor) + phi_v0_2, 2.0f,
+                                  0);
+                }
                 sBossGanon2Zelda->unk_3C8 = 8;
                 this->unk_316 = 10;
                 break;

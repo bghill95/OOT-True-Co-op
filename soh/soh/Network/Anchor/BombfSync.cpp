@@ -234,6 +234,12 @@ void Ingest(const nlohmann::json& payload) {
             if (it == sFlowers.end()) {
                 return;
             }
+            // The table is only reaped on Actor_Destroy, so between Actor_Kill
+            // and Actor_Delete this still points at a corpse: writing its timer
+            // and scale re-grows a flower that is on its way out of the scene.
+            if (it->second->update == NULL) {
+                return;
+            }
             EnBombf* flower = (EnBombf*)it->second;
             flower->flowerBombScale = 0.0f;
             flower->timer = 180; // regrow, mirrors EnBombf_GrowBomb's reset
@@ -249,6 +255,15 @@ void Ingest(const nlohmann::json& payload) {
         auto known = sRemoteBodies.find(rkey);
         if (known != sRemoteBodies.end()) {
             replica = known->second;
+            // Exploded already: killed, but still in the table until its
+            // Actor_Delete next frame. Driving a corpse leaves a bomb that
+            // never draws and never blows; drop the stale entry and let the
+            // spawn path below build a live body for this event.
+            if (replica->update == NULL) {
+                sReplicas.erase(replica);
+                sRemoteBodies.erase(known);
+                replica = NULL;
+            }
         }
 
         if (replica == NULL) {

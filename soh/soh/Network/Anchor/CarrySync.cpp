@@ -278,6 +278,15 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             return;
         }
         Actor* actor = it->second;
+        // sByKey is only re-pointed on Actor_Destroy, so a pot smashed this
+        // frame still answers to its key until Actor_Delete. Pinning a corpse to
+        // a puppet, or handing it back an actionFunc, revives it for a frame and
+        // (worse) leaves sTracked an entry for an actor about to be freed. Drop
+        // the event: the destroy hook hands the key to a live sibling right after.
+        if (actor->update == NULL) {
+            ESYNC_LOG("[CarrySync] event kind={} for dying key={:#x}", kind, key);
+            return;
+        }
         CarryState& st = sTracked[actor];
 
         switch (kind) {

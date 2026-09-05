@@ -58,6 +58,11 @@ static ColliderCylinderInit sCylinderInit = {
 
 static CollisionCheckInfoInit sColChkInfoInit = { 0, 60, 120, MASS_IMMOVABLE };
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void EnBrob_Init(Actor* thisx, PlayState* play) {
     s32 pad;
     EnBrob* this = (EnBrob*)thisx;
@@ -155,7 +160,7 @@ void func_809CB054(EnBrob* this, PlayState* play) {
     }
     if (this->timer == 0) {
         if (DynaPolyActor_IsPlayerOnTop(&this->dyna) != 0) {
-            func_8002F71C(play, &this->dyna.actor, 5.0f, this->dyna.actor.yawTowardsPlayer, 1.0f);
+            func_8002F71C(play, &this->dyna.actor, 5.0f, Anchor_LocalPlayerYaw(&this->dyna.actor), 1.0f);
             func_809CAE44(this, play);
         } else if (this->dyna.actor.xzDistToPlayer < 300.0f) {
             func_809CAE44(this, play);
@@ -281,7 +286,7 @@ void EnBrob_Update(Actor* thisx, PlayState* play2) {
 
         if (this->actionFunc == func_809CB114 && !(this->colliders[0].base.atFlags & AT_BOUNCED) &&
             !(this->colliders[1].base.atFlags & AT_BOUNCED)) {
-            func_8002F71C(play, &this->dyna.actor, 5.0f, this->dyna.actor.yawTowardsPlayer, 1.0f);
+            func_8002F71C(play, &this->dyna.actor, 5.0f, Anchor_LocalPlayerYaw(&this->dyna.actor), 1.0f);
         } else if (this->actionFunc != func_809CB114) {
             func_809CB008(this);
         }

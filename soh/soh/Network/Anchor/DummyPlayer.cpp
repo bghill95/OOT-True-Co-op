@@ -419,3 +419,26 @@ extern "C" Player* Anchor_NearestPlayer(Actor* from) {
     }
     return best;
 }
+
+// Yaw from `from` toward the LOCAL Link, whatever actor->yawTowardsPlayer holds.
+//
+// The other half of the perception override. EnemySync::OverridePlayerPerception
+// re-points yawTowardsPlayer at the NEAREST player, which is what the AI should
+// read — but func_8002F698 / func_8002F6D4 / func_8002F71C, and the boss code
+// that writes player->actor.world.pos by hand, always act on GET_PLAYER. Feeding
+// them the retargeted yaw therefore shoves the local Link along the enemy->puppet
+// axis instead of the enemy->Link one: knocked into Barinade's electrified water
+// from the wrong side, or (Bongo Bongo) teleported to the wrong side of the drum.
+//
+// Use this at any site where the VICTIM is known to be the local Link and the
+// yaw only says which way to push them. Offline, or with no puppet nearer than
+// Link, it returns exactly what yawTowardsPlayer already held.
+extern "C" s16 Anchor_LocalPlayerYaw(Actor* from) {
+    if (from == NULL) {
+        return 0;
+    }
+    if (gPlayState == NULL || GET_PLAYER(gPlayState) == NULL) {
+        return from->yawTowardsPlayer;
+    }
+    return Actor_WorldYawTowardActor(from, &GET_PLAYER(gPlayState)->actor);
+}

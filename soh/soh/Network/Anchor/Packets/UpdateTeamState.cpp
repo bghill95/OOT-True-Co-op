@@ -157,7 +157,7 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
         gSaveContext.swordHealth = loadedData.swordHealth;
         gSaveContext.ship.quest = loadedData.ship.quest;
 
-        for (int i = 0; i < 124; i++) {
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.sceneFlags); i++) {
             if (i == SCENE_WATER_TEMPLE) {
                 // Keep water temple water level flags
                 u32 mask = (1 << 0x1C) | (1 << 0x1D) | (1 << 0x1E);
@@ -181,24 +181,24 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
             }
         }
 
-        for (int i = 0; i < 14; i++) {
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.eventChkInf); i++) {
             gSaveContext.eventChkInf[i] = loadedData.eventChkInf[i];
         }
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.itemGetInf); i++) {
             gSaveContext.itemGetInf[i] = loadedData.itemGetInf[i];
         }
 
         // Skip last row of infTable, don't want to sync swordless flag
-        for (int i = 0; i < 29; i++) {
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.infTable) - 1; i++) {
             gSaveContext.infTable[i] = loadedData.infTable[i];
         }
 
-        for (int i = 0; i < ceil((RAND_INF_MAX + 15) / 16); i++) {
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.ship.randomizerInf); i++) {
             gSaveContext.ship.randomizerInf[i] = loadedData.ship.randomizerInf[i];
         }
 
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.gsFlags); i++) {
             gSaveContext.gsFlags[i] = loadedData.gsFlags[i];
         }
 

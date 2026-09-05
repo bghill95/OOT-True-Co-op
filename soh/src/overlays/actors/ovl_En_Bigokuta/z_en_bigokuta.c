@@ -159,6 +159,11 @@ static InitChainEntry sInitChain[] = {
 // possibly color data
 static s32 sUnused[] = { 0xFFFFFFFF, 0x969696FF };
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void EnBigokuta_Init(Actor* thisx, PlayState* play) {
     EnBigokuta* this = (EnBigokuta*)thisx;
     s32 i;
@@ -729,7 +734,11 @@ void func_809BE798(EnBigokuta* this, PlayState* play) {
         this->cylinder[0].base.atFlags &= ~AT_HIT;
         this->cylinder[1].base.atFlags &= ~AT_HIT;
         this->collider.base.atFlags &= ~AT_HIT;
-        yawDiff = this->actor.yawTowardsPlayer - this->actor.world.rot.y;
+        // Co-op: yawTowardsPlayer is retargeted at the NEAREST player, and
+        // effectRot -- which decides which side the slap throws from -- feeds both
+        // the shove and the Octo's own recoil below. Read the yaw toward the local
+        // Link so the two agree with the shove func_8002F71C actually applies.
+        yawDiff = Anchor_LocalPlayerYaw(&this->actor) - this->actor.world.rot.y;
         if (yawDiff > 0x4000) {
             effectRot = 0x4000;
         } else if (yawDiff > 0) {
@@ -739,7 +748,15 @@ void func_809BE798(EnBigokuta* this, PlayState* play) {
         } else {
             effectRot = -0x6000;
         }
-        func_8002F71C(play, &this->actor, 10.0f, this->actor.world.rot.y + effectRot, 5.0f);
+        // A puppet carries its own AC cylinder, so AT_HIT fires for whichever
+        // player was slapped, while func_8002F71C always shoves the LOCAL Link.
+        // The Octo's own recoil below is its business either way, so only the
+        // shove is gated.
+        if (this->cylinder[0].base.at == &GET_PLAYER(play)->actor ||
+            this->cylinder[1].base.at == &GET_PLAYER(play)->actor ||
+            this->collider.base.at == &GET_PLAYER(play)->actor) {
+            func_8002F71C(play, &this->actor, 10.0f, this->actor.world.rot.y + effectRot, 5.0f);
+        }
         if (this->actionFunc == func_809BDC08) {
             func_809BD4A4(this);
             this->unk_196 = 40;

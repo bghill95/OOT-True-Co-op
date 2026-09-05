@@ -239,6 +239,11 @@ s32 EnFd_SpawnCore(EnFd* this, PlayState* play) {
     return true;
 }
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void EnFd_SpawnChildFire(EnFd* this, PlayState* play, s16 fireCnt, s16 color) {
     s32 i;
 
@@ -311,8 +316,15 @@ s32 EnFd_ColliderCheck(EnFd* this, PlayState* play) {
             return false;
         }
         this->attackTimer = 30;
-        Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
-        func_8002F71C(play, &this->actor, this->actor.speedXZ + 2.0f, this->actor.yawTowardsPlayer, 6.0f);
+        // Co-op: a puppet carries its own AC cylinder, so AT_HIT fires for
+        // whichever player was burned -- while the sfx and func_8002F71C both act
+        // on the LOCAL Link, and yawTowardsPlayer is retargeted at the nearest
+        // player. Only shove the player actually hit, away from us.
+        if (this->collider.base.at == &player->actor) {
+            Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
+            func_8002F71C(play, &this->actor, this->actor.speedXZ + 2.0f, Anchor_LocalPlayerYaw(&this->actor),
+                          6.0f);
+        }
     }
     return false;
 }
