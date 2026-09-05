@@ -139,6 +139,17 @@ struct RemoteEnemyState {
     // or the mirror player's hits stop registering at all. Empty = the
     // authority sent none (older build): fall back to the local flags.
     std::vector<uint8_t> colEnable;
+    // Per-collider bumper.dmgFlags: WHICH weapons may hurt each collider. Several
+    // enemies flip this at runtime to open and close their vulnerable window
+    // (En_St and En_Ssh swap the stick bit between body and legs, En_Eiyer while
+    // buried, En_Karebaba upright vs cut, the Poe sisters, Bongo Bongo's head).
+    // The mirror's AI is suppressed, so its masks freeze at whatever they held
+    // when the stream took over -- and a mask frozen shut resolves every hit to
+    // zero damage, which the mirror then forwards as a dmg=0 request. The enemy
+    // is simply invincible for that player (Well Skulltula, 2026-09-06).
+    // Only single-element colliders are carried; multi-element ones keep their
+    // own per-element masks. Empty = the authority sent none (older build).
+    std::vector<uint32_t> colDmgFlags;
     uint32_t actorFlags = 0;
     bool hasActorFlags = false;
     // Sound ids the authority's AI played for this actor this frame, replayed
@@ -949,10 +960,27 @@ static void DetectAndForwardLocalHits(Actor* actor, TrackedState& st) {
     if (!hit) {
         return;
     }
-    st.lastHitReqTick = tickCounter;
-
     uint8_t damage = actor->colChkInfo.damage;
+    uint8_t effect = actor->colChkInfo.damageEffect;
     actor->colChkInfo.damage = 0;
+
+    // The enemy's own damage table has already ruled on this hit: the collision
+    // pass filled damage/damageEffect on OUR copy before we got here. Both zero
+    // means the weapon does nothing to this enemy, so there is nothing to request.
+    //
+    // Forwarding it anyway was not harmless. ApplyRemoteHit deliberately forces
+    // AC_HIT on the authority's copy without re-consulting the table (the hit was
+    // already validated here), so an enemy that counts HITS instead of reading
+    // colChkInfo.damage loses health for free -- z_en_vm.c:400 does a bare
+    // health--, and a slingshot seed therefore chipped a Beamos that only bombs
+    // are supposed to hurt.
+    //
+    // Deku nuts still pass: zero damage, but a non-zero stun damageEffect.
+    if (damage == 0 && effect == 0) {
+        return;
+    }
+
+    st.lastHitReqTick = tickCounter;
 
     Anchor::Instance->SendPacket_EnemyHitRequest(actor, st.key, damage, dmgFlags, hitPos, atkId);
 
@@ -986,6 +1014,16 @@ static void SubmitColliders(Actor* actor, TrackedState& st, RemoteEnemyState& r)
             col->atFlags = (bits & 1) ? (col->atFlags | AT_ON) : (col->atFlags & ~AT_ON);
             col->acFlags = (bits & 2) ? (col->acFlags | AC_ON) : (col->acFlags & ~AC_ON);
             col->ocFlags1 = (bits & 4) ? (col->ocFlags1 | OC1_ON) : (col->ocFlags1 & ~OC1_ON);
+        }
+        // Vulnerability mask (see RemoteEnemyState::colDmgFlags). 0 means the
+        // authority skipped this collider (several elements), so leave ours alone.
+        if (myIndex < r.colDmgFlags.size() && r.colDmgFlags[myIndex] != 0) {
+            uint32_t mask = r.colDmgFlags[myIndex];
+            int32_t n = 0;
+            ForEachColliderInfo(col, [&](ColliderInfo* info) { n++; });
+            if (n == 1) {
+                ForEachColliderInfo(col, [&](ColliderInfo* info) { info->bumper.dmgFlags = mask; });
+            }
         }
         if (col->shape == COLSHAPE_CYLINDER) {
             // Repositioned from the streamed world.pos (ApplyPose ran first) — accurate.
@@ -1254,15 +1292,23 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
     }
     RemoteEnemyState& r = rs->second;
 
+    const ActorSyncAdapter* adapter = GetAdapter(actor->id);
+
     // Deferred-init enemies (EnPoh and friends) spend their first update(s)
     // waiting for their object bank: only then do they build their skeleton and
     // assign actor->draw. Suppressing before that leaves an invisible ghost
     // forever — let the local update run until the actor can actually draw.
-    if (actor->draw == NULL) {
+    //
+    // An adapter that declares mirrorWhileDrawless is exempt: its boss nulls its
+    // OWN draw as part of the fight, so this heuristic would release the mirror
+    // exactly during that sequence. Phantom Ganon spent the whole painting phase
+    // that way — the released copy ran the horse's AI, spawned its own decoy
+    // riders and energy balls next to the replicated ones, and swallowed every
+    // arrow the mirror's player fired (the real boss took 100% of its damage from
+    // the authority's side: localShare=2 remoteShare=0 on every HP drop).
+    if (actor->draw == NULL && (adapter == nullptr || !adapter->mirrorWhileDrawless)) {
         return;
     }
-
-    const ActorSyncAdapter* adapter = GetAdapter(actor->id);
 
     // Phase edges fire before the ShouldMirror gate: the defeat edge arrives with
     // a phase the gate would reject, but the handoff must still run.
@@ -1387,6 +1433,31 @@ static nlohmann::json SnapshotEnemy(Actor* actor, TrackedState& st) {
         }
         if (!cf.empty()) {
             e["cf"] = cf;
+        }
+
+        // Same order and index space as cf. A collider with several elements sends
+        // 0 and is skipped on the other side: its elements can legitimately differ,
+        // and none of the affected enemies toggle those.
+        std::vector<uint32_t> bdf;
+        bdf.reserve(st.colliders.size());
+        for (Collider* col : st.colliders) {
+            uint32_t mask = 0;
+            if (col != nullptr && col->actor == actor) {
+                int32_t n = 0;
+                ForEachColliderInfo(col, [&](ColliderInfo* info) {
+                    if (n == 0) {
+                        mask = info->bumper.dmgFlags;
+                    }
+                    n++;
+                });
+                if (n != 1) {
+                    mask = 0;
+                }
+            }
+            bdf.push_back(mask);
+        }
+        if (!bdf.empty()) {
+            e["bdf"] = bdf;
         }
     }
     SkelAnime* skel = st.skelAnime;
@@ -1541,6 +1612,18 @@ void IngestEnemyState(const nlohmann::json& payload) {
                     }
                 } else {
                     SPDLOG_WARN("[EnemySync] Bad cf size {} for key={:#x}", cf.size(), key);
+                }
+            }
+            r.colDmgFlags.clear();
+            if (e.contains("bdf")) {
+                const auto& bdf = e["bdf"];
+                if (bdf.is_array() && bdf.size() <= (size_t)MAX_TRACKED_COLLIDERS) {
+                    r.colDmgFlags.reserve(bdf.size());
+                    for (const auto& m : bdf) {
+                        r.colDmgFlags.push_back(m.get<uint32_t>());
+                    }
+                } else {
+                    SPDLOG_WARN("[EnemySync] Bad bdf size {} for key={:#x}", bdf.size(), key);
                 }
             }
         }

@@ -312,6 +312,10 @@ void RegisterPhantomGanonAdapters() {
         adapter.IsHealthless = PhantomGanon_IsDecoy;
         adapter.ReplicateKill = PhantomGanon_ReplicateKill;
         adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
+        // The rider nulls its own draw for the whole painting phase; without this
+        // the generic draw-less bail hands the mirror back to its local AI right
+        // then, and that copy runs the fight a second time.
+        adapter.mirrorWhileDrawless = true;
         EnemySync::RegisterAdapter(ACTOR_BOSS_GANONDROF, adapter);
     }
     {
@@ -323,6 +327,9 @@ void RegisterPhantomGanonAdapters() {
         adapter.IsHealthless = PhantomHorse_Always;
         adapter.ReplicateKill = PhantomHorse_ReplicateKill;
         adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
+        // Same for the horse -- and it is the horse AI that spawns the decoy
+        // rider/horse pairs, so a released mirror doubled every one of them.
+        adapter.mirrorWhileDrawless = true;
         EnemySync::RegisterAdapter(ACTOR_EN_FHG, adapter);
     }
     {

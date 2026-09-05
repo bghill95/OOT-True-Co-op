@@ -44,6 +44,16 @@ struct ActorSyncAdapter {
     // CoopMirrorTick path), so the generic per-actor sfx stream must skip it or
     // the mirror hears everything twice.
     bool ownsSfx = false;
+    // The generic mirror step bails on `actor->draw == NULL` and hands the copy
+    // back to its local AI, because a deferred-init enemy has no draw until its
+    // object bank arrives and suppressing it there leaves an invisible ghost.
+    // Some bosses null their OWN draw as part of the fight (Phantom Ganon and his
+    // horse do it for the whole painting phase, while they are inside a portrait).
+    // For those the heuristic is exactly backwards: it releases the mirror right
+    // when the boss is doing its choreography, and the released copy spawns its
+    // own decoys and effects alongside the replicated ones. Set this when the
+    // adapter knows how to drive a draw-less actor.
+    bool mirrorWhileDrawless = false;
 };
 
 namespace EnemySync {
