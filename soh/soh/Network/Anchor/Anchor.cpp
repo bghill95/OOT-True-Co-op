@@ -219,7 +219,23 @@ void Anchor::RefreshClientActors() {
     }
 
     actorIndexToClientId.clear();
-    refreshingActors = true;
+
+    // Scoped, not a bare flag. ShouldActorInit converts every ACTOR_PLAYER spawned
+    // while this is set into a puppet -- so if anything threw out of the loop below,
+    // the flag latched true and the next REAL Link was converted too. ACTORCAT_PLAYER
+    // then had no head, and Actor_InitContext dereferenced it on the following scene
+    // load (z_actor.c:2566 -> func_8002C0C0). Same shape as the isHandlingUpdateTeamState
+    // latch fixed earlier; this was the second one.
+    struct RefreshGuard {
+        bool& flag;
+        explicit RefreshGuard(bool& f) : flag(f) {
+            flag = true;
+        }
+        ~RefreshGuard() {
+            flag = false;
+        }
+    } refreshGuard(refreshingActors);
+
     for (auto& [clientId, client] : clients) {
         if (!client.online || client.self) {
             continue;
@@ -234,7 +250,6 @@ void Anchor::RefreshClientActors() {
                                  client.posRot.rot.z, actorIndexToClientId.size() - 1, false);
         client.player = (Player*)dummy;
     }
-    refreshingActors = false;
 }
 
 bool Anchor::IsSaveLoaded() {

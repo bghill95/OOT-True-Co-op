@@ -2,6 +2,29 @@
 #include <spdlog/spdlog.h>
 #include <libultraship/libultraship.h>
 
+// Every log call in this file goes through NET_LOG.
+//
+// The SPDLOG_* macros reach the default logger through spdlog::default_logger_raw(),
+// which is registry::get_default_raw() -- an unsynchronised .get() on a shared_ptr
+// another thread may be assigning. The reader can observe it null, and
+// logger::should_log() dereferences it to read its level BEFORE deciding whether
+// that level is even enabled. So a filtered-out SPDLOG_DEBUG still crashes.
+//
+// ReceiveFromServer calls HandleRemoteJson once per packet, ~20 times a second, on
+// its own thread. That turned a narrow race into an access violation every hour or
+// so -- and since the faulting frame is the logger itself, the crash landed on
+// whatever traffic was in flight (bombs, Tailpasarans, a dozen bushes), which is
+// why it read as three unrelated gameplay bugs.
+//
+// Fetch the pointer once and check it: a dropped log line instead of a crash.
+#define NET_LOG(MACRO, ...)                            \
+    do {                                               \
+        auto* netLogger_ = spdlog::default_logger_raw();\
+        if (netLogger_ != nullptr) {                    \
+            MACRO(netLogger_, __VA_ARGS__);             \
+        }                                              \
+    } while (0)
+
 // MARK: - Public
 
 void Network::Enable(const char* host, uint16_t port) {
@@ -11,7 +34,7 @@ void Network::Enable(const char* host, uint16_t port) {
     }
 
     if (SDLNet_ResolveHost(&networkAddress, host, port) == -1) {
-        SPDLOG_ERROR("[Network] SDLNet_ResolveHost: {}", SDLNet_GetError());
+        NET_LOG(SPDLOG_LOGGER_ERROR, "[Network] SDLNet_ResolveHost: {}", SDLNet_GetError());
     }
 
     isEnabled = true;
@@ -48,7 +71,7 @@ void Network::OnDisconnected() {
 
 void Network::SendDataToRemote(const char* payload) {
 #ifdef ENABLE_REMOTE_CONTROL
-    SPDLOG_DEBUG("[Network] Sending data: {}", payload);
+    NET_LOG(SPDLOG_LOGGER_DEBUG, "[Network] Sending data: {}", payload);
     SDLNet_TCP_Send(networkSocket, payload, strlen(payload) + 1);
 #endif
 }
@@ -63,12 +86,12 @@ void Network::ReceiveFromServer() {
 #ifdef ENABLE_REMOTE_CONTROL
     while (isEnabled) {
         while (!isConnected && isEnabled) {
-            SPDLOG_TRACE("[Network] Attempting to make connection to server...");
+            NET_LOG(SPDLOG_LOGGER_TRACE, "[Network] Attempting to make connection to server...");
             networkSocket = SDLNet_TCP_Open(&networkAddress);
 
             if (networkSocket) {
                 isConnected = true;
-                SPDLOG_INFO("[Network] Connection to server established!");
+                NET_LOG(SPDLOG_LOGGER_INFO, "[Network] Connection to server established!");
 
                 OnConnected();
                 break;
@@ -86,7 +109,7 @@ void Network::ReceiveFromServer() {
             int socketsReady = SDLNet_CheckSockets(socketSet, 0);
 
             if (socketsReady == -1) {
-                SPDLOG_ERROR("[Network] SDLNet_CheckSockets: {}", SDLNet_GetError());
+                NET_LOG(SPDLOG_LOGGER_ERROR, "[Network] SDLNet_CheckSockets: {}", SDLNet_GetError());
                 break;
             }
 
@@ -98,7 +121,7 @@ void Network::ReceiveFromServer() {
             memset(remoteDataReceived, 0, sizeof(remoteDataReceived));
             int len = SDLNet_TCP_Recv(networkSocket, &remoteDataReceived, sizeof(remoteDataReceived));
             if (!len || !networkSocket || len == -1) {
-                SPDLOG_ERROR("[Network] SDLNet_TCP_Recv: {}", SDLNet_GetError());
+                NET_LOG(SPDLOG_LOGGER_ERROR, "[Network] SDLNet_TCP_Recv: {}", SDLNet_GetError());
                 break;
             }
 
@@ -123,7 +146,7 @@ void Network::ReceiveFromServer() {
             SDLNet_TCP_Close(networkSocket);
             isConnected = false;
             OnDisconnected();
-            SPDLOG_INFO("[Network] Ending receiving thread...");
+            NET_LOG(SPDLOG_LOGGER_INFO, "[Network] Ending receiving thread...");
         }
     }
 #endif
@@ -134,12 +157,12 @@ void Network::HandleRemoteData(char payload[512]) {
 }
 
 void Network::HandleRemoteJson(std::string payload) {
-    SPDLOG_DEBUG("[Network] Received json: {}", payload);
+    NET_LOG(SPDLOG_LOGGER_DEBUG, "[Network] Received json: {}", payload);
     nlohmann::json jsonPayload;
     try {
         jsonPayload = nlohmann::json::parse(payload);
     } catch (const std::exception& e) {
-        SPDLOG_ERROR("[Network] Failed to parse json: \n{}\n{}\n", payload, e.what());
+        NET_LOG(SPDLOG_LOGGER_ERROR, "[Network] Failed to parse json: \n{}\n{}\n", payload, e.what());
         return;
     }
 
