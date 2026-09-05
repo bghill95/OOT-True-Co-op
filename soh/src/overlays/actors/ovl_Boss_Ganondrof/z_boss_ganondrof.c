@@ -198,9 +198,69 @@ static InitChainEntry sInitChain[] = {
 
 static Vec3f sAudioVec = { 0.0f, 0.0f, 50.0f };
 
+// Co-op (Anchor/DummyPlayer.cpp): nearest live player, local Link or puppet.
+Player* Anchor_NearestPlayer(Actor* from);
+
 void BossGanondrof_ClearPixels(u8* mask, s16 index) {
     if (mask[index]) {
         sDecayTex[index] = 1;
+    }
+}
+
+// Co-op mirror side. BossGanondrof_Update is suppressed on the mirror (pose,
+// timers and draw params stream in), so the update-side particle work is
+// replayed here from the streamed fields: the stun / death shocks (Update,
+// shockTimer), the green light balls off the spear tip while floating
+// (BossGanondrof_Neutral) and the ten-ball ring while charging
+// (BossGanondrof_Charge). fxMode: 0 none, 1 floating, 2 charging. Called once
+// per streamed frame by the PhantomGanon adapter.
+void BossGanondrof_CoopMirrorFx(BossGanondrof* this, PlayState* play, u8 fxMode) {
+    Vec3f pos;
+    Vec3f vel = { 0.0f, 0.0f, 0.0f };
+    Vec3f accel = { 0.0f, 0.0f, 0.0f };
+    s16 i;
+
+    if (this->shockTimer != 0) {
+        for (i = 0; i < 7; i++) {
+            EffectSsFhgFlash_SpawnShock(play, &this->actor, &this->actor.world.pos, 45, FHGFLASH_SHOCK_PG);
+        }
+    }
+
+    if (fxMode == 1) {
+        if ((this->work[GND_VARIANCE_TIMER] & 1) == 0) {
+            for (i = 0; i < 3; i++) {
+                pos.x = Rand_CenteredFloat(20.0f) + this->spearTip.x;
+                pos.y = Rand_CenteredFloat(20.0f) + this->spearTip.y;
+                pos.z = Rand_CenteredFloat(20.0f) + this->spearTip.z;
+                accel.y = -0.08f;
+                EffectSsFhgFlash_SpawnLightBall(play, &pos, &vel, &accel, (s16)(Rand_ZeroOne() * 80.0f) + 150,
+                                                FHGFLASH_LIGHTBALL_GREEN);
+            }
+        }
+        Audio_PlayActorSound2(&this->actor, NA_SE_EN_FANTOM_FLOAT - SFX_FLAG);
+    } else if (fxMode == 2) {
+        Vec3f baseOffset = { 0.0f, 10.0f, 0.0f };
+        Vec3f offset;
+
+        for (i = 0; i < 10; i++) {
+            Matrix_Push();
+            Matrix_RotateY((this->actor.shape.rot.y / (f32)0x8000) * M_PI, MTXMODE_NEW);
+            Matrix_RotateX((this->actor.shape.rot.x / (f32)0x8000) * M_PI, MTXMODE_APPLY);
+            Matrix_RotateZ((this->work[GND_PARTICLE_ANGLE] / (f32)0x8000) * M_PI, MTXMODE_APPLY);
+            Matrix_MultVec3f(&baseOffset, &offset);
+            Matrix_Pop();
+            pos.x = this->spearTip.x + offset.x;
+            pos.y = this->spearTip.y + offset.y;
+            pos.z = this->spearTip.z + offset.z;
+            vel.x = (offset.x * 500.0f) / 1000.0f;
+            vel.y = (offset.y * 500.0f) / 1000.0f;
+            vel.z = (offset.z * 500.0f) / 1000.0f;
+            accel.x = (offset.x * -50.0f) / 1000.0f;
+            accel.y = (offset.y * -50.0f) / 1000.0f;
+            accel.z = (offset.z * -50.0f) / 1000.0f;
+            EffectSsFhgFlash_SpawnLightBall(play, &pos, &vel, &accel, 150, i % 7);
+            this->work[GND_PARTICLE_ANGLE] += 0x1A5C;
+        }
     }
 }
 
@@ -446,8 +506,8 @@ void BossGanondrof_Neutral(BossGanondrof* this, PlayState* play) {
     f32 targetX;
     f32 targetY;
     f32 targetZ;
-    Player* player = GET_PLAYER(play);
-    Actor* playerx = &player->actor;
+    Player* player = GET_PLAYER(play); // unk_A73 (just fired): local, borrowed for puppet arrows too
+    Actor* playerx = &Anchor_NearestPlayer(&this->actor)->actor; // co-op: hover around whoever is closest
     Actor* thisx = &this->actor;
     f32 rand01;
     s16 i;
@@ -757,7 +817,7 @@ void BossGanondrof_SetupCharge(BossGanondrof* this, PlayState* play) {
 }
 
 void BossGanondrof_Charge(BossGanondrof* this, PlayState* play) {
-    Player* player = GET_PLAYER(play);
+    Player* player = Anchor_NearestPlayer(&this->actor); // co-op: charge the closest player
     Actor* playerx = &player->actor;
     Actor* thisx = &this->actor;
     f32 dxCenter = thisx->world.pos.x - GND_BOSSROOM_CENTER_X;
@@ -1090,7 +1150,9 @@ void BossGanondrof_Death(BossGanondrof* this, PlayState* play) {
                 }
                 this->actor.child = &horse->actor;
                 this->killActor = true;
-                horse->killActor = true;
+                if (horse != NULL && horse->actor.update != NULL) { // co-op: the horse copy may already be gone
+                    horse->killActor = true;
+                }
                 Flags_SetClear(play, play->roomCtx.curRoom.num);
                 Flags_SetSwitch(play, 0x22);
             }

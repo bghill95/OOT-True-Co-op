@@ -10,6 +10,9 @@ void RegisterBossVaAdapter();
 void RegisterEnPohAdapter();
 void RegisterEnPoFieldAdapter();
 void RegisterEnPoDesertAdapter();
+void RegisterPhantomGanonAdapters();
+void RegisterVolvagiaAdapters();
+void RegisterMorphaAdapter();
 
 namespace EnemySync {
 
@@ -39,6 +42,9 @@ void RegisterBuiltInAdapters() {
     RegisterEnPohAdapter();
     RegisterEnPoFieldAdapter();
     RegisterEnPoDesertAdapter();
+    RegisterPhantomGanonAdapters();
+    RegisterVolvagiaAdapters();
+    RegisterMorphaAdapter();
 }
 
 } // namespace EnemySync

@@ -181,6 +181,15 @@ typedef struct BossFd {
     /* 0x1490 */ ColliderJntSph collider;
     /* 0x14B0 */ ColliderJntSphElement elements[19];
     /* 0x1970 */ BossFdEffect effects[180];
+    // Co-op: the mirror's copy sits in BossFd_Wait while the authority flies, so
+    // Draw / Z-target gate on coopVisible instead of the action; one-shot sounds
+    // travel as a (seq, id) event; coopMirror* hold the mirror's last applied values.
+    u8 coopVisible;
+    u8 coopSfxSeq;
+    u16 coopSfxId;
+    u8 coopMirrorSfxSeq;
+    s16 coopMirrorMove;
+    s16 coopMirrorSplash;
 } BossFd; // size = 0x43A0
 
 #endif

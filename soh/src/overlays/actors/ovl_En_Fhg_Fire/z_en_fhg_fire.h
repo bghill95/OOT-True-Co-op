@@ -64,6 +64,11 @@ typedef struct EnFhgFire {
     /* 0x01FC */ u8 lensFlareOn;
     /* 0x01FE */ s16 lensFlareTimer;
     /* 0x0200 */ f32 lensFlareScale;
+    // Co-op: energy ball impact kind (0 alive, 1+killMode) streamed to the mirror,
+    // plus the mirror's last applied values (edge detection for one-shot FX).
+    u8 coopKillMode;
+    u8 coopMirrorKillMode;
+    s16 coopMirrorVar;
 } EnFhgFire; // size = 0x0204
 
 #endif

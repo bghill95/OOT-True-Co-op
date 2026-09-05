@@ -232,7 +232,9 @@ void EnVbBall_Update(Actor* thisx, PlayState* play2) {
                         newActor->shadowOpacity = 200.0f;
                     }
                 }
-                for (i = 0; i < 15; i++) {
+                // Co-op: a replicated rock whose Volvagia parent could not be
+                // resolved has no effect pool to spawn into.
+                for (i = 0; (bossFd != NULL) && (i < 15); i++) {
                     Vec3f debrisVel1 = { 0.0f, 0.0f, 0.0f };
                     Vec3f debrisAcc1 = { 0.0f, -1.0f, 0.0f };
                     Vec3f debrisPos1;
@@ -248,7 +250,7 @@ void EnVbBall_Update(Actor* thisx, PlayState* play2) {
                     EnVbBall_SpawnDebris(play, bossFd->effects, &debrisPos1, &debrisVel1, &debrisAcc1,
                                          (s16)Rand_ZeroFloat(12.0f) + 15);
                 }
-                for (i = 0; i < 10; i++) {
+                for (i = 0; (bossFd != NULL) && (i < 10); i++) {
                     Vec3f dustVel = { 0.0f, 0.0f, 0.0f };
                     Vec3f dustAcc = { 0.0f, 0.0f, 0.0f };
                     Vec3f dustPos;
@@ -267,7 +269,7 @@ void EnVbBall_Update(Actor* thisx, PlayState* play2) {
                                        Rand_ZeroFloat(100.0f) + 350.0f);
                 }
             } else {
-                for (i = 0; i < 5; i++) {
+                for (i = 0; (bossFd != NULL) && (i < 5); i++) {
                     Vec3f debrisVel2 = { 0.0f, 0.0f, 0.0f };
                     Vec3f debrisAcc2 = { 0.0f, -1.0f, 0.0f };
                     Vec3f debrisPos2;

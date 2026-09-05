@@ -84,7 +84,14 @@ void Anchor::HandlePacket_EnemyHitRequest(nlohmann::json payload) {
     // streamed id instead of the puppet.
     int16_t atkId = payload.contains("atkId") ? payload["atkId"].get<int16_t>() : (int16_t)ACTOR_PLAYER;
     if (atkId != ACTOR_PLAYER) {
-        attacker = EnemySync::FakeAttacker(atkId, payload["hitPos"].get<Vec3s>());
+        Actor* fake = EnemySync::FakeAttacker(atkId, payload["hitPos"].get<Vec3s>());
+        // A real weapon actor's parent is the Link who fired it; point the fake at
+        // the requester's puppet the same way, so enemies that react to the
+        // wielder's position (Morpha's core reeled in by a remote hookshot) can.
+        if (attacker != &GET_PLAYER(gPlayState)->actor) {
+            fake->parent = attacker;
+        }
+        attacker = fake;
     }
 
     uint8_t damage = payload["damage"].get<uint8_t>();

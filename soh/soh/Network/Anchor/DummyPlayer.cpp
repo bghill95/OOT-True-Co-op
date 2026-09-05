@@ -372,3 +372,50 @@ extern "C" s32 Anchor_PuppetBgsBroken(Player* p) {
     }
     return it->second.bgsBroken ? 1 : 0;
 }
+
+// Client id behind a Player struct: our own id for the local Link, the puppet's
+// client for a puppet, 0 offline / unknown. Lets boss code stream "who I grabbed".
+extern "C" uint32_t Anchor_PlayerClientId(Player* p) {
+    if (Anchor::Instance == nullptr || gPlayState == NULL || p == NULL) {
+        return 0;
+    }
+    if (p == GET_PLAYER(gPlayState)) {
+        return Anchor::Instance->ownClientId;
+    }
+    auto it = Anchor::Instance->clients.find((uint32_t)p->zTargetActiveTimer);
+    if (it == Anchor::Instance->clients.end() || it->second.player != p) {
+        return 0;
+    }
+    return it->first;
+}
+
+extern "C" int32_t Anchor_IsOwnClientId(uint32_t clientId) {
+    return Anchor::Instance != nullptr && clientId != 0 && clientId == Anchor::Instance->ownClientId;
+}
+
+// Nearest live player (the local Link or a same-scene puppet) to `from`, by 3D
+// distance. For boss code that reads player->actor.world.pos directly instead
+// of the engine's xzDistToPlayer / yawTowardsPlayer (which EnemySync's
+// OverridePlayerPerception already re-points at the nearest player) — with the
+// bare GET_PLAYER, Phantom Ganon only ever threw at the authority's own Link.
+// Offline, or with no puppet in range, this is exactly GET_PLAYER.
+extern "C" Player* Anchor_NearestPlayer(Actor* from) {
+    Player* best = GET_PLAYER(gPlayState);
+    if (Anchor::Instance == nullptr || gPlayState == NULL || from == NULL || best == NULL) {
+        return best;
+    }
+    f32 bestSq = Math3D_Vec3fDistSq(&from->world.pos, &best->actor.world.pos);
+    for (auto& [cid, client] : Anchor::Instance->clients) {
+        if (client.self || !client.online || !client.isSaveLoaded || client.player == NULL ||
+            client.player->actor.update == NULL || client.sceneNum != gPlayState->sceneNum ||
+            (client.stateFlags1 & PLAYER_STATE1_DEAD)) {
+            continue;
+        }
+        f32 sq = Math3D_Vec3fDistSq(&from->world.pos, &client.player->actor.world.pos);
+        if (sq < bestSq) {
+            bestSq = sq;
+            best = client.player;
+        }
+    }
+    return best;
+}

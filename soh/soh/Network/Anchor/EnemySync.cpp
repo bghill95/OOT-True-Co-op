@@ -211,9 +211,25 @@ bool IsTrackedEnemy(Actor* actor) {
 // inside its Init (z_en_bigokuta.c), only becoming an ENEMY again from its own
 // update when the fight starts — nothing re-scans it then, so it stayed
 // untracked and each client fought its own copy.
+// Phantom Ganon's horse (EN_FHG) is ACTORCAT_BG: it is the painting-phase AI
+// (drives the boss's pose, picks paintings, spawns the warps / lightning / decoy
+// riders), so it must be authority-run and mirrored like the boss it carries.
 static bool IsForcedTracked(Actor* actor) {
-    return actor->id == ACTOR_EN_BIGOKUTA;
+    return actor->id == ACTOR_EN_BIGOKUTA || actor->id == ACTOR_EN_FHG;
 }
+
+// EN_FHG_FIRE params (z_en_fhg_fire.h), split by replication strategy.
+enum CoopFhgFireParam : int16_t {
+    FHGFIRE_P_LIGHTNING_STRIKE = 1, // fire-and-forget: drops, bursts, spawns its own trails/shocks
+    FHGFIRE_P_LIGHTNING_SHOCK = 35, // child of a strike (local on every client)
+    FHGFIRE_P_LIGHTNING_BURST = 36, // child of a strike / of a mirrored energy ball (local)
+    FHGFIRE_P_SPEAR_LIGHT = 38,     // fire-and-forget: follows its parent boss copy's spear tip
+    FHGFIRE_P_WARP_EMERGE = 39,     // fire-and-forget painting portal
+    FHGFIRE_P_WARP_RETREAT = 40,    // fire-and-forget painting portal
+    FHGFIRE_P_WARP_DEATH = 41,      // spawned by the locally-run death cutscene
+    FHGFIRE_P_ENERGY_BALL = 50,     // the tennis ball: authority-run, streamed (adapter)
+    FHGFIRE_P_LIGHTNING_TRAIL = 100 // child of a strike (local), 100..107
+};
 
 static bool IsTrackedCategory(Actor* actor) {
     return actor->category == ACTORCAT_ENEMY || actor->category == ACTORCAT_BOSS || IsForcedTracked(actor);
@@ -233,7 +249,24 @@ static bool IsTrackedCategory(Actor* actor) {
 // dropped it before the spawn broadcast: the mirror never saw the breath.
 // Announced as a projectile it runs its own animation on each side, reading
 // its parent's firePos/unk_1E2/unk_1A2 (parent resolved from the boss key).
+// Phantom Ganon's lightning strike, spear glow and painting portals are pure
+// timed cosmetics (the strike's shock/burst children hit whichever Link is near
+// them on each machine — the intended co-op semantics): announced once, then
+// each side runs its own copy, reading its own boss / horse copy through the
+// resolved parent link.
 static bool IsSyncedProjectile(Actor* actor) {
+    // Volvagia's ceiling rocks (params 100): announced once, then each machine
+    // drops its own copy (gravity, split on landing into local 101/102 chunks,
+    // AT cylinder against its own Link). Bones (>= 200) are spawned by the
+    // locally-run death draw on every client.
+    if (actor->id == ACTOR_EN_VB_BALL) {
+        return actor->params == 100;
+    }
+    if (actor->id == ACTOR_EN_FHG_FIRE) {
+        int16_t p = (int16_t)actor->params;
+        return p == FHGFIRE_P_LIGHTNING_STRIKE || p == FHGFIRE_P_SPEAR_LIGHT || p == FHGFIRE_P_WARP_EMERGE ||
+               p == FHGFIRE_P_WARP_RETREAT;
+    }
     return actor->id == ACTOR_EN_NUTSBALL || actor->id == ACTOR_EN_BDFIRE ||
            (actor->id == ACTOR_EN_OKUTA && actor->category == ACTORCAT_PROP);
 }
@@ -250,7 +283,42 @@ static bool IsTrackingExcluded(Actor* actor) {
     if (actor->id == ACTOR_DEMO_EFFECT) {
         return true;
     }
+    // EN_BX (Jabu-Jabu electrified tentacle): a static, unkillable hazard with
+    // no AI — its whole Update is "shock the LOCAL Link within 70 units" plus
+    // the spark burst. Mirroring it suppressed that Update on the mirror
+    // (BUG-005: Jiggly inert for the non-authority), and there is no state
+    // worth streaming. Every client runs its own copy.
+    if (actor->id == ACTOR_EN_BX) {
+        return true;
+    }
+    // EN_FHG_FIRE children of a locally-run parent: the lightning strike's
+    // trails / shocks / burst (each side runs its own strike copy), the burst a
+    // mirrored energy ball spawns on impact (replayed by the adapter), and the
+    // death warp (spawned by the locally-run death cutscene on every client).
+    // Tracking them would announce doubles.
+    if (actor->id == ACTOR_EN_FHG_FIRE) {
+        int16_t p = (int16_t)actor->params;
+        return p == FHGFIRE_P_LIGHTNING_SHOCK || p == FHGFIRE_P_LIGHTNING_BURST || p == FHGFIRE_P_WARP_DEATH ||
+               p >= FHGFIRE_P_LIGHTNING_TRAIL;
+    }
+    // Volvagia rock chunks (101/102, split off a local rock) and bones (>= 200,
+    // death draw): local on every client.
+    if (actor->id == ACTOR_EN_VB_BALL) {
+        return actor->params != 100;
+    }
     return actor->id == ACTOR_EN_GOMA && (uint16_t)actor->params >= 6;
+}
+
+// Adapter-declared "colChkInfo.health is not this actor's life" (see
+// ActorSyncAdapter::IsHealthless): streamed and announced regardless of health.
+static bool Healthless(Actor* actor) {
+    const ActorSyncAdapter* adapter = GetAdapter(actor->id);
+    return adapter != nullptr && adapter->IsHealthless != nullptr && adapter->IsHealthless(actor);
+}
+
+static bool CustomColliderPos(Actor* actor) {
+    const ActorSyncAdapter* adapter = GetAdapter(actor->id);
+    return adapter != nullptr && adapter->customColliderPos;
 }
 
 // En_Floormas's split/merge logic manipulates parent/child links across three
@@ -750,13 +818,18 @@ static void SubmitColliders(Actor* actor, TrackedState& st, RemoteEnemyState& r)
     // one 4-vertex set per quad that passed the AT/AC predicate below, in this same
     // st.colliders order, so the nth qualifying quad here pairs with the nth set.
     size_t quadCursor = 0;
+    bool customPos = CustomColliderPos(actor);
     for (Collider* col : st.colliders) {
         if (col == nullptr || col->actor != actor) {
             continue;
         }
         if (col->shape == COLSHAPE_CYLINDER) {
             // Repositioned from the streamed world.pos (ApplyPose ran first) — accurate.
-            Collider_UpdateCylinder(actor, (ColliderCylinder*)col);
+            // Adapters that centre their cylinders elsewhere (Phantom Ganon: chest
+            // limb / spear tip) set them in DeserializeExtras, which ran just before.
+            if (!customPos) {
+                Collider_UpdateCylinder(actor, (ColliderCylinder*)col);
+            }
         } else if (col->shape == COLSHAPE_QUAD) {
             // Quad AT/AC vertices are AI-set; the suppressed mirror never recomputes
             // them, so drive them from the stream. A quad that qualifies for AT/AC
@@ -818,12 +891,22 @@ static void ApplyPose(Actor* actor, TrackedState& st, RemoteEnemyState& r) {
     // trailing dozens of units behind the sprite, and thin player projectiles
     // (slingshot seeds) whiff through where the enemy visibly is.
     Vec3f d = { r.pos.x - prevPos.x, r.pos.y - prevPos.y, r.pos.z - prevPos.z };
+    bool customPos = CustomColliderPos(actor);
     auto drag = [&](Collider* col) {
         if (col == nullptr || col->actor != actor) {
             return;
         }
         if (col->shape == COLSHAPE_CYLINDER) {
-            Collider_UpdateCylinder(actor, (ColliderCylinder*)col);
+            if (customPos) {
+                // Adapter-placed cylinder: drag it by the same delta instead of
+                // snapping it to world.pos (DeserializeExtras re-places it anyway).
+                ColliderCylinder* cyl = (ColliderCylinder*)col;
+                cyl->dim.pos.x += (int16_t)d.x;
+                cyl->dim.pos.y += (int16_t)d.y;
+                cyl->dim.pos.z += (int16_t)d.z;
+            } else {
+                Collider_UpdateCylinder(actor, (ColliderCylinder*)col);
+            }
         } else if (col->shape == COLSHAPE_JNTSPH) {
             ColliderJntSph* js = (ColliderJntSph*)col;
             for (int32_t i = 0; i < js->count; i++) {
@@ -1286,8 +1369,10 @@ static void Tick() {
             // are fire-and-forget (announced once via needsSpawnBroadcast), and a
             // re-announce after the other side's copy already died would resurrect it.
             bool rebroadcast = st.dynamicKey && !st.projectile && (tickCounter % SPAWN_REBROADCAST_TICKS) == 0;
-            // Relax the health>0 gate for projectiles (they spawn with health 0).
-            if ((st.needsSpawnBroadcast || rebroadcast) && (actor->colChkInfo.health > 0 || st.projectile)) {
+            // Relax the health>0 gate for projectiles (they spawn with health 0) and
+            // for adapter-declared healthless actors (energy ball, decoy riders).
+            if ((st.needsSpawnBroadcast || rebroadcast) &&
+                (actor->colChkInfo.health > 0 || st.projectile || Healthless(actor))) {
                 st.needsSpawnBroadcast = false;
                 uint64_t parentKey = 0;
                 if (actor->parent != NULL) {
@@ -1700,6 +1785,20 @@ static void OnEnemyActorKill(Actor* actor) {
     // impact" despawn branch below, which pre-dated the projectile carve-out and
     // wrongly assumed the rock was a tracked, despawn-replicated dynamic spawn.)
     if (state.projectile) {
+        return;
+    }
+
+    // Healthless adapter actors (their health is 0 by construction): an
+    // Actor_Kill is never a death to replay through a lethal synthetic hit — it
+    // is a removal, mirrored as a despawn when the adapter asks for it, whatever
+    // the key kind (a decoy rider's horse carries an occurrence key).
+    if (Healthless(actor)) {
+        const ActorSyncAdapter* adapter = GetAdapter(actor->id);
+        if (state.deathCooldown == 0 && MirroringEnabled() && IsLocalAuthority() && adapter->ReplicateKill != nullptr &&
+            adapter->ReplicateKill(actor)) {
+            state.deathCooldown = DEATH_COOLDOWN_FRAMES;
+            Anchor::Instance->SendPacket_EnemyDespawn(state.key);
+        }
         return;
     }
 

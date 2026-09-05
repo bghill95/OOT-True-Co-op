@@ -116,6 +116,7 @@ typedef struct BossGanondrof {
     /* 0x04D0 */ LightInfo lightInfo;
     /* 0x04E0 */ ColliderCylinder colliderBody;
     /* 0x052C */ ColliderCylinder colliderSpear;
+    s16 coopMirrorVar; // co-op mirror: last streamed variance timer applied (ambient FX gate)
 } BossGanondrof; // size = 0x0578
 
 #endif

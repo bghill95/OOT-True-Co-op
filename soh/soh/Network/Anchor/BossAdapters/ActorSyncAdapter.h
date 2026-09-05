@@ -28,6 +28,18 @@ struct ActorSyncAdapter {
     // Mirror: gate suppression; false = run the actor locally this frame
     // (e.g. intro cutscenes must run on every client).
     bool (*ShouldMirror)(Actor* actor, uint8_t streamedPhase) = nullptr;
+    // Mirror: this actor places its own cylinder colliders somewhere other than
+    // world.pos (Phantom Ganon: chest limb / spear tip). ApplyPose and
+    // SubmitColliders then leave cylinder centres alone; DeserializeExtras sets them.
+    bool customColliderPos = false;
+    // colChkInfo.health is not this actor's life (FX actors, mounts, decoys):
+    // stream it and announce its spawn regardless of health, and never turn one
+    // of its Actor_Kills into an ENEMY_DIED. Optional, per instance.
+    bool (*IsHealthless)(Actor* actor) = nullptr;
+    // For healthless actors: mirror an authority-side Actor_Kill as ENEMY_DESPAWN
+    // (dynamic AND occurrence keys). Leave false for copies every client kills
+    // itself (a boss's mount at the end of a locally-run death cutscene).
+    bool (*ReplicateKill)(Actor* actor) = nullptr;
 };
 
 namespace EnemySync {

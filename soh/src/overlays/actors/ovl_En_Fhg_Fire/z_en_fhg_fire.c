@@ -77,6 +77,9 @@ static ColliderCylinderInit sCylinderInit = {
     { 20, 30, 10, { 0, 0, 0 } },
 };
 
+// Co-op (Anchor/DummyPlayer.cpp): nearest live player, local Link or puppet.
+Player* Anchor_NearestPlayer(Actor* from);
+
 void EnFhgFire_SetUpdate(EnFhgFire* this, EnFhgFireUpdateFunc updateFunc) {
     this->updateFunc = updateFunc;
 }
@@ -84,7 +87,7 @@ void EnFhgFire_SetUpdate(EnFhgFire* this, EnFhgFireUpdateFunc updateFunc) {
 void EnFhgFire_Init(Actor* thisx, PlayState* play) {
     s32 pad;
     EnFhgFire* this = (EnFhgFire*)thisx;
-    Player* player = GET_PLAYER(play);
+    Player* player = Anchor_NearestPlayer(thisx); // co-op: the energy ball aims at the nearest player
 
     ActorShape_Init(&this->actor.shape, 0.0f, NULL, 0.0f);
     if ((this->actor.params == FHGFIRE_LIGHTNING_SHOCK) || (this->actor.params == FHGFIRE_LIGHTNING_BURST) ||
@@ -378,6 +381,12 @@ void EnFhgFire_SpearLight(EnFhgFire* this, PlayState* play) {
 
     osSyncPrintf("yari hikari 1\n");
     bossGnd = (BossGanondrof*)this->actor.parent;
+    // Co-op: a replicated spear light whose parent could not be resolved (or
+    // whose boss copy is already gone) has nothing to follow.
+    if (bossGnd == NULL || bossGnd->actor.update == NULL) {
+        Actor_Kill(&this->actor);
+        return;
+    }
     if ((this->work[FHGFIRE_VARIANCE_TIMER] % 2) != 0) {
         Actor_SetScale(&this->actor, 6.0f);
     } else {
@@ -421,7 +430,10 @@ void EnFhgFire_EnergyBall(EnFhgFire* this, PlayState* play) {
     f32 dzPG;
     u8 killMode = BALL_FIZZLE;
     u8 canBottleReflect1;
-    Player* player = GET_PLAYER(play);
+    // Co-op: the ball homes on / bursts at / is reflected toward the nearest
+    // player (local Link or puppet); a puppet's stateFlags1 and shape.rot are
+    // streamed, so the bottle-reflect check works for the remote player too.
+    Player* player = Anchor_NearestPlayer(&this->actor);
 
     if (this->work[FHGFIRE_KILL_TIMER] != 0) {
         this->work[FHGFIRE_KILL_TIMER]--;
@@ -432,6 +444,13 @@ void EnFhgFire_EnergyBall(EnFhgFire* this, PlayState* play) {
     } else {
         s32 canBottleReflect2;
         BossGanondrof* bossGnd = (BossGanondrof*)this->actor.parent;
+
+        // Co-op: a mirror copy released from the stream (authority gone) may have
+        // no resolvable boss to fly back to.
+        if (bossGnd == NULL || bossGnd->actor.update == NULL) {
+            Actor_Kill(&this->actor);
+            return;
+        }
 
         dxPG = bossGnd->targetPos.x - this->actor.world.pos.x;
         dyPG = bossGnd->targetPos.y - this->actor.world.pos.y;
@@ -617,6 +636,7 @@ void EnFhgFire_EnergyBall(EnFhgFire* this, PlayState* play) {
                 bossGnd->flyMode = GND_FLY_NEUTRAL;
                 this->work[FHGFIRE_KILL_TIMER] = 30;
                 this->actor.draw = NULL;
+                this->coopKillMode = killMode + 1; // streamed: the mirror replays the impact FX and hides its copy
                 if (killMode == BALL_FIZZLE) {
                     Audio_PlayActorSound2(&this->actor, NA_SE_EN_FANTOM_THUNDER_GND);
                 }
@@ -673,10 +693,70 @@ void EnFhgFire_PhantomWarp(EnFhgFire* this, PlayState* play) {
     }
 
     osSyncPrintf("EFC 1\n");
-    if ((this->work[FHGFIRE_TIMER] == 0) || ((this->actor.params == FHGFIRE_WARP_EMERGE) && horse->fhgFireKillWarp)) {
+    // Co-op: a replicated warp may have no resolvable horse parent; it then just runs its timer out.
+    if ((this->work[FHGFIRE_TIMER] == 0) || ((this->actor.params == FHGFIRE_WARP_EMERGE) && (horse != NULL) &&
+                                              (horse->actor.update != NULL) && horse->fhgFireKillWarp)) {
         Actor_Kill(&this->actor);
     }
     osSyncPrintf("EFC 2\n");
+}
+
+// Co-op mirror side of the energy ball. Its update is suppressed (the authority
+// streams pos / rot / scale / fire mode), so the update-side cosmetics — the
+// trailing light balls, the point light, the flight hum, and the impact burst —
+// are replayed here from the streamed fields. Called by the PhantomGanon
+// adapter once per streamed frame (variance-timer edge), so a re-applied cached
+// frame never doubles them.
+void EnFhgFire_CoopMirrorFx(EnFhgFire* this, PlayState* play) {
+    Vec3f vel = { 0.0f, 0.0f, 0.0f };
+    Vec3f accel = { 0.0f, 0.0f, 0.0f };
+    Vec3f pos;
+    s16 i;
+
+    if (this->coopKillMode == 0) {
+        u8 color = (this->work[FHGFIRE_FIRE_MODE] >= FHGFIRE_LIGHT_BLUE) ? FHGFLASH_LIGHTBALL_LIGHTBLUE
+                                                                          : FHGFLASH_LIGHTBALL_GREEN;
+
+        for (i = 0; i < 3; i++) {
+            pos.x = Rand_CenteredFloat(20.0f) + this->actor.world.pos.x;
+            pos.y = Rand_CenteredFloat(20.0f) + this->actor.world.pos.y;
+            pos.z = Rand_CenteredFloat(20.0f) + this->actor.world.pos.z;
+            accel.y = -0.08f;
+            EffectSsFhgFlash_SpawnLightBall(play, &pos, &vel, &accel, (s16)(Rand_ZeroOne() * 80.0f) + 150, color);
+        }
+        Lights_PointNoGlowSetInfo(&this->lightInfo, (s16)this->actor.world.pos.x, (s16)this->actor.world.pos.y,
+                                  (s16)this->actor.world.pos.z, 255, 255, 255, 200);
+        Audio_PlayActorSound2(&this->actor, NA_SE_EN_FANTOM_FIRE - SFX_FLAG);
+    } else if (this->coopMirrorKillMode != this->coopKillMode) {
+        // Impact edge (once): the 30-ball splash, the sound, and — when the ball
+        // reached a player — the lightning burst that actually deals the damage,
+        // spawned locally so it can hit THIS machine's Link.
+        u8 killMode = this->coopKillMode - 1;
+        u8 color = (this->work[FHGFIRE_FIRE_MODE] > FHGFIRE_LIGHT_GREEN) ? FHGFLASH_LIGHTBALL_LIGHTBLUE
+                                                                         : FHGFLASH_LIGHTBALL_GREEN;
+
+        for (i = 0; i < 30; i++) {
+            vel.x = Rand_CenteredFloat(20.0f);
+            vel.y = Rand_CenteredFloat(20.0f);
+            vel.z = Rand_CenteredFloat(20.0f);
+            accel.y = -0.1f;
+            EffectSsFhgFlash_SpawnLightBall(play, &this->actor.world.pos, &vel, &accel,
+                                            (s16)(Rand_ZeroOne() * 50.0f) + 100, color);
+        }
+        if (killMode == BALL_BURST) {
+            Player* player = GET_PLAYER(play);
+
+            Actor_SpawnAsChild(&play->actorCtx, &this->actor, play, ACTOR_EN_FHG_FIRE, this->actor.world.pos.x,
+                               player->actor.world.pos.y + 20.0f, this->actor.world.pos.z, 0xC8, 0, 0,
+                               FHGFIRE_LIGHTNING_BURST);
+            Audio_PlayActorSound2(&this->actor, NA_SE_EN_FANTOM_HIT_THUNDER);
+        } else if (killMode == BALL_FIZZLE) {
+            Audio_PlayActorSound2(&this->actor, NA_SE_EN_FANTOM_THUNDER_GND);
+        } else {
+            Audio_PlayActorSound2(&this->actor, NA_SE_EN_FANTOM_HIT_THUNDER);
+        }
+    }
+    this->coopMirrorKillMode = this->coopKillMode;
 }
 
 void EnFhgFire_Update(Actor* thisx, PlayState* play) {
