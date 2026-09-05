@@ -17,6 +17,11 @@
 #include "overlays/actors/ovl_En_Fish/z_en_fish.h"
 #include "overlays/actors/ovl_En_Horse/z_en_horse.h"
 #include "overlays/effects/ovl_Effect_Ss_Fhg_Flash/z_eff_ss_fhg_flash.h"
+
+// Co-op (Anchor/FxSync.cpp): tell peers a hinged door was just pushed open.
+// Declared up here because the call site sits ~3700 lines above the file's
+// function definitions, and an implicit declaration there clashes with it.
+void FxSync_OnDoorOpen(Actor* doorActor, u8 animStyle);
 #include "overlays/misc/ovl_kaleido_scope/z_kaleido_scope.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "objects/object_link_child/object_link_child.h"
@@ -5435,6 +5440,14 @@ s32 Player_ActionHandler_1(Player* this, PlayState* play) {
                 }
 
                 door->playerIsOpening = 1;
+
+                // Co-op: the peer's copy of this door has no idea we pushed it --
+                // playerIsOpening is only ever set right here, by the local Link. Tell it,
+                // with the swing side we just chose. Hinged doors only: doorActor may also
+                // be a DoorKiller, whose "opening" is an attack on whoever opened it.
+                if (doorActor->id == ACTOR_EN_DOOR) {
+                    FxSync_OnDoorOpen(doorActor, door->animStyle);
+                }
 
                 if (this->doorType != PLAYER_DOORTYPE_FAKE) {
                     this->stateFlags1 |= PLAYER_STATE1_IN_CUTSCENE;

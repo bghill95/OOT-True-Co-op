@@ -23,6 +23,8 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_G_Switch/z_en_g_switch.h"
 #include "src/overlays/effects/ovl_Effect_Ss_HitMark/z_eff_ss_hitmark.h"
 #include "src/overlays/actors/ovl_En_Horse/z_en_horse.h"
+#include "src/overlays/actors/ovl_Door_Ana/z_door_ana.h"
+#include "src/overlays/actors/ovl_En_Door/z_en_door.h"
 extern PlayState* gPlayState;
 // z_en_g_switch.c: silver-rupee tally accessor + action funcs.
 s16* EnGSwitch_CoopCollectedCount(void);
@@ -37,6 +39,9 @@ void BgPoEvent_PaintingVanish(BgPoEvent* self, PlayState* play);
 void BgPoEvent_PaintingBurn(BgPoEvent* self, PlayState* play);
 // z_player.c internal, already called cross-file by En_Partner.
 void Player_RequestQuake(PlayState* play, s32 speed, s32 y, s32 countdown);
+// z_door_ana.c: the open-grotto update routine (non-static, like BgPoEvent above).
+void DoorAna_WaitOpen(DoorAna* self, PlayState* play);
+void DoorAna_WaitClosed(DoorAna* self, PlayState* play);
 }
 
 namespace FxSync {
@@ -53,6 +58,9 @@ enum FxEventKind : uint8_t {
     FX_EV_BOTTLEDROP = 8, // we emptied a bottle: fish / blue fire / bug / fairy released (aid, pos, rot)
     FX_EV_AMYTIMER = 9,   // Amy puzzle driver: the countdown block landed, HUD timer starts (sec)
     FX_EV_BOTTLEGONE = 10, // a bottle drop we announced is gone (re-caught, swam off…): kill the copy (seq)
+    FX_EV_GROTTO = 11,     // a hidden grotto (Door_Ana) was opened here (key = position)
+    FX_EV_STORM = 12,      // Song of Storms: spawn the storm manager at pos on every client
+    FX_EV_DOOR = 13,       // a hinged door was pushed open here (key = position, ast = swing side)
 };
 
 // --- Spells -----------------------------------------------------------------
@@ -814,6 +822,60 @@ static uint64_t PosKey(const Actor* actor) {
            (uint16_t)actor->id;
 }
 
+// Hidden grottos (Door_Ana). Vanilla opens one when its AC cylinder is hit by a
+// bomb (or on the Song of Storms), and the opened state lives ONLY in the actor
+// params bits 0x300 -- no switch flag, nothing saved. A peer therefore cannot
+// learn about it two ways at once: BombSync neuters every replica collider (no
+// double damage, no chain detonation), so the peer's bomb never hits anything,
+// and there is no flag for the flag sync to carry. Its copy stayed shut for good.
+// Announce it by position; scene-placed, so the key matches on every client.
+// Song of Storms. The whole effect hangs off EN_OKARINA_EFFECT, which Oceff_Storm
+// spawns for the player who played the song -- so it exists on that client only.
+// It owns env flag 5 for its 20-second life, and four actors read that flag:
+// the windmill (Bg_Relay_Objects), the Colossus oasis (Bg_Spot11_Oasis), the
+// storm-openable grottos (Door_Ana) and the bean sprout watering (Obj_Bean).
+// None of them fired on the peer. Replicate the manager itself rather than any
+// one consequence, and all four follow, along with the rain, sky and lightning.
+// Hinged doors. EnDoor_Idle only swings when playerIsOpening is set, and the only
+// thing that sets it is the LOCAL Link's own door code (z_player.c). So a peer saw
+// the puppet walk through a door that never moved. EnDoor_Open touches nothing but
+// the door -- animation, sfx, bubbles -- so replaying it on the peer is free.
+// animStyle travels because it encodes which side the opener pushed from and their
+// age; picking it locally would swing the wrong leaf.
+extern "C" void FxSync_OnDoorOpen(Actor* doorActor, uint8_t animStyle) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || doorActor == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_DOOR;
+    payload["key"] = PosKey(doorActor);
+    payload["ast"] = animStyle;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] door open tx key={:#x} style={}", PosKey(doorActor), animStyle);
+}
+
+extern "C" void FxSync_OnStormSong(Actor* okarinaEffect) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || okarinaEffect == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_STORM;
+    payload["pos"] = okarinaEffect->world.pos;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] storm song tx");
+}
+
+extern "C" void FxSync_OnGrottoOpen(Actor* actor) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || actor == NULL || gPlayState == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_GROTTO;
+    payload["key"] = PosKey(actor);
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] grotto open tx key={:#x}", PosKey(actor));
+}
+
 static void OnSpellInit(Actor* actor) {
     if (!SyncEnabled() || sSpawningReplica) {
         return;
@@ -1066,6 +1128,65 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                 sSilverAnnounced.insert(a);           // a remote pickup is never re-announced
                 Actor_Kill(a);
                 ESYNC_LOG("[FxSync] silver rupee rx -> tally {}", *EnGSwitch_CoopCollectedCount());
+                break;
+            }
+            return;
+        }
+
+        if (kind == FX_EV_DOOR) {
+            uint64_t key = payload.at("key").get<uint64_t>();
+            uint8_t style = payload.value("ast", (uint8_t)0);
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_DOOR].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_EN_DOOR || a->update == NULL || PosKey(a) != key) {
+                    continue;
+                }
+                EnDoor* door = (EnDoor*)a;
+                if (door->playerIsOpening == 0) {
+                    // Straight into the vanilla trigger: its own EnDoor_Idle picks this
+                    // up next frame and runs the real open sequence. Never routed through
+                    // the Player door code, so this cannot echo back.
+                    door->animStyle = style;
+                    door->playerIsOpening = 1;
+                }
+                ESYNC_LOG("[FxSync] door open rx key={:#x}", key);
+                break;
+            }
+            return;
+        }
+
+        if (kind == FX_EV_STORM) {
+            Vec3f pos = payload.at("pos").get<Vec3f>();
+            // Spawned straight, not through Oceff_Storm: the peer gets the storm and
+            // its env flag without the caster-only swirl or the magic cost. Its own
+            // Init kills it if a storm is already running here, so no doubling.
+            Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_OKARINA_EFFECT, pos.x, pos.y, pos.z, 0, 0, 0, 1,
+                        true);
+            ESYNC_LOG("[FxSync] storm song rx");
+            return;
+        }
+
+        if (kind == FX_EV_GROTTO) {
+            uint64_t key = payload.at("key").get<uint64_t>();
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_ITEMACTION].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_DOOR_ANA || a->update == NULL || PosKey(a) != key) {
+                    continue;
+                }
+                DoorAna* grotto = (DoorAna*)a;
+                if (grotto->actionFunc != DoorAna_WaitClosed) {
+                    break; // already open here (both players bombed it)
+                }
+                // Same order as DoorAna_WaitClosed: free the cylinder BEFORE clearing
+                // the params, or Destroy frees it a second time (it gates on 0x200).
+                if (a->params & 0x200) {
+                    Collider_DestroyCylinder(gPlayState, &grotto->collider);
+                } else {
+                    a->flags &= ~ACTOR_FLAG_UPDATE_CULLING_DISABLED; // storm-opened path
+                }
+                a->params &= ~0x0300;
+                grotto->actionFunc = DoorAna_WaitOpen;
+                Audio_PlaySoundGeneral(NA_SE_SY_CORRECT_CHIME, &gSfxDefaultPos, 4, &gSfxDefaultFreqAndVolScale,
+                                       &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
+                ESYNC_LOG("[FxSync] grotto open rx key={:#x}", key);
                 break;
             }
             return;
