@@ -154,7 +154,11 @@ static bool IsClaimableDynaActor(const Actor* actor) {
 //                     the scripted run to whoever stands on it.
 //   BG_MENKURI_KAITEN the trigger's output is a switch flag, which already
 //                     replicates; the rotation itself is not rider-driven.
-//   EN_BROB, EN_SIOFUKI  not in DynaSync's tables at all today.
+//   EN_SIOFUKI, EN_BROB  both sit in IsSyncedDynaActor above and do read the
+//                     trigger, but their motion is driven by a flag, a timer and
+//                     an oscillation -- standing on them is an extra input, not
+//                     what makes them move -- so `ride` would hand the wrong
+//                     thing to the rider.
 static bool IsRideClaimable(const Actor* actor) {
     switch (actor->id) {
         case ACTOR_OBJ_BEAN: // magic bean leaf platform (adult); the child soil never moves
