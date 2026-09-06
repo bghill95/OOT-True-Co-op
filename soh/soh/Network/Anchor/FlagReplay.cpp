@@ -20,6 +20,7 @@ extern "C" {
 #include "src/overlays/actors/ovl_Bg_Bdan_Switch/z_bg_bdan_switch.h"
 #include "src/overlays/actors/ovl_En_Jj/z_en_jj.h"
 #include "src/overlays/actors/ovl_Demo_Kankyo/z_demo_kankyo.h"
+#include "src/overlays/actors/ovl_Bg_Spot06_Objects/z_bg_spot06_objects.h"
 // Door-of-Time actions: defined non-static in z_demo_kankyo.c, not in its header.
 void DemoKankyo_SetupAction(DemoKankyo* thisx, DemoKankyoActionFunc actionFunc);
 void DemoKankyo_SetupType(DemoKankyo* thisx, PlayState* play);
@@ -44,6 +45,11 @@ void BgPoEvent_BlockFall(BgPoEvent* self, PlayState* play);
 void BgPoEvent_BlockReset(BgPoEvent* self, PlayState* play);
 void BgPoEvent_BlockSolved(BgPoEvent* self, PlayState* play);
 void BgPoEvent_CheckBlock(BgPoEvent* self);
+
+void BgSpot06Objects_DoNothing(BgSpot06Objects* self, PlayState* play);
+void BgSpot06Objects_WaterPlaneCutsceneRise(BgSpot06Objects* self, PlayState* play);
+// LakeHyliaObjectsType lives in the overlay's .c, not its header.
+#define LHO_WATER_PLANE_PARAMS 2
 // Jabu-Jabu buttons (z_bg_bdan_switch.c): setup functions arm the next state.
 void func_8086D4B4(BgBdanSwitch* self, PlayState* play); // set the switch flag (+ chime)
 void func_8086D5E0(BgBdanSwitch* self, PlayState* play); // BLUE / YELLOW: up, waiting
@@ -374,6 +380,30 @@ void RegisterHooks(bool isConnected) {
         if (jj->dyna.actor.params == JABUJABU_MAIN && jj->actionFunc == EnJj_WaitForFish &&
             Flags_GetEventChkInf(EVENTCHKINF_OFFERED_FISH_TO_JABU_JABU)) {
             EnJj_SetupAction(jj, EnJj_WaitToOpenMouth); // no cutscene on this side
+        }
+    });
+
+    // Lake Hylia: the water plane consults EVENTCHKINF_RAISED_LAKE_HYLIA_WATER exactly
+    // once, in its Init (z_bg_spot06_objects.c:159), then parks in DoNothing. The flag
+    // itself replicates fine -- it takes the FLAG_EVENT_CHECK_INF path, which nothing
+    // filters -- but a player standing at the lake while the other clears the Water
+    // Temple keeps the LOWERED waterBoxes for the rest of the visit. The two then
+    // stand in different lakes: one swims where the other walks, and the temple
+    // entrance is not in the same place. The lake bed texture, meanwhile, DOES follow
+    // the flag every frame (z_scene_table.c), so the mismatch is plainly visible.
+    // Rerun the vanilla rise -- the same function the post-temple cutscene uses, so
+    // the water climbs at the same pace and lands on the same waterBoxes.
+    //
+    // lakeHyliaWaterLevel distinguishes the two Init branches on its own: -681 for
+    // lowered, 0 for already risen. Only the lowered one has anywhere to go.
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_BG_SPOT06_OBJECTS, isConnected, [](void* refActor, bool* should) {
+        BgSpot06Objects* obj = static_cast<BgSpot06Objects*>(refActor);
+
+        if (obj->dyna.actor.params != LHO_WATER_PLANE_PARAMS || obj->actionFunc != BgSpot06Objects_DoNothing) {
+            return;
+        }
+        if (obj->lakeHyliaWaterLevel < -0.0001f && Flags_GetEventChkInf(EVENTCHKINF_RAISED_LAKE_HYLIA_WATER)) {
+            obj->actionFunc = BgSpot06Objects_WaterPlaneCutsceneRise;
         }
     });
 

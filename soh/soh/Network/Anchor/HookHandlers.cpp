@@ -242,7 +242,13 @@ void Anchor::RegisterHooks() {
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_BG_ICE_SHELTER, isConnected, [&](void* refActor, bool* should) {
         BgIceShelter* actor = static_cast<BgIceShelter*>(refActor);
 
-        if (actor->actionFunc == func_8089107C && Flags_GetSwitch(gPlayState, actor->dyna.actor.params & 0x3F)) {
+        // Bit 6 says "this red ice sets no flag": for those instances params & 0x3F is
+        // not a flag index at all but an unrelated field, and reading it melted the ice
+        // as soon as some other actor happened to set that flag. Both vanilla sites
+        // carry the guard (z_bg_ice_shelter.c:202 in Init, :425 when the melt ends);
+        // the replay copied only half of it.
+        if (actor->actionFunc == func_8089107C && !((actor->dyna.actor.params >> 6) & 1) &&
+            Flags_GetSwitch(gPlayState, actor->dyna.actor.params & 0x3F)) {
             func_808911BC(actor);
             Audio_PlayActorSound2(&actor->dyna.actor, NA_SE_EV_ICE_MELT);
         }

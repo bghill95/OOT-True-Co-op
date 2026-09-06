@@ -394,6 +394,23 @@ static bool IsTrackingExcluded(Actor* actor) {
     if (actor->id == ACTOR_EN_BX) {
         return true;
     }
+    // EN_TORCH2 (Dark Link). En_Blkobj, the illusion room, is ACTORCAT_PROP and so is
+    // never tracked: its update runs on BOTH clients and its trigger is the LOCAL
+    // Link's distance (z_en_blkobj.c:85), so every client spawns its own Dark Link
+    // already. Tracking ours on top of that gave the mirror TWO -- the streamed one
+    // and the one it built itself, which carries a key nobody knows -- fighting over
+    // the overlay's file statics (sActionState, sInput, sAlpha...). Worse, the room
+    // exit is gated on Actor_Find(EN_TORCH2) == NULL (:108), so the surplus copy left
+    // the illusion wall up forever on that client.
+    // Letting each client keep its own copy also settles what mirroring could never
+    // fix: Dark Link's entire fight READS AND WRITES GET_PLAYER -- meleeWeaponState,
+    // invincibilityTimer, the PLAYER_STATE3_PAUSE_ACTION_FUNC of the sword jump. The
+    // mirror's parry, backflip and counter were inert, and a jump aimed at the mirror
+    // froze the authority's Link. Running locally, each Dark Link reads the player it
+    // is actually fighting, and sAlpha fades in and out for both.
+    if (actor->id == ACTOR_EN_TORCH2) {
+        return true;
+    }
     // EN_FHG_FIRE children of a locally-run parent: the lightning strike's
     // trails / shocks / burst (each side runs its own strike copy), the burst a
     // mirrored energy ball spawns on impact (replayed by the adapter), and the
@@ -2020,6 +2037,12 @@ void HandleRemoteSpawn(uint64_t key, int16_t actorId, uint16_t params, Vec3f pos
     // decides, and a peer on an older binary would still crash us -- the replica
     // has no targetActor and EnBb_FlameTrail dereferences it unguarded.
     if (actorId == ACTOR_EN_BB && ((int16_t)params == ENBB_P_FLAME_TRAIL || (int16_t)params == ENBB_P_KILL_TRAIL)) {
+        return;
+    }
+    // Dark Link: excluded from tracking above, because En_Blkobj spawns one on every
+    // client by itself. Refused here for the same reason as the En_Bb trails -- a peer
+    // on an older binary still announces it, and the copy would double ours.
+    if (actorId == ACTOR_EN_TORCH2) {
         return;
     }
 

@@ -158,12 +158,10 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
         gSaveContext.ship.quest = loadedData.ship.quest;
 
         for (int i = 0; i < ARRAY_COUNT(gSaveContext.sceneFlags); i++) {
-            if (i == SCENE_WATER_TEMPLE) {
-                // Keep water temple water level flags
-                u32 mask = (1 << 0x1C) | (1 << 0x1D) | (1 << 0x1E);
-                loadedData.sceneFlags[i].swch =
-                    (loadedData.sceneFlags[i].swch & ~mask) | (gSaveContext.sceneFlags[i].swch & mask);
-            }
+            // The water temple water level used to be preserved from the local save
+            // here. It is replicated now (see SetFlag.cpp), so the team state must be
+            // allowed to carry it like any other switch flag -- otherwise a resync
+            // silently pushes each client back to its own level.
 
             if (i == SCENE_FOREST_TEMPLE) {
                 // Keep forest temple elevator flag

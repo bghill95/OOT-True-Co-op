@@ -53,11 +53,16 @@ void Anchor::HandlePacket_SetFlag(nlohmann::json payload) {
             Inventory_ReplaceItem(gPlayState, ITEM_LETTER_RUTO, ITEM_BOTTLE);
         }
     } else {
-        // Special case: Ignore water temple water level flags, stored at 0x1C, 0x1D, 0x1E.
-        if (sceneNum == SCENE_WATER_TEMPLE && flagType == FLAG_SCENE_SWITCH &&
-            (flag == 0x1C || flag == 0x1D || flag == 0x1E)) {
-            return;
-        }
+        // The water temple water level (0x1C, 0x1D, 0x1E) used to be excluded here.
+        // That is right for upstream Anchor, where each player has their OWN world and
+        // must keep their own level; it is backwards for a shared world. Excluded, the
+        // two players stand in different geometry: one swims where the other walks, and
+        // the entrance is not in the same place. Bg_Mizu_Water is entirely flag-driven
+        // and re-reads all three every frame in WaitForAction (z_bg_mizu_water.c:171),
+        // so replicating them is enough -- both levels converge on their own, each
+        // client running its own Math_StepToF. Bg_Mizu_Water_Init unsets all three and
+        // sets the current one, which is a no-op for the peer: all-clear yields action
+        // index 0, and re-setting the level it already holds is skipped as well.
 
         // Special case: Ignore forest temple elevator flag, stored at 0x1B.
         if (sceneNum == SCENE_FOREST_TEMPLE && flagType == FLAG_SCENE_SWITCH && flag == 0x1B) {

@@ -749,6 +749,32 @@ extern "C" s32 FxSync_IsBottleDropReplica(Actor* actor) {
     return sBottleDrops.contains(actor) ? 1 : 0;
 }
 
+// Should this elemental arrow head paint its impact flash over the WHOLE screen?
+//
+// Arrow_Fire / Arrow_Ice / Arrow_Light each end their draw with a gDPFillRectangle
+// across the framebuffer once unk_164 goes positive. On the shooter that is right --
+// it is their hit. But we spawn the elemental child of the PEER's arrow ourselves
+// (see the replica block above) and copy hitFlags into the parent every frame, while
+// no ShouldActorUpdate is registered for the three heads: the child runs whole on the
+// observer, sees the hit and floods their screen, at any distance across the map.
+//
+// Same class as the Deku nut flash, which is already bounded to 600 units on the
+// FX_EV_AMMOHIT path, and as the hammer shockwave before it.
+//
+// Offline, and for our OWN arrow online, this returns 1 and nothing changes: solo
+// behaviour is untouched, and you always get the flash of the shot you fired, however
+// far away it lands. Only a peer's arrow is bounded.
+extern "C" s32 Anchor_ShouldPlayArrowFlash(Actor* elementalHead, f32 range) {
+    if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected || gPlayState == NULL ||
+        elementalHead == NULL) {
+        return 1;
+    }
+    if (elementalHead->parent == NULL || !IsOwnProjReplica(elementalHead->parent)) {
+        return 1;
+    }
+    return Math_Vec3f_DistXYZ(&GET_PLAYER(gPlayState)->actor.world.pos, &elementalHead->world.pos) < range ? 1 : 0;
+}
+
 extern "C" void FxSync_OnBottleDrop(int16_t aid, int16_t params, Vec3f* pos, Vec3s* rot, Actor* dropped) {
     if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || pos == NULL || sSpawningBottleDrop) {
         return;

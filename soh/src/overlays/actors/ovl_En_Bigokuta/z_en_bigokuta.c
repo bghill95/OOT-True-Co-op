@@ -769,6 +769,30 @@ void func_809BE798(EnBigokuta* this, PlayState* play) {
     }
 }
 
+// Co-op: is the thing that just hit us behind us?
+//
+// Vanilla asks Actor_IsFacingPlayer, which reads yawTowardsPlayer. EN_BIGOKUTA is one
+// of the four ids in the perception-override exception list, so that field points at
+// the NEAREST player -- not at whoever landed the hit. With two players, a boomerang
+// correctly thrown at the back was rejected whenever the partner happened to stand in
+// front, and the miniboss became invulnerable for as long as they stayed there.
+//
+// ac holds the actor that hit us (z_collision_check.c:1757), which for a boomerang is
+// the boomerang itself: geometrically the right reference, and it is the same actor
+// solo, so single-player behaviour is unchanged. Falls back to the vanilla test if the
+// hit carries no source.
+static s32 EnBigokuta_IsFacingAttacker(EnBigokuta* this, s16 maxAngle) {
+    Actor* attacker = this->collider.base.ac;
+    s16 yawDiff;
+
+    if (attacker == NULL) {
+        return Actor_IsFacingPlayer(&this->actor, maxAngle);
+    }
+
+    yawDiff = Actor_WorldYawTowardActor(&this->actor, attacker) - this->actor.shape.rot.y;
+    return ABS(yawDiff) < maxAngle;
+}
+
 void EnBigokuta_UpdateDamage(EnBigokuta* this, PlayState* play) {
     if (this->collider.base.acFlags & AC_HIT) {
         this->collider.base.acFlags &= ~AC_HIT;
@@ -779,7 +803,7 @@ void EnBigokuta_UpdateDamage(EnBigokuta* this, PlayState* play) {
                 }
             } else if (this->actor.colChkInfo.damageEffect == 0xF) {
                 func_809BD47C(this);
-            } else if (!Actor_IsFacingPlayer(&this->actor, 0x4000)) {
+            } else if (!EnBigokuta_IsFacingAttacker(this, 0x4000)) {
                 if (Actor_ApplyDamage(&this->actor) == 0) { // Dead
                     Audio_PlayActorSound2(&this->actor, NA_SE_EN_DAIOCTA_DEAD);
                     Enemy_StartFinishingBlow(play, &this->actor);

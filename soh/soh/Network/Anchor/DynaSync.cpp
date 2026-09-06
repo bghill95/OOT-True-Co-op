@@ -14,6 +14,8 @@ extern "C" {
 #include "src/overlays/actors/ovl_Bg_Po_Event/z_bg_po_event.h"
 #include "src/overlays/actors/ovl_Bg_Jya_Cobra/z_bg_jya_cobra.h"
 #include "src/overlays/actors/ovl_Bg_Hidan_Rock/z_bg_hidan_rock.h"
+#include "src/overlays/actors/ovl_Bg_Ice_Objects/z_bg_ice_objects.h"
+#include "src/overlays/actors/ovl_Bg_Gnd_Iceblock/z_bg_gnd_iceblock.h"
 extern PlayState* gPlayState;
 }
 
@@ -39,13 +41,20 @@ static constexpr float POS_EPSILON = 0.01f;
 static constexpr uint64_t CLAIM_TICKS = 45;
 
 // Whitelist: scene-placed DynaPoly actors whose MOTION should mirror.
-// Grow this table dungeon by dungeon; never add flag-driven state here
-// (SetFlag.cpp's exclusions own water level / forest elevator / collapse).
+// Grow this table dungeon by dungeon; never add flag-driven state here -- a flag
+// that replicates already puts both clients on the same motion, and streaming the
+// position on top of it only fights the local state machine. That rule was broken
+// once, by BG_MIZU_MOVEBG: the Water Temple platforms take their height straight
+// from the LOCAL waterBoxes, so pinning the mirror to the authority's position
+// dragged a rider up to 700 units through his own water surface. Both it and
+// BG_MIZU_UZU are out now (the latter because its whole Update is the iron-boots
+// collision toggle, and its Draw is empty -- there was never anything to mirror).
+// What remains excluded from flag replication: the forest elevator and the tower
+// collapse, in SetFlag.cpp.
 static bool IsSyncedDynaActor(const Actor* actor) {
     switch (actor->id) {
         case ACTOR_BG_YDAN_HASI:      // Deku Tree: water plank + seesaw
         case ACTOR_BG_DDAN_JD:        // Dodongo's Cavern: cycling pillars/platform
-        case ACTOR_BG_BDAN_OBJECTS:   // Jabu-Jabu: elevator platform & co
         case ACTOR_BG_HAKA_TRAP:      // Shadow Temple: guillotines / spike traps (cyclic)
         case ACTOR_BG_HAKA_TUBO:      // Shadow Temple: spinning pot
         case ACTOR_BG_HAKA_MEGANEBG:  // Shadow Temple: moving invisible platforms
@@ -59,16 +68,26 @@ static bool IsSyncedDynaActor(const Actor* actor) {
                                       // cosmetic, NO DynaPoly, so it is fed to
                                       // OnDynaRegistered by an OnActorInit hook instead
         case ACTOR_BG_SPOT18_BASKET:  // Goron City: spinning vase
-        case ACTOR_BG_MIZU_UZU:       // Water Temple: free-phase spinner (rot.y += 0x1C0/frame)
-        case ACTOR_BG_MIZU_MOVEBG:    // Water Temple: moving platforms (flag + path)
+        case ACTOR_BG_SPOT08_ICEBLOCK: // Zora's Fountain: drifting ice floes. Same free-phase
+                                       // signature as BG_MORI_HASHIRA4 below, but the twins
+                                       // TRANSLATE on a radius-100 circle (up to 200 units
+                                       // apart between clients) and Update re-rolls
+                                       // bobIncrSlow/Fast at random every frame. They are the
+                                       // route to the Ice Cavern: "jump to that one" has to
+                                       // mean the same floe for both. NOT a ride -- Roll and
+                                       // SinkUnderPlayer read the trigger, but sinking 4 units
+                                       // is the rider's CONTRIBUTION, not what moves the
+                                       // platform (same arbitration as EN_SIOFUKI / EN_BROB
+                                       // below). Accepted: the mirror only sees it dip under
+                                       // the authority's Link.
         case ACTOR_BG_HAKA_SHIP:      // Shadow Temple: boat (flag then scripted sail — flag
                                       // replay times differ, the hull must not)
         case ACTOR_EN_SIOFUKI:        // Jabu: water-spout platforms (flag + timer + oscillation)
         case ACTOR_EN_BROB:           // Jabu: wobbling blob platform (timers + proximity)
             // NOT one-shot switch-flag movers (Bg_Ddan_Kd stairs, Hamsteps, gates,
             // shutters...): Anchor's flag sync already replays those on both
-            // clients. NOT the SetFlag.cpp exclusions (water level, forest
-            // elevator, tower collapse). NOT pushblocks (phase B, needs
+            // clients. NOT flag-driven movers at all, replicated flag or not.
+            // NOT pushblocks (phase B, needs
             // per-actor claim). NOT Obj_Lift collapsing platforms (per-player
             // stand trigger). NOT boss-room platforms (adapter territory).
             return true;
@@ -83,6 +102,21 @@ static bool IsSyncedDynaActor(const Actor* actor) {
         case ACTOR_BG_HIDAN_SIMA:
             return actor->params != 0;
 
+        // The Bg_Bdan_Objects split, the study the note below asked for. One overlay,
+        // four params, three different answers:
+        //   params 0  Big Octo platform  -> RIDE. func_8086C76C moves it +965 only if
+        //             IsPlayerOnTop, i.e. the trigger is in the branch that moves it.
+        //   params 3  descending platform -> RIDE. func_8086CB10, same shape: the
+        //             trigger sets the flag AND drops home.pos.y by 200.
+        //   params 1  elevator            -> synced, here. func_8086C874 drives it with
+        //             sinf(timer) unconditionally; IsPlayerOnTop only picks the camera
+        //             setting, so it is NOT a ride (the Bg_Jya_1flift mistake).
+        //   params 2  water level         -> returns before DynaPoly_SetBgActor, so it
+        //             is tracked by nobody, and it does not need to be: its flag is
+        //             re-read every frame in func_8086C9A8 and converges on its own.
+        case ACTOR_BG_BDAN_OBJECTS:
+            return actor->params == 1;
+
         case ACTOR_BG_MORI_HASHIRA4:
             // Forest Temple, the four rotating pillars (params 0 after Init masks
             // it): BgMoriHashira4_PillarsRotate does
@@ -90,7 +124,7 @@ static bool IsSyncedDynaActor(const Actor* actor) {
             // every frame, unconditionally, from the moment the room loads. No
             // flag, no trigger, no resync point — so the phase is decided by WHEN
             // each client loaded the room and the offset never converges. Same
-            // family as BG_MIZU_UZU above.
+            // family as BG_SPOT08_ICEBLOCK above.
             // The other params are the gates: one-shot switch-flag movers the flag
             // sync already replays on both clients, so they stay out.
             return actor->params == 0;
@@ -157,9 +191,8 @@ static bool IsClaimableDynaActor(const Actor* actor) {
 //
 // Deliberately NOT moved here, though they do read the trigger -- each needs its
 // own study rather than a blanket reclassification, and a wrong `ride` is as bad
-// as a wrong `synced`:
-//   BG_BDAN_OBJECTS   one overlay for several params (water level AND platform);
-//                     only the platform half is a ride.
+// as a wrong `synced`. BG_BDAN_OBJECTS was on this list; the study got done and
+// params 0 and 3 are now rides below. What is left:
 //   BG_HAKA_SHIP      the voyage is scripted, the trigger appears only in the
 //                     final CrashFall; making the whole ship a ride would hand
 //                     the scripted run to whoever stands on it.
@@ -197,6 +230,16 @@ static bool IsRideClaimable(const Actor* actor) {
         // instance actually runs.
         case ACTOR_BG_HIDAN_SIMA:
             return actor->params == 0;
+        // Jabu-Jabu, the platform half of Bg_Bdan_Objects -- see the split in
+        // IsSyncedDynaActor. params 0 rises 965 units under its rider (func_8086C76C),
+        // params 3 drops 200 (func_8086CB10); in both the trigger IS the branch that
+        // moves it. As synced they moved for nobody: the mirror never ran the test, and
+        // the authority's test is false for the puppet, which writes no PLAYER_ON_TOP.
+        // Making params 0 a ride also revives its OnePointCutscene and the spike
+        // platform's only CollisionCheck_SetAT, both of which sat in the same
+        // suppressed Update.
+        case ACTOR_BG_BDAN_OBJECTS:
+            return actor->params == 0 || actor->params == 3;
         case ACTOR_BG_HIDAN_ROCK: // Fire Temple: the non-zero type, a launch pad
             return ((const BgHidanRock*)actor)->type != 0;
         default:
@@ -430,6 +473,24 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
         // Round to nearest eighth rather than truncating: mid-sweep frames would
         // otherwise land a detent short and undo part of the peer's turn.
         cobra->unk_16C = (s16)(((delta + 0x1000) >> 13) & 7);
+    }
+    // The two sliding-ice-block puzzles keep their destination in targetPos, written
+    // only at Init, at the end of a slide, and by Reset -- so never on the mirror,
+    // whose update stays in Idle. That alone would be harmless, except
+    // BgIceObjects_SetNextTarget refreshes ONE axis (z_bg_ice_objects.c:93 or :103)
+    // while Slide steps BOTH (:166-167): the mirroring player's first push therefore
+    // drags the block back along the OTHER axis, in a diagonal, and rebroadcasts it.
+    // The Ice Cavern maze alternates axes by construction, so it breaks on the second
+    // push whenever the two players take turns. Re-anchor the destination on the
+    // streamed position each frame; at rest that is exactly what the authority holds.
+    if (actor->id == ACTOR_BG_ICE_OBJECTS) {
+        ((BgIceObjects*)actor)->targetPos = actor->world.pos;
+    }
+    // Same defect in Ganon's water trial, plus a grid index in a file static that the
+    // overlay has to rebuild for us.
+    if (actor->id == ACTOR_BG_GND_ICEBLOCK) {
+        ((BgGndIceblock*)actor)->targetPos = actor->world.pos;
+        BgGndIceblock_CoopRebuildGridIndex((BgGndIceblock*)actor);
     }
     st.suppressed = true;
     // Claimables keep their update RUNNING while mirroring: the block's own

@@ -93,18 +93,56 @@ void BgGndIceblock_Destroy(Actor* thisx, PlayState* play) {
  * Block 0 starts at 7 and block 1 starts at 14
  */
 
+// Hoisted out of BgGndIceblock_SetPosition so the co-op rebuild below can invert
+// them. Same values, same order.
+static const u8 xPosIdx[22] = {
+    0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 6, 6, 6, 6, 6, 6,
+};
+static const u8 zPosIdx[22] = {
+    5, 4, 3, 2, 1, 0, 5, 4, 2, 1, 6, 1, 0, 5, 3, 2, 5, 4, 3, 2, 1, 0,
+};
+
 void BgGndIceblock_SetPosition(BgGndIceblock* this, s32 blockPosition) {
     Actor* thisx = &this->dyna.actor;
-    u8 xPosIdx[22] = {
-        0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 6, 6, 6, 6, 6, 6,
-    };
-    u8 zPosIdx[22] = {
-        5, 4, 3, 2, 1, 0, 5, 4, 2, 1, 6, 1, 0, 5, 3, 2, 5, 4, 3, 2, 1, 0,
-    };
 
     sBlockPositions[thisx->params] = blockPosition;
     this->targetPos.x = 2552.0f + (xPosIdx[blockPosition] * 120.0f);
     this->targetPos.z = -540.0f - (zPosIdx[blockPosition] * 120.0f);
+}
+
+// Co-op. sBlockPositions is a FILE STATIC, written only by SetPosition and Reset, so
+// only the client that actually pushes the block ever updates it. On the other client
+// the block is claimable: its update runs but stays in Idle, world.pos is driven by
+// the stream, and the grid index keeps its Init value. The next push by THAT player
+// reads the stale index and SetNextPosition sends the block across the room in a
+// straight line, into a pit or the hole. Rebuild the index from the streamed position
+// (the grid is x = 2552 + xIdx*120, z = -540 - zIdx*120) and re-anchor targetPos, the
+// same treatment DynaSync gives Bg_Haka's pull distance and Bg_Jya_Cobra's detent.
+void BgGndIceblock_CoopRebuildGridIndex(BgGndIceblock* this) {
+    Actor* thisx = &this->dyna.actor;
+    f32 bestDistSq = 1.0e9f;
+    s32 best = -1;
+    s32 i;
+
+    for (i = 0; i < 22; i++) {
+        f32 dx = thisx->world.pos.x - (2552.0f + (xPosIdx[i] * 120.0f));
+        f32 dz = thisx->world.pos.z - (-540.0f - (zPosIdx[i] * 120.0f));
+        f32 distSq = (dx * dx) + (dz * dz);
+
+        if (distSq < bestDistSq) {
+            bestDistSq = distSq;
+            best = i;
+        }
+    }
+
+    // Mid-slide the block sits between two cells; snapping to the nearer one would
+    // claim a move that has not finished. 60 units is half a cell: inside it the
+    // block is unambiguously on that cell.
+    if ((best >= 0) && (bestDistSq <= (60.0f * 60.0f)) && (thisx->params < 2)) {
+        sBlockPositions[thisx->params] = best;
+        this->targetPos.x = 2552.0f + (xPosIdx[best] * 120.0f);
+        this->targetPos.z = -540.0f - (zPosIdx[best] * 120.0f);
+    }
 }
 
 s32 BgGndIceblock_CheckForBlock(s32 blockPosition) {

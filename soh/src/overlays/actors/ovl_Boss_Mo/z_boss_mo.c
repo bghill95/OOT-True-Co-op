@@ -444,6 +444,38 @@ void BossMo_Destroy(Actor* thisx, PlayState* play) {
 // ---------------------------------------------------------------------------
 
 Player* Anchor_NearestPlayer(Actor* from);
+Actor* Anchor_PlayerActorAt(s32 index);
+
+// Co-op: is ANY player standing on one of the four intro platforms?
+//
+// Vanilla asks it of GET_PLAYER alone. Morpha's intro is deliberately run locally on
+// every client (Morpha_ShouldMirror returns false until MO_PHASE_FIGHT), so the two
+// have to enter it on the same frame. A player who is not on a platform when the other
+// steps on one stays in MO_INTRO_WAIT -- and while csState is not MO_CS_BATTLE the
+// mirror is refused for the core AND, through Morpha_CoreInBattle, for the tentacles.
+// That client then simulates its own Morpha, tentacle included and free to grab it,
+// while the peer is already fighting, until it reaches MO_BATTLE and snaps into sync.
+//
+// The four boxes are the vanilla ones, unchanged; only the set of positions tested
+// grows. Solo, Anchor_PlayerActorAt(1) is NULL on the first pass and this is exactly
+// the vanilla test.
+static s32 BossMo_AnyPlayerOnIntroPlatform(void) {
+    s32 i;
+
+    for (i = 0;; i++) {
+        Actor* p = Anchor_PlayerActorAt(i);
+
+        if (p == NULL) {
+            return false;
+        }
+        if (((fabsf(p->world.pos.z - 180.0f) < 40.0f) && (fabsf(p->world.pos.x - 180.0f) < 40.0f)) ||
+            ((fabsf(p->world.pos.z - -180.0f) < 40.0f) && (fabsf(p->world.pos.x - 180.0f) < 40.0f)) ||
+            ((fabsf(p->world.pos.z - 180.0f) < 40.0f) && (fabsf(p->world.pos.x - -180.0f) < 40.0f)) ||
+            ((fabsf(p->world.pos.z - -180.0f) < 40.0f) && (fabsf(p->world.pos.x - -180.0f) < 40.0f))) {
+            return true;
+        }
+    }
+}
 u32 Anchor_PlayerClientId(Player* p);
 s32 Anchor_IsOwnClientId(u32 clientId);
 
@@ -1343,15 +1375,8 @@ void BossMo_IntroCs(BossMo* this, PlayState* play) {
             if (this->timers[0] == 1) {
                 Message_StartTextbox(play, 0x403F, NULL);
             }
-            if (((fabsf(player->actor.world.pos.z - 180.0f) < 40.0f) &&
-                 (fabsf(player->actor.world.pos.x - 180.0f) < 40.0f)) ||
-                ((fabsf(player->actor.world.pos.z - -180.0f) < 40.0f) &&
-                 (fabsf(player->actor.world.pos.x - 180.0f) < 40.0f)) ||
-                ((fabsf(player->actor.world.pos.z - 180.0f) < 40.0f) &&
-                 (fabsf(player->actor.world.pos.x - -180.0f) < 40.0f)) ||
-                ((fabsf(player->actor.world.pos.z - -180.0f) < 40.0f) &&
-                 (fabsf(player->actor.world.pos.x - -180.0f) < 40.0f))) {
-                // checks if Link is on one of the four platforms
+            if (BossMo_AnyPlayerOnIntroPlatform()) {
+                // checks if a player is on one of the four platforms
                 func_80064520(play, &play->csCtx);
                 Player_SetCsActionWithHaltedActors(play, &this->actor, 8);
                 this->csCamera = Play_CreateSubCamera(play);
