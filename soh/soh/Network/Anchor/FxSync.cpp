@@ -32,6 +32,10 @@ void BgMenkuriEye_LightFromPeer(Actor* thisx, PlayState* play);
 void BgHidanDalm_BreakFromPeer(Actor* thisx, PlayState* play, u8 reverse);
 // Flips one flagless Song of Time block on behalf of the peer (see FX_EV_TIMEBLOCK).
 void ObjTimeblock_ToggleFromPeer(Actor* thisx, PlayState* play);
+// Applies the upstairs player's cobra-solved bits (see FX_EV_BIGMIRROR).
+void BgJyaBigmirror_ApplySolvedFromPeer(Actor* thisx, u8 solvedBits);
+// Puts one Gerudo guard down on behalf of the peer (see FX_EV_GERUDOKO).
+void EnGe2_KnockOutFromPeer(Actor* thisx, PlayState* play);
 extern PlayState* gPlayState;
 // z_en_g_switch.c: silver-rupee tally accessor + action funcs.
 s16* EnGSwitch_CoopCollectedCount(void);
@@ -72,6 +76,8 @@ enum FxEventKind : uint8_t {
     FX_EV_GTGEYE = 15,     // a Gerudo Training Ground eye target was shot (key = position)
     FX_EV_TOTEM = 16,      // a hammerable totem was toppled (key = position, rev = struck face)
     FX_EV_TIMEBLOCK = 17,  // a Song of Time block with no switch flag toggled (key = position)
+    FX_EV_BIGMIRROR = 18,  // Spirit Temple: the upstairs player's cobra-solved bits (sv)
+    FX_EV_GERUDOKO = 19,   // a Gerudo guard was knocked out (key = SPAWN position, they patrol)
 };
 
 // --- Spells -----------------------------------------------------------------
@@ -825,6 +831,18 @@ static void Reset(bool killLive) {
     sSpawningReplica = false;
 }
 
+// Key by SPAWN position instead of current position, for actors that move on
+// their own and therefore stand somewhere different on each client. home.pos
+// comes from the scene's actor list, so it is identical everywhere and stable
+// for the actor's whole life.
+static uint64_t HomeKey(const Actor* actor) {
+    int16_t qx = (int16_t)lroundf(actor->home.pos.x);
+    int16_t qy = (int16_t)lroundf(actor->home.pos.y);
+    int16_t qz = (int16_t)lroundf(actor->home.pos.z);
+    return ((uint64_t)(uint16_t)qx << 48) | ((uint64_t)(uint16_t)qy << 32) | ((uint64_t)(uint16_t)qz << 16) |
+           (uint16_t)actor->id;
+}
+
 static uint64_t PosKey(const Actor* actor) {
     int16_t qx = (int16_t)lroundf(actor->world.pos.x);
     int16_t qy = (int16_t)lroundf(actor->world.pos.y);
@@ -941,6 +959,39 @@ extern "C" void FxSync_OnTimeBlockToggle(Actor* block) {
     payload["key"] = PosKey(block);
     Anchor::Instance->SendPacket_FxEvent(payload);
     ESYNC_LOG("[FxSync] time block tx key={:#x}", PosKey(block));
+}
+
+// Spirit Temple big mirror. Its two cobra-solved bits are computed only inside
+// the branch that needs the cobras to exist, and they exist only for a player
+// whose own room is one of the two top ones. The player standing in the statue
+// room below — the other half of a puzzle explicitly built for two vantage
+// points — had both bits stuck at zero and never saw the light arrive.
+// Gerudo guards. ACTORCAT_NPC, so outside EnemySync: every client walks its own
+// copy against its own Link. Right for detection — each player must be spotted
+// from where they actually stand — but the knockout is a fact about the world,
+// and without this one player clubs a guard, thinks the way is clear, and the
+// other is seized by a guard who never went down on his screen. Keyed by SPAWN
+// position: the guards patrol, so their current position differs per client.
+extern "C" void FxSync_OnGerudoGuardKO(Actor* guard) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || guard == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_GERUDOKO;
+    payload["key"] = HomeKey(guard);
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] gerudo guard KO tx key={:#x}", HomeKey(guard));
+}
+
+extern "C" void FxSync_OnBigMirrorSolved(Actor* mirror, u8 solvedBits) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || mirror == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_BIGMIRROR;
+    payload["sv"] = solvedBits;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] big mirror tx solved={:#x}", solvedBits);
 }
 
 extern "C" void FxSync_OnGrottoOpen(Actor* actor) {
@@ -1120,6 +1171,32 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                 func_80088B34(sec);
             }
             ESYNC_LOG("[FxSync] room timer rx sec={} adopted={}", sec, gSaveContext.timerSeconds <= 0);
+            return;
+        }
+
+        if (kind == FX_EV_GERUDOKO) {
+            uint64_t key = payload.at("key").get<uint64_t>();
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_NPC].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_EN_GE2 || a->update == NULL || HomeKey(a) != key) {
+                    continue;
+                }
+                EnGe2_KnockOutFromPeer(a, gPlayState);
+                break;
+            }
+            ESYNC_LOG("[FxSync] gerudo guard KO rx key={:#x}", key);
+            return;
+        }
+
+        if (kind == FX_EV_BIGMIRROR) {
+            uint8_t solved = payload.value("sv", (uint8_t)0);
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_BG].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_BG_JYA_BIGMIRROR || a->update == NULL) {
+                    continue;
+                }
+                BgJyaBigmirror_ApplySolvedFromPeer(a, solved);
+                break;
+            }
+            ESYNC_LOG("[FxSync] big mirror rx solved={:#x}", solved);
             return;
         }
 

@@ -420,6 +420,37 @@ extern "C" Player* Anchor_NearestPlayer(Actor* from) {
     return best;
 }
 
+// Enumerate every live player actor: index 0 is the local Link, then one entry
+// per same-scene puppet, NULL once past the end.
+//
+// For the handful of overlays that ask "is A player standing here?" rather than
+// "where is the nearest one?" — a trigger volume, an area test. Anchor_NearestPlayer
+// answers the wrong question there: the nearest player may be outside the volume
+// while the other one is inside it.
+extern "C" Actor* Anchor_PlayerActorAt(s32 index) {
+    if (gPlayState == NULL) {
+        return NULL;
+    }
+    if (index == 0) {
+        return &GET_PLAYER(gPlayState)->actor;
+    }
+    if (Anchor::Instance == nullptr) {
+        return NULL;
+    }
+    s32 seen = 0;
+    for (auto& [cid, client] : Anchor::Instance->clients) {
+        if (client.self || !client.online || !client.isSaveLoaded || client.player == nullptr ||
+            client.player->actor.update == NULL || client.sceneNum != gPlayState->sceneNum ||
+            (client.stateFlags1 & PLAYER_STATE1_DEAD)) {
+            continue;
+        }
+        if (++seen == index) {
+            return &client.player->actor;
+        }
+    }
+    return NULL;
+}
+
 // Is a co-op session live? For overlays that must drop a single-player-only
 // courtesy — pausing a hazard while the local Link is busy, for instance, which
 // with two independently simulated copies just makes them drift apart forever.

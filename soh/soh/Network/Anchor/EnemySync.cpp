@@ -333,7 +333,21 @@ static bool IsSyncedProjectile(Actor* actor) {
         return p == FHGFIRE_P_LIGHTNING_STRIKE || p == FHGFIRE_P_SPEAR_LIGHT || p == FHGFIRE_P_WARP_EMERGE ||
                p == FHGFIRE_P_WARP_RETREAT;
     }
+    // Anubis fireball. The one enemy projectile that MUST run locally: the only
+    // way to kill an Anubis is to bounce its fireball back with the Mirror
+    // Shield, and that test is Player_HasMirrorShieldEquipped on the local Link
+    // (z_en_anubice_fire.c:115). Streamed, it only ever ran on the authority, so
+    // whether the Anubis could be killed at all depended on which machine
+    // happened to own it — an authority without the shield made them invincible
+    // for both players. Running locally also fixes its trail, which is drawn
+    // from unk_160[] (positions written in Update, frozen on a mirror: the ball
+    // was drawn at its launch point while its collider flew on).
+    //
+    // Safe to run locally: func_809B26EC derives the whole flight from world.rot
+    // at a fixed speed of 15, and the spawn broadcast carries world.rot for
+    // projectiles, so both machines compute the same arc.
     return actor->id == ACTOR_EN_NUTSBALL || actor->id == ACTOR_EN_BDFIRE ||
+           actor->id == ACTOR_EN_ANUBICE_FIRE ||
            (actor->id == ACTOR_EN_OKUTA && actor->category == ACTORCAT_PROP);
 }
 

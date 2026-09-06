@@ -55,8 +55,37 @@ void BgJyaBigmirror_SetRoomFlag(Actor* thisx, PlayState* play) {
     }
 }
 
+void FxSync_OnBigMirrorSolved(Actor* mirror, u8 solvedBits);
+
+/**
+ * Apply the cobra-solved bits announced by the player upstairs.
+ *
+ * This puzzle is meant to be shared: one player turns the two cobras in the top
+ * rooms while the other watches the light reach the statue below. But the solved
+ * bits are only ever computed inside the branch below, which needs the cobras to
+ * exist — and they exist only for a player whose OWN room is 0x19 or 0x1A. The
+ * player downstairs therefore had both bits stuck at zero and never saw the ray,
+ * which is precisely the half of the puzzle they are standing there for.
+ *
+ * Only the two solved bits travel. Room membership stays local (each client
+ * knows which room its own player is in) and BOMBIWA_DESTROYED already follows a
+ * replicated switch flag.
+ */
+void BgJyaBigmirror_ApplySolvedFromPeer(Actor* thisx, u8 solvedBits) {
+    BgJyaBigmirror* this = (BgJyaBigmirror*)thisx;
+
+    // Ignore it while we are the one upstairs: our own cobras are authoritative
+    // and recomputed every frame just below.
+    if (this->puzzleFlags & (BIGMIR_PUZZLE_IN_1ST_TOP_ROOM | BIGMIR_PUZZLE_IN_2ND_TOP_ROOM)) {
+        return;
+    }
+    this->puzzleFlags &= ~(BIGMIR_PUZZLE_COBRA1_SOLVED | BIGMIR_PUZZLE_COBRA2_SOLVED);
+    this->puzzleFlags |= solvedBits & (BIGMIR_PUZZLE_COBRA1_SOLVED | BIGMIR_PUZZLE_COBRA2_SOLVED);
+}
+
 void BgJyaBigmirror_HandleCobra(Actor* thisx, PlayState* play) {
     static u8 cobraPuzzleFlags[] = { BIGMIR_PUZZLE_COBRA1_SOLVED, BIGMIR_PUZZLE_COBRA2_SOLVED };
+    static u8 sLastAnnouncedSolved = 0xFF;
     BgJyaBigmirror* this = (BgJyaBigmirror*)thisx;
     BigMirrorDataEntry* curSpawnData;
     BigmirrorCobra* curCobraInfo;
@@ -78,6 +107,18 @@ void BgJyaBigmirror_HandleCobra(Actor* thisx, PlayState* play) {
                 if (curCobraInfo->cobra->dyna.actor.update == NULL) {
                     // "Cobra deleted"
                     osSyncPrintf("Error : コブラ削除された (%s %d)\n", __FILE__, __LINE__);
+                }
+
+                // We are upstairs and hold the truth about the cobras: tell the
+                // player downstairs, whose copies do not exist. Edge-triggered —
+                // this runs every frame.
+                {
+                    u8 solved = this->puzzleFlags & (BIGMIR_PUZZLE_COBRA1_SOLVED | BIGMIR_PUZZLE_COBRA2_SOLVED);
+
+                    if (solved != sLastAnnouncedSolved) {
+                        sLastAnnouncedSolved = solved;
+                        FxSync_OnBigMirrorSolved(&this->actor, solved);
+                    }
                 }
             } else {
                 curCobraInfo->cobra = (BgJyaCobra*)Actor_SpawnAsChild(
