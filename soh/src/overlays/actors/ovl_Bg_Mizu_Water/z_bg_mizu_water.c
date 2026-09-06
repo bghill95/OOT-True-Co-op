@@ -194,6 +194,23 @@ void BgMizuWater_WaitForAction(BgMizuWater* this, PlayState* play) {
                     this->actor.params = sWaterLevels[waterLevelActionIndex].switchFlag;
                     this->targetY = sWaterLevels[waterLevelActionIndex].yDiff + this->baseY;
                 }
+            } else if (Anchor_IsSessionActive() && (play->msgCtx.msgMode == MSGMODE_PAUSED)) {
+                // Co-op: release the ocarina pause when the song turned out to change
+                // nothing. En_Okarina_Tag sets MSGMODE_PAUSED unconditionally on a
+                // completed song in this scene (z_en_okarina_tag.c:157), and the ONLY
+                // thing that lifts it is the Message_CloseTextbox at the end of
+                // ChangeWaterLevel -- which never runs when the water is already at the
+                // level being asked for, because GetWaterLevelActionIndex returns 0 for
+                // the flag we already hold.
+                //
+                // Vanilla can reach that too, by playing the song at the socket of the
+                // level already active, but a solo player has no reason to. Replicating
+                // the flags makes it ordinary: the moment one player sets a level, the
+                // other playing at that same socket gets a song that does nothing, and
+                // the message system stays inert until some other textbox opens.
+                // Guarded on the session, so single-player keeps its exact vanilla
+                // behaviour, quirk included.
+                Message_CloseTextbox(play);
             }
             if ((prevSwitchFlag != this->actor.params) && (prevSwitchFlag != 0)) {
                 Flags_UnsetSwitch(play, prevSwitchFlag);
