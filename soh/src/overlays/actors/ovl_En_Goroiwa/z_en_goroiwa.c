@@ -575,6 +575,9 @@ void EnGoroiwa_SetupRoll(EnGoroiwa* this) {
     this->rollRotSpeed = 1.0f;
 }
 
+s16 Anchor_LocalPlayerYaw(Actor* from);
+s32 Anchor_IsSessionActive(void);
+
 void EnGoroiwa_Roll(EnGoroiwa* this, PlayState* play) {
     static EnGoroiwaUnkFunc1 moveFuncs[] = { EnGoroiwa_Move, EnGoroiwa_MoveAndFall };
     static EnGoroiwaUnkFunc2 onHitSetupFuncs[] = { EnGoroiwa_SetupWait, EnGoroiwa_SetupMoveAndFallToGround };
@@ -594,12 +597,19 @@ void EnGoroiwa_Roll(EnGoroiwa* this, PlayState* play) {
                 EnGoroiwa_FaceNextWaypoint(this, play);
             }
         }
-        func_8002F6D4(play, &this->actor, 2.0f, this->actor.yawTowardsPlayer, 0.0f, 0);
+        // Co-op: this AT branch has no guard on who was actually hit. The other
+        // player's puppet carries a player-type AC cylinder, so the boulder
+        // rolling over THEM used to shove the local Link instead — off a narrow
+        // ledge, with his grunt playing. Knock back and voice only our own Link;
+        // the peer's client runs the same check for its side.
+        if (&GET_PLAYER(play)->actor == this->collider.base.at) {
+            func_8002F6D4(play, &this->actor, 2.0f, Anchor_LocalPlayerYaw(&this->actor), 0.0f, 0);
+            Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        }
         osSyncPrintf(VT_FGCOL(CYAN));
         osSyncPrintf("Player ぶっ飛ばし\n"); // "Player knocked down"
         osSyncPrintf(VT_RST);
         onHitSetupFuncs[(this->actor.params >> 10) & 1](this);
-        Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
         if ((this->actor.home.rot.z & 1) == 1) {
             this->collisionDisabledTimer = 50;
         }
@@ -724,7 +734,14 @@ void EnGoroiwa_Update(Actor* thisx, PlayState* play) {
     s32 pad;
     s32 sp30;
 
-    if (!(player->stateFlags1 &
+    // Co-op: vanilla freezes the boulder while the local Link talks, dies or is
+    // in a cutscene. Each client runs its own copy, so one player opening a
+    // textbox stops HIS boulder while the other keeps rolling — and the two
+    // copies never line up again, each player being crushed by a rock the other
+    // does not see there. Keep rolling when connected; the pause is a courtesy
+    // to a single player, not a rule of the puzzle.
+    if (Anchor_IsSessionActive() ||
+        !(player->stateFlags1 &
           (PLAYER_STATE1_TALKING | PLAYER_STATE1_DEAD | PLAYER_STATE1_IN_ITEM_CS | PLAYER_STATE1_IN_CUTSCENE))) {
         if (this->collisionDisabledTimer > 0) {
             this->collisionDisabledTimer--;

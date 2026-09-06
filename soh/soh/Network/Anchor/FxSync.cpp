@@ -25,6 +25,13 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_Horse/z_en_horse.h"
 #include "src/overlays/actors/ovl_Door_Ana/z_door_ana.h"
 #include "src/overlays/actors/ovl_En_Door/z_en_door.h"
+#include "src/overlays/actors/ovl_Bg_Menkuri_Eye/z_bg_menkuri_eye.h"
+// Lights one GTG eye target on behalf of the peer (see FX_EV_GTGEYE).
+void BgMenkuriEye_LightFromPeer(Actor* thisx, PlayState* play);
+// Topples one hammerable totem on behalf of the peer (see FX_EV_TOTEM).
+void BgHidanDalm_BreakFromPeer(Actor* thisx, PlayState* play, u8 reverse);
+// Flips one flagless Song of Time block on behalf of the peer (see FX_EV_TIMEBLOCK).
+void ObjTimeblock_ToggleFromPeer(Actor* thisx, PlayState* play);
 extern PlayState* gPlayState;
 // z_en_g_switch.c: silver-rupee tally accessor + action funcs.
 s16* EnGSwitch_CoopCollectedCount(void);
@@ -61,6 +68,10 @@ enum FxEventKind : uint8_t {
     FX_EV_GROTTO = 11,     // a hidden grotto (Door_Ana) was opened here (key = position)
     FX_EV_STORM = 12,      // Song of Storms: spawn the storm manager at pos on every client
     FX_EV_DOOR = 13,       // a hinged door was pushed open here (key = position, ast = swing side)
+    FX_EV_ROOMTIMER = 14,  // Obj_Roomtimer started a room countdown (sec): peers adopt the same clock
+    FX_EV_GTGEYE = 15,     // a Gerudo Training Ground eye target was shot (key = position)
+    FX_EV_TOTEM = 16,      // a hammerable totem was toppled (key = position, rev = struck face)
+    FX_EV_TIMEBLOCK = 17,  // a Song of Time block with no switch flag toggled (key = position)
 };
 
 // --- Spells -----------------------------------------------------------------
@@ -865,6 +876,73 @@ extern "C" void FxSync_OnStormSong(Actor* okarinaEffect) {
     ESYNC_LOG("[FxSync] storm song tx");
 }
 
+// Obj_Roomtimer (Gerudo Training Ground, Shadow Temple): each client runs its
+// own copy, so each starts its own countdown the frame ITS player walks in.
+// Two players entering seconds apart get two different clocks, and the loser's
+// Play_TriggerVoidOut only ejects whoever ran out first — the other keeps
+// playing a challenge that, on his screen, is still running. Announce the
+// countdown so whoever enters second adopts the clock already ticking instead
+// of restarting it. The overlay side refuses to re-arm a live timer, so this
+// cannot ping-pong.
+extern "C" void FxSync_OnRoomTimerStart(int16_t seconds) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_ROOMTIMER;
+    payload["sec"] = seconds;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] room timer tx sec={}", seconds);
+}
+
+// Gerudo Training Ground eye targets: the lit tally is a file-scope counter in
+// the overlay, fed only by the local Link's arrows. Split the four eyes between
+// two players and neither side ever reaches four. Announce our hits so the peer
+// lights the matching eye and counts it too.
+extern "C" void FxSync_OnGtgEyeLit(Actor* eye) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || eye == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_GTGEYE;
+    payload["key"] = PosKey(eye);
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] gtg eye tx key={:#x}", PosKey(eye));
+}
+
+// Hammerable totems (Fire Temple, Gerudo Training Ground). Their switch flag is
+// (params >> 8) & 0xFF and the GTG placements all carry 0xFF, outside the valid
+// 0x00-0x3F switch range, so nothing replicable ever leaves the actor. A totem
+// smashed by one player therefore stays standing AND SOLID on the other screen,
+// blocking the way. Announce the break, carrying which face was struck so the
+// copy topples the same way.
+extern "C" void FxSync_OnHammerTotemBreak(Actor* totem, u8 reverse) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || totem == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_TOTEM;
+    payload["key"] = PosKey(totem);
+    payload["rev"] = reverse;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] hammer totem tx key={:#x} rev={}", PosKey(totem), reverse);
+}
+
+// Song of Time blocks whose unk_177 is 0 (every Gerudo Training Ground one)
+// flip with `params ^= 0x8000` and no switch flag at all, and the song is read
+// off the singer's own msgCtx — so only the singer's copy moves. The other
+// player then walks into a block that is not there, or through one that is.
+extern "C" void FxSync_OnTimeBlockToggle(Actor* block) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || block == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_TIMEBLOCK;
+    payload["key"] = PosKey(block);
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] time block tx key={:#x}", PosKey(block));
+}
+
 extern "C" void FxSync_OnGrottoOpen(Actor* actor) {
     if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || actor == NULL || gPlayState == NULL) {
         return;
@@ -1030,6 +1108,58 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                 gSaveContext.timerState = 0xA;
             }
             ESYNC_LOG("[FxSync] amy timer rx sec={}", sec);
+            return;
+        }
+
+        if (kind == FX_EV_ROOMTIMER) {
+            int16_t sec = payload.value("sec", (int16_t)0);
+            // Only adopt the peer's clock if we have none running: our own copy
+            // of the timer actor may not have reached its start yet, and a
+            // second announcement must never reset a countdown in progress.
+            if (sec > 0 && gSaveContext.timerSeconds <= 0) {
+                func_80088B34(sec);
+            }
+            ESYNC_LOG("[FxSync] room timer rx sec={} adopted={}", sec, gSaveContext.timerSeconds <= 0);
+            return;
+        }
+
+        if (kind == FX_EV_TIMEBLOCK) {
+            uint64_t key = payload.at("key").get<uint64_t>();
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_ITEMACTION].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_OBJ_TIMEBLOCK || a->update == NULL || PosKey(a) != key) {
+                    continue;
+                }
+                ObjTimeblock_ToggleFromPeer(a, gPlayState);
+                break;
+            }
+            ESYNC_LOG("[FxSync] time block rx key={:#x}", key);
+            return;
+        }
+
+        if (kind == FX_EV_TOTEM) {
+            uint64_t key = payload.at("key").get<uint64_t>();
+            uint8_t rev = payload.value("rev", (uint8_t)0);
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_BG].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_BG_HIDAN_DALM || a->update == NULL || PosKey(a) != key) {
+                    continue;
+                }
+                BgHidanDalm_BreakFromPeer(a, gPlayState, rev);
+                break;
+            }
+            ESYNC_LOG("[FxSync] hammer totem rx key={:#x}", key);
+            return;
+        }
+
+        if (kind == FX_EV_GTGEYE) {
+            uint64_t key = payload.at("key").get<uint64_t>();
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_BG].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_BG_MENKURI_EYE || a->update == NULL || PosKey(a) != key) {
+                    continue;
+                }
+                BgMenkuriEye_LightFromPeer(a, gPlayState);
+                break;
+            }
+            ESYNC_LOG("[FxSync] gtg eye rx key={:#x}", key);
             return;
         }
 

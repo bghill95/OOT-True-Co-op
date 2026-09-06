@@ -88,10 +88,67 @@ struct KilledJyaBlock {
 };
 static std::vector<KilledJyaBlock> sJyaBlocks;
 
+// Gerudo Valley bridge. Bg_Spot09_Obj picks which variant of itself to keep
+// from GET_EVENTCHKINF_CARPENTERS_FREE_ALL() inside Init, kills the others, and
+// has an EMPTY Update — so the choice is never revisited. When the peer frees
+// the carpenters while we are standing in the valley, our broken bridge stays
+// broken, collision and all, until the scene reloads. Remember the variant Init
+// killed so the same tick that swaps them can bring it back.
+struct KilledValleyBridge {
+    Vec3f pos;
+    Vec3s rot;
+    int16_t params;
+    int16_t room;
+    bool done;
+};
+static std::vector<KilledValleyBridge> sValleyBridge;
+
 namespace FlagReplay {
 
+// Swap the Gerudo Valley bridge when the carpenters are freed mid-scene: kill
+// the broken span (params 1) and bring back the repaired one (params 4). Adult
+// only — the child bridge (params 2) does not depend on the flag.
+static void TickValleyBridge() {
+    if (sValleyBridge.empty() || LINK_AGE_IN_YEARS != YEARS_ADULT ||
+        !GET_EVENTCHKINF_CARPENTERS_FREE_ALL()) {
+        return;
+    }
+    for (auto& b : sValleyBridge) {
+        if (b.done || b.params != 4) {
+            continue;
+        }
+        b.done = true;
+        bool alreadyThere = false;
+        for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_BG].head; a != NULL; a = a->next) {
+            if (a->id != ACTOR_BG_SPOT09_OBJ || a->update == NULL) {
+                continue;
+            }
+            if (a->params == 4) {
+                alreadyThere = true; // scene re-entered after the flag: Init kept it
+            }
+        }
+        if (!alreadyThere) {
+            Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_BG_SPOT09_OBJ, b.pos.x, b.pos.y, b.pos.z, b.rot.x,
+                        b.rot.y, b.rot.z, b.params, false);
+        }
+    }
+    // The broken span is still live and still solid; Init would have killed it
+    // had the flag been set at load. Do it now, after the repaired one exists,
+    // so there is never a frame with no bridge to stand on.
+    for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_BG].head; a != NULL; a = a->next) {
+        if (a->id == ACTOR_BG_SPOT09_OBJ && a->update != NULL && a->params == 1) {
+            Actor_Kill(a);
+            break;
+        }
+    }
+}
+
 void PerFrameTick() {
-    if (gPlayState == NULL || sJyaBlocks.empty() || LINK_AGE_IN_YEARS != YEARS_CHILD) {
+    if (gPlayState == NULL) {
+        return;
+    }
+    TickValleyBridge();
+    if (sJyaBlocks.empty() || LINK_AGE_IN_YEARS != YEARS_CHILD) {
         return;
     }
     for (auto& b : sJyaBlocks) {
@@ -115,11 +172,13 @@ void RegisterHooks(bool isConnected) {
     if (!isConnected) {
         sBdanLocalPress.clear();
         sJyaBlocks.clear();
+        sValleyBridge.clear();
     }
 
     COND_HOOK(OnSceneInit, isConnected, [](int16_t sceneNum) {
         sBdanLocalPress.clear();
         sJyaBlocks.clear();
+        sValleyBridge.clear();
         sAmyTimerArmed = false;
     });
     COND_HOOK(OnActorDestroy, isConnected, [](void* actor) { sBdanLocalPress.erase((Actor*)actor); });
@@ -179,6 +238,25 @@ void RegisterHooks(bool isConnected) {
             }
         }
         sJyaBlocks.push_back(KilledJyaBlock{ a->world.pos, a->shape.rot, a->params, a->room, false });
+    });
+
+    // Gerudo Valley bridge: same idea, but the variant we need back is the one
+    // Init killed for NOT matching the carpenter flag. Only the repaired span
+    // (params 4) is worth remembering; TickValleyBridge revives it and retires
+    // the broken one when the flag arrives from the peer.
+    COND_ID_HOOK(OnActorInit, ACTOR_BG_SPOT09_OBJ, isConnected, [](void* refActor) {
+        Actor* a = static_cast<Actor*>(refActor);
+        if (a->update != NULL || (a->params & 0xFF) != 4) {
+            return;
+        }
+        for (auto& b : sValleyBridge) {
+            if (b.params == (a->params & 0xFF) && b.room == a->room) {
+                b.done = false; // scene re-entered, carpenters still jailed: arm again
+                return;
+            }
+        }
+        sValleyBridge.push_back(
+            KilledValleyBridge{ a->world.pos, a->shape.rot, (int16_t)(a->params & 0xFF), a->room, false });
     });
 
     // Golden Gauntlets pillar: lifted/thrown only through the local player's

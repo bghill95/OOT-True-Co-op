@@ -420,6 +420,13 @@ extern "C" Player* Anchor_NearestPlayer(Actor* from) {
     return best;
 }
 
+// Is a co-op session live? For overlays that must drop a single-player-only
+// courtesy — pausing a hazard while the local Link is busy, for instance, which
+// with two independently simulated copies just makes them drift apart forever.
+extern "C" s32 Anchor_IsSessionActive(void) {
+    return (Anchor::Instance != nullptr && Anchor::Instance->isConnected) ? 1 : 0;
+}
+
 // Should THIS client play `actor`'s one-point camera cutscene?
 //
 // Scenery that polls a switch flag every frame (gates, grates, shutters) replays

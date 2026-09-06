@@ -55,9 +55,19 @@ void ObjRoomtimer_Destroy(Actor* thisx, PlayState* play) {
     }
 }
 
+void FxSync_OnRoomTimerStart(s16 seconds);
+
 void func_80B9D054(ObjRoomtimer* this, PlayState* play) {
     if (this->actor.params != 0x3FF) {
-        func_80088B34(this->actor.params);
+        // Co-op: every client runs its own copy of this actor and starts its own
+        // countdown the frame ITS player walks in, so entering seconds apart
+        // gives two different clocks — and the timeout below only void-outs
+        // whoever ran out first. Adopt a countdown already running instead of
+        // restarting it, and announce ours so the other side can do the same.
+        if (gSaveContext.timerSeconds <= 0) {
+            func_80088B34(this->actor.params);
+            FxSync_OnRoomTimerStart(this->actor.params);
+        }
     }
 
     Actor_ChangeCategory(play, &play->actorCtx, &this->actor, ACTORCAT_PROP);

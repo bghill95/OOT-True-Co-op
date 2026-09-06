@@ -86,6 +86,34 @@ void BgMenkuriEye_Destroy(Actor* thisx, PlayState* play) {
     Collider_DestroyJntSph(play, &this->collider);
 }
 
+void FxSync_OnGtgEyeLit(Actor* eye);
+
+/**
+ * Light this eye because the OTHER player shot it.
+ *
+ * The lit-eye tally lives in D_8089C1A0, a file-scope counter shared by the four
+ * eyes — and it only ever counts arrows fired by the local Link. Split the four
+ * targets between two players and neither tally reaches 4, so the puzzle simply
+ * cannot be solved cooperatively: one player has to shoot all of them. Called
+ * from FxSync when the peer announces a hit; mirrors exactly what the AC_HIT
+ * branch below does, minus the announcement, so it cannot echo back.
+ */
+void BgMenkuriEye_LightFromPeer(Actor* thisx, PlayState* play) {
+    BgMenkuriEye* this = (BgMenkuriEye*)thisx;
+
+    if (this->framesUntilDisable != -1) {
+        return; // already lit here
+    }
+    Audio_PlayActorSound2(&this->actor, NA_SE_EN_AMOS_DAMAGE);
+    D_8089C1A0 += 1;
+    D_8089C1A0 = CLAMP_MAX(D_8089C1A0, 4);
+    this->framesUntilDisable = 416;
+    if (D_8089C1A0 == 4) {
+        Flags_SetSwitch(play, this->actor.params);
+        Sfx_PlaySfxCentered(NA_SE_SY_CORRECT_CHIME);
+    }
+}
+
 void BgMenkuriEye_Update(Actor* thisx, PlayState* play) {
     BgMenkuriEye* this = (BgMenkuriEye*)thisx;
 
@@ -114,6 +142,7 @@ void BgMenkuriEye_Update(Actor* thisx, PlayState* play) {
             Flags_SetSwitch(play, this->actor.params);
             Sfx_PlaySfxCentered(NA_SE_SY_CORRECT_CHIME);
         }
+        FxSync_OnGtgEyeLit(&this->actor);
     }
     if (this->framesUntilDisable == -1) {
         CollisionCheck_SetAC(play, &play->colChkCtx, &this->collider.base);

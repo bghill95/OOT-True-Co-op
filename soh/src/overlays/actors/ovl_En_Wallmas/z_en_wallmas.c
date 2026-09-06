@@ -42,6 +42,8 @@ void EnWallmas_WaitForSwitchFlag(EnWallmas* this, PlayState* play);
 void EnWallmas_Stun(EnWallmas* this, PlayState* play);
 void EnWallmas_Walk(EnWallmas* this, PlayState* play);
 
+Player* Anchor_NearestPlayer(Actor* from);
+
 const ActorInit En_Wallmas_InitVars = {
     ACTOR_EN_WALLMAS,
     ACTORCAT_ENEMY,
@@ -302,7 +304,12 @@ void EnWallmas_SetupStun(EnWallmas* this) {
 }
 
 void EnWallmas_WaitToDrop(EnWallmas* this, PlayState* play) {
-    Player* player = GET_PLAYER(play);
+    // Co-op: the shadow tracks its victim by reading world.pos straight off the
+    // player, and EnemySync's perception override only rewrites the distance and
+    // yaw fields — not world.pos. The hand therefore always lined itself up over
+    // the AUTHORITY's Link, so the other player could stand under a Wallmaster
+    // indefinitely while his partner got grabbed across the room.
+    Player* player = Anchor_NearestPlayer(&this->actor);
     Vec3f* playerPos = &player->actor.world.pos;
 
     this->actor.world.pos = *playerPos;
@@ -453,7 +460,19 @@ void EnWallmas_Die(EnWallmas* this, PlayState* play) {
 }
 
 void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
-    Player* player = GET_PLAYER(play);
+    // The victim is whoever the hand actually came down on (see WaitToDrop).
+    // Everything below that MOVES the player or sends them back must only run
+    // when that victim is our own Link: with the bare GET_PLAYER, a Wallmaster
+    // grabbing the other player used to haul the authority's Link into the air
+    // and respawn HIM at the room entrance.
+    //
+    // Known gap: the grabbed player is only carried and respawned on the client
+    // that simulates the enemy. When the victim is the mirroring player, the
+    // hand closes on them visually but they are not taken — replicating that
+    // needs a "this enemy captured client N" channel, same shape as the Gerudo
+    // guard capture. Recorded in the audit backlog.
+    Player* player = Anchor_NearestPlayer(&this->actor);
+    s32 victimIsLocal = (player == GET_PLAYER(play));
 
     if (Animation_OnFrame(&this->skelAnime, 1.0f) != 0) {
         if (!LINK_IS_ADULT) {
@@ -465,8 +484,10 @@ void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
         Audio_PlayActorSound2(&this->actor, NA_SE_EN_FALL_CATCH);
     }
     if (SkelAnime_Update(&this->skelAnime) != 0) {
-        player->actor.world.pos.x = this->actor.world.pos.x;
-        player->actor.world.pos.z = this->actor.world.pos.z;
+        if (victimIsLocal) {
+            player->actor.world.pos.x = this->actor.world.pos.x;
+            player->actor.world.pos.z = this->actor.world.pos.z;
+        }
 
         if (this->timer < 0) {
             this->actor.world.pos.y = this->actor.world.pos.y + 2.0f;
@@ -474,10 +495,8 @@ void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
             this->actor.world.pos.y = this->actor.world.pos.y + 10.0f;
         }
 
-        if (!LINK_IS_ADULT) {
-            player->actor.world.pos.y = this->actor.world.pos.y - 30.0f;
-        } else {
-            player->actor.world.pos.y = this->actor.world.pos.y - 50.0f;
+        if (victimIsLocal) {
+            player->actor.world.pos.y = this->actor.world.pos.y - (!LINK_IS_ADULT ? 30.0f : 50.0f);
         }
 
         if (this->timer == -0x1E) {
@@ -499,7 +518,7 @@ void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
     Math_StepToF(&this->actor.world.pos.x, player->actor.world.pos.x, 3.0f);
     Math_StepToF(&this->actor.world.pos.z, player->actor.world.pos.z, 3.0f);
 
-    if (this->timer == 0x1E) {
+    if (this->timer == 0x1E && victimIsLocal) {
         Sfx_PlaySfxCentered(NA_SE_OC_ABYSS);
         Play_TriggerRespawn(play);
     }

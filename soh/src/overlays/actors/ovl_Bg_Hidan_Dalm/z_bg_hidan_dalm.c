@@ -124,6 +124,42 @@ void BgHidanDalm_Destroy(Actor* thisx, PlayState* play) {
     Collider_DestroyTris(play, &this->collider);
 }
 
+void FxSync_OnHammerTotemBreak(Actor* totem, u8 reverse);
+
+/**
+ * Topple this totem because the OTHER player hammered it.
+ *
+ * The switch flag this actor sets is unusable on most placements: switchFlag is
+ * (params >> 8) & 0xFF and the Gerudo Training Ground instances all carry 0xFF,
+ * far outside the 0x00-0x3F switch range, so nothing replicable ever leaves
+ * here. Without this, a totem smashed by one player stays standing on the other
+ * screen — and it is a DynaPoly actor, so it stays SOLID and blocks the way.
+ *
+ * Mirrors the AC_HIT branch below, minus the parts that belong to the player
+ * holding the hammer: no Player_SetCsActionWithHaltedActors (it would freeze a
+ * player who is somewhere else entirely) and no hammer swing sound.
+ */
+void BgHidanDalm_BreakFromPeer(Actor* thisx, PlayState* play, u8 reverse) {
+    BgHidanDalm* this = (BgHidanDalm*)thisx;
+
+    if (this->actionFunc != BgHidanDalm_Wait) {
+        return; // already toppling or gone here
+    }
+    this->collider.base.acFlags &= ~AC_HIT;
+    // Which way it spins away depends on the face that was struck, so the
+    // announcement carries it: deriving it locally would send the debris the
+    // wrong way whenever the two players stood on opposite sides.
+    this->dyna.actor.world.rot.y += reverse ? -0x4000 : 0x4000;
+    this->dyna.actor.world.pos.x += 32.5f * Math_SinS(this->dyna.actor.world.rot.y);
+    this->dyna.actor.world.pos.z += 32.5f * Math_CosS(this->dyna.actor.world.rot.y);
+    this->dyna.actor.flags |= ACTOR_FLAG_UPDATE_CULLING_DISABLED;
+    this->actionFunc = BgHidanDalm_Shrink;
+    this->dyna.actor.bgCheckFlags &= ~2;
+    this->dyna.actor.bgCheckFlags &= ~8;
+    this->dyna.actor.speedXZ = 10.0f;
+    Audio_PlayActorSound2(&this->dyna.actor, NA_SE_EV_DARUMA_VANISH);
+}
+
 void BgHidanDalm_Wait(BgHidanDalm* this, PlayState* play) {
     Player* player = GET_PLAYER(play);
 
@@ -131,9 +167,15 @@ void BgHidanDalm_Wait(BgHidanDalm* this, PlayState* play) {
                               (this->collider.base.acFlags & AC_HIT) && !Player_InCsMode(play) &&
                                   (player->meleeWeaponAnimation == 22 || player->meleeWeaponAnimation == 23),
                               this)) {
+        u8 reverse;
+
         this->collider.base.acFlags &= ~AC_HIT;
-        if ((this->collider.elements[0].info.bumperFlags & BUMP_HIT) ||
-            (this->collider.elements[1].info.bumperFlags & BUMP_HIT)) {
+        reverse = ((this->collider.elements[0].info.bumperFlags & BUMP_HIT) ||
+                   (this->collider.elements[1].info.bumperFlags & BUMP_HIT))
+                      ? 1
+                      : 0;
+        FxSync_OnHammerTotemBreak(&this->dyna.actor, reverse);
+        if (reverse) {
             this->dyna.actor.world.rot.y -= 0x4000;
         } else {
             this->dyna.actor.world.rot.y += 0x4000;
