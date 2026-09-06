@@ -130,4 +130,46 @@ s32 Anchor_DeliverCapture(Actor* enemy, u8 mode, s16 entrance) {
 void Anchor_ForgetCaptureVictim(Actor* enemy) {
     sCaptureVictim.erase(enemy);
 }
+
+// Hurt a player that an enemy hit by hand rather than through a collider.
+//
+// Boss code often writes damage straight onto the Player struct — Twinrova's
+// beams set bodyFlameTimers and bodyIsBurning, or drive a freeze state machine —
+// which only ever works on the local Link. Where the victim is the other player,
+// the effect has to be asked for across the wire instead.
+//
+// Returns 1 when it was sent (victim is a puppet), 0 when the victim is our own
+// Link and the caller should apply the effect itself.
+//
+// Split into two named entry points rather than one taking a response type:
+// DummyPlayerDamageResponseType lives inside Anchor.h's C++ half, so the actor
+// overlays that need this cannot name its values.
+static s32 HurtRemote(Actor* victim, u8 effect, u8 damage) {
+    if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected || victim == NULL || gPlayState == NULL) {
+        return 0;
+    }
+    if (victim == &GET_PLAYER(gPlayState)->actor) {
+        return 0;
+    }
+    for (auto& [cid, client] : Anchor::Instance->clients) {
+        if (!client.self && client.player != nullptr && &client.player->actor == victim) {
+            Anchor::Instance->SendPacket_DamagePlayer(cid, effect, damage);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Freeze the other player. The receiving side stops them and tints them blue; it
+// is NOT the animated block of ice, which lives in the boss's own effect table
+// and cannot run on a client whose copy of that boss is suppressed. Deals no
+// damage, matching how the stun response is defined.
+s32 Anchor_FreezeRemotePlayer(Actor* victim) {
+    return HurtRemote(victim, DUMMY_PLAYER_HIT_RESPONSE_STUN, 0);
+}
+
+// Set the other player alight, then deal `damage` (multiplied by 8 on arrival).
+s32 Anchor_BurnRemotePlayer(Actor* victim, u8 damage) {
+    return HurtRemote(victim, DUMMY_PLAYER_HIT_RESPONSE_FIRE, damage);
+}
 }

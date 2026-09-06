@@ -4,6 +4,23 @@
 #include <libultraship/libultra.h>
 #include "global.h"
 
+// What a Boss_Tw instance is, from its params. One actor id covers the two
+// sisters, their merged form, the blasts they throw and the death-cutscene
+// balls. Lives here rather than in the .c so the co-op layer can tell a blast
+// (simulated locally by every client, so either player can shield it) from a
+// sister (streamed from the authority).
+typedef enum {
+    /* 0x00 */ TW_KOTAKE,
+    /* 0x01 */ TW_KOUME,
+    /* 0x02 */ TW_TWINROVA,
+    /* 0x64 */ TW_FIRE_BLAST = 0x64,
+    /* 0x65 */ TW_FIRE_BLAST_GROUND,
+    /* 0x66 */ TW_ICE_BLAST,
+    /* 0x67 */ TW_ICE_BLAST_GROUND,
+    /* 0x68 */ TW_DEATHBALL_KOTAKE,
+    /* 0x69 */ TW_DEATHBALL_KOUME
+} TwinrovaType;
+
 typedef enum {
     /*  0 */ TWEFF_NONE,
     /*  1 */ TWEFF_DOT,

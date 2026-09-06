@@ -13,17 +13,16 @@
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
      ACTOR_FLAG_DRAW_CULLING_DISABLED)
 
-typedef enum {
-    /* 0x00 */ TW_KOTAKE,
-    /* 0x01 */ TW_KOUME,
-    /* 0x02 */ TW_TWINROVA,
-    /* 0x64 */ TW_FIRE_BLAST = 0x64,
-    /* 0x65 */ TW_FIRE_BLAST_GROUND,
-    /* 0x66 */ TW_ICE_BLAST,
-    /* 0x67 */ TW_ICE_BLAST_GROUND,
-    /* 0x68 */ TW_DEATHBALL_KOTAKE,
-    /* 0x69 */ TW_DEATHBALL_KOUME
-} TwinrovaType;
+// TwinrovaType moved to z_boss_tw.h: the co-op layer needs it to tell the
+// blasts (which run locally on each client) from the sisters.
+
+// Co-op: every live player actor, index 0 being our own Link (DummyPlayer.cpp).
+Actor* Anchor_PlayerActorAt(s32 index);
+// Co-op: ask the other player's client to apply an effect we cannot write onto
+// their puppet. Both return 0 when the victim is our own Link, so the caller
+// falls through to the vanilla path (Packets/CapturePlayer.cpp).
+s32 Anchor_FreezeRemotePlayer(Actor* victim);
+s32 Anchor_BurnRemotePlayer(Actor* victim, u8 damage);
 
 void BossTw_Init(Actor* thisx, PlayState* play);
 void BossTw_Destroy(Actor* thisx, PlayState* play);
@@ -762,39 +761,64 @@ void BossTw_SpawnGroundBlast(BossTw* this, PlayState* play, s16 blastType) {
 s32 BossTw_BeamHitPlayerCheck(BossTw* this, PlayState* play) {
     Vec3f offset;
     Vec3f beamDistFromPlayer;
-    Player* player = GET_PLAYER(play);
+    Player* localPlayer = GET_PLAYER(play);
+    Actor* playerActor;
+    s32 playerIndex;
     s16 i;
 
-    offset.x = player->actor.world.pos.x - this->beamOrigin.x;
-    offset.y = player->actor.world.pos.y - this->beamOrigin.y;
-    offset.z = player->actor.world.pos.z - this->beamOrigin.z;
+    // Co-op: the beam used to be tested against the authority's Link and nobody
+    // else, so it stopped on him wherever he stood — and passed straight through
+    // the other player. Walk every player and stop on the first one the beam
+    // actually crosses; the boss-side state (cooldown, beam length) updates for
+    // whoever that is, so the beam visibly stops on the right person.
+    for (playerIndex = 0; (playerActor = Anchor_PlayerActorAt(playerIndex)) != NULL; playerIndex++) {
+        offset.x = playerActor->world.pos.x - this->beamOrigin.x;
+        offset.y = playerActor->world.pos.y - this->beamOrigin.y;
+        offset.z = playerActor->world.pos.z - this->beamOrigin.z;
 
-    Matrix_RotateX(-this->beamPitch, MTXMODE_NEW);
-    Matrix_RotateY(-this->beamYaw, MTXMODE_APPLY);
-    Matrix_MultVec3f(&offset, &beamDistFromPlayer);
+        Matrix_RotateX(-this->beamPitch, MTXMODE_NEW);
+        Matrix_RotateY(-this->beamYaw, MTXMODE_APPLY);
+        Matrix_MultVec3f(&offset, &beamDistFromPlayer);
 
-    if (fabsf(beamDistFromPlayer.x) < 20.0f && fabsf(beamDistFromPlayer.y) < 50.0f && beamDistFromPlayer.z > 100.0f &&
-        beamDistFromPlayer.z <= this->beamDist) {
-        if (sTwinrovaPtr->timers[2] == 0) {
-            sTwinrovaPtr->timers[2] = 150;
-            this->beamDist = sqrtf(SQ(offset.x) + SQ(offset.y) + SQ(offset.z));
-            func_8002F6D4(play, &this->actor, 3.0f, this->actor.shape.rot.y, 0.0f, 0x20);
+        if (fabsf(beamDistFromPlayer.x) < 20.0f && fabsf(beamDistFromPlayer.y) < 50.0f &&
+            beamDistFromPlayer.z > 100.0f && beamDistFromPlayer.z <= this->beamDist) {
+            if (sTwinrovaPtr->timers[2] == 0) {
+                sTwinrovaPtr->timers[2] = 150;
+                this->beamDist = sqrtf(SQ(offset.x) + SQ(offset.y) + SQ(offset.z));
 
-            if (this->actor.params == 0) {
-                if (sFreezeState == 0) {
-                    sFreezeState = 1;
+                // Freezing and burning are written straight onto the Player
+                // struct, and the freeze runs through the boss's own effect
+                // table — none of which the other player's client can do, since
+                // its copy of the sisters is suppressed. Ask for the effect
+                // across the wire instead. 4 becomes 32 on the receiving side,
+                // matching the 0x20 the local path deals.
+                if (playerActor != &localPlayer->actor) {
+                    if (this->actor.params == 0) {
+                        Anchor_FreezeRemotePlayer(playerActor);
+                    } else {
+                        Anchor_BurnRemotePlayer(playerActor, 4);
+                    }
+                } else {
+                    func_8002F6D4(play, &this->actor, 3.0f, this->actor.shape.rot.y, 0.0f, 0x20);
+
+                    if (this->actor.params == 0) {
+                        if (sFreezeState == 0) {
+                            sFreezeState = 1;
+                        }
+                    } else if (!localPlayer->bodyIsBurning) {
+                        for (i = 0; i < ARRAY_COUNT(localPlayer->bodyFlameTimers); i++) {
+                            localPlayer->bodyFlameTimers[i] = Rand_S16Offset(0, 200);
+                        }
+
+                        localPlayer->bodyIsBurning = true;
+                        Player_PlaySfx(&localPlayer->actor,
+                                       localPlayer->ageProperties->unk_92 + NA_SE_VO_LI_DEMO_DAMAGE);
+                    }
                 }
-            } else if (!player->bodyIsBurning) {
-                for (i = 0; i < ARRAY_COUNT(player->bodyFlameTimers); i++) {
-                    player->bodyFlameTimers[i] = Rand_S16Offset(0, 200);
-                }
-
-                player->bodyIsBurning = true;
-                Player_PlaySfx(&player->actor, player->ageProperties->unk_92 + NA_SE_VO_LI_DEMO_DAMAGE);
             }
-        }
 
-        return true;
+            return true;
+        }
     }
     return false;
 }
