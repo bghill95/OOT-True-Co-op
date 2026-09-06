@@ -398,6 +398,15 @@ void RegisterHooks(bool isConnected) {
         if (GameInteractor_Should(VB_ITEM00_DESPAWN, Flags_GetCollectible(gPlayState, item->collectibleFlag),
                                   item)) {
             Actor_Kill(&item->actor);
+            // MUST clear `should` in the same breath. Actor_UpdateAll reads
+            //     if (GameInteractor_ShouldActorUpdate(actor)) { actor->update(...); }
+            // on two consecutive lines (z_actor.c:2704-2705), and Actor_Kill has
+            // just set update to NULL -- so leaving `should` true calls a null
+            // pointer. Crash on the main thread with rip = 0, seen live on
+            // 2026-09-06 16:37 the moment a collectible the peer had already
+            // picked up came back into view. Every other killing hook in this
+            // module already does this; this one was the exception.
+            *should = false;
         }
     });
 
