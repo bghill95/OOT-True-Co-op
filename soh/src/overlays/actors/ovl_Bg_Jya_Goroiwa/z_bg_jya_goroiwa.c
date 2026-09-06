@@ -10,6 +10,9 @@
 
 #define FLAGS ACTOR_FLAG_UPDATE_CULLING_DISABLED
 
+s16 Anchor_LocalPlayerYaw(Actor* from);
+s32 Anchor_IsSessionActive(void);
+
 void BgJyaGoroiwa_Init(Actor* thisx, PlayState* play);
 void BgJyaGoroiwa_Destroy(Actor* thisx, PlayState* play);
 void BgJyaGoroiwa_Update(Actor* thisx, PlayState* play);
@@ -153,8 +156,15 @@ void BgJyaGoroiwa_Move(BgJyaGoroiwa* this, PlayState* play) {
             thisx->world.rot.y += 0x8000;
         }
 
-        func_8002F6D4(play, thisx, 2.0f, thisx->yawTowardsPlayer, 0.0f, 0);
-        Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        // Co-op: no guard on who was actually hit. The other player's puppet
+        // carries a player-type AC cylinder, so a boulder rolling over THEM used
+        // to shove the local Link — on this narrow ledge, into the pit — with
+        // his grunt playing. Knock back and voice only our own Link; the peer's
+        // client runs the same check for its side.
+        if (&GET_PLAYER(play)->actor == this->collider.base.at) {
+            func_8002F6D4(play, thisx, 2.0f, Anchor_LocalPlayerYaw(thisx), 0.0f, 0);
+            Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        }
 
         this->yOffsetSpeed = 10.0f;
         this->speedFactor = 0.5f;
@@ -201,7 +211,13 @@ void BgJyaGoroiwa_Update(Actor* thisx, PlayState* play) {
     s32 bgId;
     Vec3f pos;
 
-    if (!(player->stateFlags1 &
+    // Co-op: vanilla freezes the boulder while the local Link talks, dies or is
+    // in a cutscene. Each client runs its own copy, so one player opening a
+    // textbox stops HIS boulder while the other keeps rolling, and the two never
+    // line up again — each player crushed by a rock the other does not see there.
+    // Keep rolling when connected; the pause is a courtesy to a single player.
+    if (Anchor_IsSessionActive() ||
+        !(player->stateFlags1 &
           (PLAYER_STATE1_TALKING | PLAYER_STATE1_DEAD | PLAYER_STATE1_IN_ITEM_CS | PLAYER_STATE1_IN_CUTSCENE))) {
         this->actionFunc(this, play);
         BgJyaGoroiwa_UpdateRotation(this);
