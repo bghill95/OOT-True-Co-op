@@ -3,6 +3,8 @@
 #include "objects/object_jya_obj/object_jya_obj.h"
 #define FLAGS ACTOR_FLAG_ATTENTION_ENABLED
 
+s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
+
 void BgJyaBombchuiwa_Init(Actor* thisx, PlayState* play);
 void BgJyaBombchuiwa_Destroy(Actor* thisx, PlayState* play);
 void BgJyaBombchuiwa_Update(Actor* thisx, PlayState* play);
@@ -144,7 +146,13 @@ void BgJyaBombchuiwa_SetupWaitForExplosion(BgJyaBombchuiwa* this, PlayState* pla
 void BgJyaBombchuiwa_WaitForExplosion(BgJyaBombchuiwa* this, PlayState* play) {
     if ((this->collider.base.acFlags & AC_HIT) || (this->timer > 0)) {
         if (this->timer == 0) {
-            OnePointCutscene_Init(play, 3410, -99, &this->actor, MAIN_CAM);
+            // Co-op: now that the destruction replicates (see the flag set in
+            // CleanUpAfterExplosion), the peer reaches this branch too — from
+            // the replay hook posting AC_HIT — and would have its camera pulled
+            // here from wherever it stands.
+            if (Anchor_ShouldPlayCameraCutscene(&this->actor, 800.0f)) {
+                OnePointCutscene_Init(play, 3410, -99, &this->actor, MAIN_CAM);
+            }
         }
         this->timer++;
         if (this->timer > 10) {
