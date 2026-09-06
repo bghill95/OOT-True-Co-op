@@ -38,10 +38,6 @@ static constexpr float POS_EPSILON = 0.01f;
 // mirror the claimant instead of running their own copy.
 static constexpr uint64_t CLAIM_TICKS = 45;
 
-// How close to its registered rest position a ride-claimable platform must be
-// before a local rider may take it over. See the claim test for why.
-static constexpr float RIDE_REST_EPSILON = 4.0f;
-
 // Whitelist: scene-placed DynaPoly actors whose MOTION should mirror.
 // Grow this table dungeon by dungeon; never add flag-driven state here
 // (SetFlag.cpp's exclusions own water level / forest elevator / collapse).
@@ -76,6 +72,16 @@ static bool IsSyncedDynaActor(const Actor* actor) {
             // per-actor claim). NOT Obj_Lift collapsing platforms (per-player
             // stand trigger). NOT boss-room platforms (adapter territory).
             return true;
+
+        // The other half of the Bg_Hidan_Sima split. params 0 is the rider-driven
+        // platform and belongs to IsRideClaimable; every other value runs
+        // func_8088E760, a pure timer loop that swings the platform around home.pos
+        // and arms the fire jet. Without this case it fell out of tracking
+        // ALTOGETHER when it left the ride list -- IsClaimableDynaActor falls
+        // through to IsRideClaimable, so OnDynaRegistered dropped it and each
+        // client swung it on a phase set by its own room load.
+        case ACTOR_BG_HIDAN_SIMA:
+            return actor->params != 0;
 
         case ACTOR_BG_MORI_HASHIRA4:
             // Forest Temple, the four rotating pillars (params 0 after Init masks
@@ -207,7 +213,6 @@ struct TrackedDyna {
     bool claimable = false;
     bool ride = false;          // claimed by standing on it, mirrored with update suppressed
     bool hadUncullFlag = false; // actor's own culling setting, restored on release
-    Vec3f restPos{};            // position at registration: a ride only claims back here
     uint64_t localClaimTick = 0; // last tick our player pushed/moved it
     uint64_t softClaimTick = 0;  // last tick a module asked us to keep driving it (HoldSoftClaim)
     Vec3f prevPos{};             // motion detection for claim upkeep
@@ -303,10 +308,6 @@ static void OnDynaRegistered(Actor* actor) {
     st.claimable = IsClaimableDynaActor(actor);
     st.ride = IsRideClaimable(actor);
     st.prevPos = actor->world.pos;
-    // Registration happens in the actor's own Init, so this is its rest pose on
-    // every client -- the only phase where a mirror's frozen private state and its
-    // streamed position agree.
-    st.restPos = actor->world.pos;
     st.hadUncullFlag = (actor->flags & ACTOR_FLAG_UPDATE_CULLING_DISABLED) != 0;
     sTracked[actor] = st;
     ESYNC_LOG("[DynaSync] tracked id={} params={:#x} key={:#x}", actor->id, (uint16_t)actor->params, st.key);
@@ -343,32 +344,28 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
                      actor->shape.rot.z != st.prevRot.z;
         st.prevPos = actor->world.pos;
         st.prevRot = actor->shape.rot;
-        // A ride claim is only accepted while the platform is back where it was
-        // registered.
+        // KNOWN, ACCEPTED: taking a ride claim can snap the platform.
         //
-        // DYNA_STATE carries pos and shape.rot, nothing else. timer, actionFunc and
-        // the direction flags are private and stay frozen at their Init values on a
-        // mirror, because the stream is refreshed faster than it goes stale so the
-        // update is suppressed without interruption. Handing that stale state back
-        // mid-cycle is not a small error: these actors RECOMPUTE world.pos from
-        // home.pos rather than integrating it, so the first frame of a resumed
-        // update snaps the platform to wherever the frozen phase says it should be
-        // -- 540 units for the Fire Temple pillar -- and the claimant then streams
-        // that jump, so the authority follows it down with whoever was standing on
-        // it. Near rest, the frozen phase and the real one agree and the resume is
-        // seamless; that is also the case the ride classification exists for, a
-        // player stepping on an idle platform nobody else is using.
-        bool localSignal;
-        if (st.ride) {
-            f32 dx = actor->world.pos.x - st.restPos.x;
-            f32 dy = actor->world.pos.y - st.restPos.y;
-            f32 dz = actor->world.pos.z - st.restPos.z;
-            bool atRest = (fabsf(dx) < RIDE_REST_EPSILON) && (fabsf(dy) < RIDE_REST_EPSILON) &&
-                          (fabsf(dz) < RIDE_REST_EPSILON);
-            localSignal = atRest && (((DynaPolyActor*)actor)->interactFlags & DYNA_INTERACT_PLAYER_ON_TOP) != 0;
-        } else {
-            localSignal = fabsf(((DynaPolyActor*)actor)->unk_150) > 0.001f;
-        }
+        // DYNA_STATE carries pos and shape.rot and nothing else, so timer,
+        // actionFunc and the direction flags stay frozen at their Init values on a
+        // mirror -- the stream refreshes faster than it goes stale, so the update
+        // never resumes to advance them. Some of these actors RECOMPUTE world.pos
+        // from home.pos instead of integrating it, so the first resumed frame can
+        // jump to wherever the frozen phase says (up to 540 units on the Fire
+        // Temple pillar), and the claimant then streams that jump.
+        //
+        // A guard requiring the platform to be near its registration position was
+        // tried here and WITHDRAWN: it traps players. Obj_Elevator toggles to
+        // home.pos.y + N*80 and STAYS up; Bg_Mori_Elevator parks at a fixed y of
+        // its own. Neither is ever near its spawn point when you next step on it,
+        // so the guard denied the claim, left the update suppressed, and left the
+        // rider stuck on a platform that would not move -- exactly the block the
+        // ride classification exists to remove, and strictly worse than a jump.
+        // Fixing this properly means rebuilding each actor's phase from the pinned
+        // position on resume, per actor, the way BG_HAKA and BG_JYA_COBRA already
+        // do for their own fields further down.
+        bool localSignal = st.ride ? (((DynaPolyActor*)actor)->interactFlags & DYNA_INTERACT_PLAYER_ON_TOP) != 0
+                                   : fabsf(((DynaPolyActor*)actor)->unk_150) > 0.001f;
         if (localSignal || (Fresh(st.localClaimTick, CLAIM_TICKS) && moved && !st.suppressed)) {
             st.localClaimTick = sTick;
         }
