@@ -387,7 +387,23 @@ void Anchor::RegisterHooks() {
     COND_VB_SHOULD(VB_HAMMER_TOTEM_BREAK, isConnected, {
         BgHidanDalm* actor = va_arg(args, BgHidanDalm*);
 
-        if (Flags_GetSwitch(gPlayState, actor->switchFlag)) {
+        // switchFlag is (params >> 8) & 0xFF, and the file's own comment records
+        // that the Gerudo Training Ground placements all carry 0xFF -- outside the
+        // 0x00-0x3F switch range. Flags_GetSwitch then evaluates
+        // tempSwch & (1 << (0xFF - 0x20)): a shift of 223, which the hardware masks
+        // to 5 bits and turns into bit 31. Flags_SetSwitch(0xFF) in the vanilla
+        // break path sets that very bit, so the FIRST 0xFF totem broken anywhere in
+        // the scene made every other 0xFF totem read "already broken" and collapse
+        // on its own -- each one dragging the player into a halted-actor cutscene.
+        // Nobody read that bit before this hook existed; the hook created the link.
+        //
+        // Still `*should = true` rather than BgHidanDalm_BreakFromPeer: this hook is
+        // consulted from inside the actor's own update, and BreakFromPeer rewrites
+        // that actor's state, so calling it here would be re-entrant. Behind the
+        // range guard the fallback now only fires for a totem whose flag really did
+        // replicate, which is the case the vanilla branch is right for. FX_EV_TOTEM
+        // normally arrives first and disarms it anyway.
+        if (actor->switchFlag <= 0x3F && Flags_GetSwitch(gPlayState, actor->switchFlag)) {
             *should = true;
         }
     });

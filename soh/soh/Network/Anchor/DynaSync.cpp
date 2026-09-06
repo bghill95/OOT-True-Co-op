@@ -13,6 +13,7 @@ extern "C" {
 #include "functions.h"
 #include "src/overlays/actors/ovl_Bg_Po_Event/z_bg_po_event.h"
 #include "src/overlays/actors/ovl_Bg_Jya_Cobra/z_bg_jya_cobra.h"
+#include "src/overlays/actors/ovl_Bg_Hidan_Rock/z_bg_hidan_rock.h"
 extern PlayState* gPlayState;
 }
 
@@ -96,8 +97,18 @@ static bool IsClaimableDynaActor(const Actor* actor) {
     switch (actor->id) {
         case ACTOR_BG_PO_EVENT: // Forest Temple: Amy's picture blocks (the paintings share the id, type >= 2)
             return ((const BgPoEvent*)actor)->type < 2;
+        // Fire Temple stone. Only type 0 is the push block whose claim signal is
+        // dyna.unk_150; the other type is a launch pad triggered by standing on it,
+        // so it belongs to the ride list below and never claims by push force.
+        // Left claimable, it could not claim at all: pinned at rest by the stream
+        // while its state machine kept running, it stuck in the "rising" state,
+        // where unk_16C = (pos.y + 50 - home.y + 40) / 80 evaluates to 1.125 with
+        // pos.y == home.y -- and BgHidanRock_Update submits an AT cylinder every
+        // frame that unk_16C is positive. A stone at rest became a permanent pillar
+        // of fire on the mirror, for anyone who had stepped on it once.
+        case ACTOR_BG_HIDAN_ROCK:
+            return ((const BgHidanRock*)actor)->type == 0 ? true : IsRideClaimable(actor);
         case ACTOR_OBJ_OSHIHIKI:       // push blocks (every dungeon)
-        case ACTOR_BG_HIDAN_ROCK:      // Fire Temple push stone
         case ACTOR_BG_MORI_KAITENKABE: // Forest Temple: push-rotated basement wall
         case ACTOR_BG_JYA_COBRA:       // Spirit Temple: push-rotated cobra mirror
         case ACTOR_BG_ICE_OBJECTS:     // Ice Cavern: sliding ice blocks
@@ -156,6 +167,8 @@ static bool IsRideClaimable(const Actor* actor) {
         case ACTOR_BG_GND_FIREMEIRO:  // Ganon's Castle fire trial: sinks, shakes and rises under its rider
         case ACTOR_BG_JYA_1FLIFT:     // Spirit Temple: 1F elevator (its own code calls the rider `tempIsRiding`)
             return true;
+        case ACTOR_BG_HIDAN_ROCK: // Fire Temple: the non-zero type, a launch pad
+            return ((const BgHidanRock*)actor)->type != 0;
         default:
             return false;
     }

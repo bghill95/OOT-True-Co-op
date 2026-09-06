@@ -368,7 +368,16 @@ void EnBox_AppearOnRoomClear(EnBox* this, PlayState* play) {
         func_8002F5F0(&this->dyna.actor, play);
     }
 
-    if (Flags_GetTempClear(play, this->dyna.actor.room) && !Player_InCsMode(play)) {
+    // Co-op: accept the replicated flag as well as the local one. tempClear is
+    // volatile and per-client -- it latches only when the LAST tracked enemy leaves
+    // this machine's actor list -- while the flag that crosses the wire is
+    // FLAG_SCENE_CLEAR. A peer whose enemy list was not empty at that instant (a
+    // mirror still alive, a neighbouring room mid-transition) never latched
+    // tempClear, so a chest that appears on room clear -- the Flare Dancer's, among
+    // others -- stayed under the floor until the room was reloaded. Door_Shutter
+    // already tests the pair this way; En_Box was the one that did not.
+    if ((Flags_GetClear(play, this->dyna.actor.room) || Flags_GetTempClear(play, this->dyna.actor.room)) &&
+        !Player_InCsMode(play)) {
         Flags_SetClear(play, this->dyna.actor.room);
         EnBox_SetupAction(this, EnBox_AppearInit);
         OnePointCutscene_Attention(play, &this->dyna.actor);
