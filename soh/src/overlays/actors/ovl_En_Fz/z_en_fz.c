@@ -755,16 +755,23 @@ void EnFz_Draw(Actor* thisx, PlayState* play) {
 
     CLOSE_DISPS(play->state.gfxCtx);
 
-    // Co-op: the whole ice breath lives in the update — the particle table is filled
-    // by iceSmokeSpawnFuncs and aged by EnFz_UpdateIceSmoke, both at the end of
-    // EnFz_Update. On a mirror that update never runs, so EnFz_DrawIceSmoke below
-    // looped over forty empty slots and the Freezard breathed nothing, while
-    // EnemySync went on submitting the freeze cylinder — recentred on the body by the
-    // generic path, since the overlay is the only thing that ever moves it. A player
-    // was frozen by touching a Freezard that visibly did nothing. Run the breath here
-    // instead: `state` and the spawn height are streamed, so both clients breathe on
-    // the same frames, and collider3 follows the breath our player can actually see.
+    // Co-op: the ice smoke table is filled by iceSmokeSpawnFuncs and aged by
+    // EnFz_UpdateIceSmoke, both at the end of EnFz_Update. On a mirror that update
+    // never runs, so EnFz_DrawIceSmoke below looped over forty empty slots and the
+    // Freezard sat there with no cold mist at all. Run that half here instead.
+    //
+    // counter has to be stepped with it: EnFz_SpawnIceSmokeActiveState only spawns on
+    // counter % 4 and the hidden state on counter % 16, and EnFz_Update is the only
+    // thing that increments it. Frozen, the mist would either never appear or appear
+    // every single frame.
+    //
+    // This covers the AMBIENT mist only (EnFz_SpawnIceSmokeNoFreeze, type 1, harmless).
+    // The FREEZING jet is spawned by EnFz_BlowSmokeStationary, an action function, and
+    // reproducing an action function on a mirror is exactly what suppression exists to
+    // prevent. A mirrored Freezard therefore breathes cold but does not freeze — see
+    // the collider note in the adapter, and T41.
     if (Anchor_IsMirroredActor(&this->actor)) {
+        this->counter++;
         iceSmokeSpawnFuncs[this->state](this);
         EnFz_UpdateIceSmoke(this, play);
     }

@@ -524,11 +524,22 @@ static void EnOkuta_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
 // body draw. Both are streamed so the mirror's own breath (run from EnFz_Draw, see the
 // overlay) starts and stops on the same frames as the authority's.
 //
-// customColliderPos: collider3 is the freeze hitbox, and the overlay walks it onto the
-// breath particle by hand. The generic cylinder path would drag it back onto the
-// actor's own position every frame, which is what put an invisible freeze on the
-// Freezard's body. Taking ownership means placing the other two ourselves — they are
-// the body colliders and belong exactly where the generic path would have put them.
+// customColliderPos: collider3 is the freeze hitbox, and the overlay walks it onto a
+// breath particle by hand, in EnFz_UpdateIceSmoke. The generic cylinder path knows
+// nothing of that and recentred it on the actor's own position every frame — so a
+// mirrored Freezard froze anyone who touched its BODY, invisibly, while it appeared to
+// do nothing at all.
+//
+// The mirror cannot reproduce the freezing jet: it is spawned by an action function
+// (EnFz_BlowSmokeStationary), and running action functions on a mirror is what
+// suppression exists to prevent. The honest answer is therefore to remove the hazard
+// rather than leave it in the wrong place: park collider3 out of the world, and accept
+// that a mirrored Freezard breathes cold without freezing. Same trade already recorded
+// for the Fire Temple flames in T39, and strictly better than an invisible freeze on
+// contact.
+//
+// Taking ownership of cylinder placement means placing the other two ourselves — they
+// are the body colliders and belong exactly where the generic path would have put them.
 static void EnFz_SerializeExtras(Actor* actor, nlohmann::json& x) {
     EnFz* fz = (EnFz*)actor;
     x["ea"] = fz->envAlpha;
@@ -554,9 +565,16 @@ static void EnFz_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             fz->state = 3;
         }
         // We own cylinder placement now: put the two body colliders where the generic
-        // path would have, and leave collider3 on the breath particle.
+        // path would have...
         Collider_UpdateCylinder(actor, &fz->collider1);
         Collider_UpdateCylinder(actor, &fz->collider2);
+        // ...and take the freeze hitbox out of the world. The authority's colEnable
+        // still arms it (SubmitColliders applies those bits after we run, so clearing
+        // AT_ON here would simply be overwritten), but an AT nobody can reach is
+        // harmless — whereas one sitting on the Freezard's body is an invisible freeze.
+        fz->collider3.dim.pos.x = 0x7FFF;
+        fz->collider3.dim.pos.y = 0x7FFF;
+        fz->collider3.dim.pos.z = 0x7FFF;
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[EnemySync] EnFz extras parse error: {}", ex.what());
     }
