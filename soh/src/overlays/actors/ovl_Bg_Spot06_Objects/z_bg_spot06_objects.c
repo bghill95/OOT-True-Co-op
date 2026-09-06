@@ -584,6 +584,50 @@ void BgSpot06Objects_WaterPlaneCutsceneWait(BgSpot06Objects* this, PlayState* pl
 }
 
 /**
+ * Co-op: bring this client's lake up to the flag the other one just set.
+ *
+ * The plane reads EVENTCHKINF_RAISED_LAKE_HYLIA_WATER when it initialises and then
+ * parks in DoNothing, so a player standing at the lake while their partner clears the
+ * Water Temple kept the lowered waterBoxes for the whole visit -- one swims where the
+ * other walks, and the temple entrance is not in the same place. The lake bed texture,
+ * meanwhile, does follow the flag every frame, so the mismatch is plainly visible.
+ *
+ * Two states to reconcile, hence two branches:
+ *
+ *  - Still parked on the lowered Init branch (lakeHyliaWaterLevel is -681 there and 0
+ *    on the raised one, so the field tells them apart by itself): hand it to the
+ *    vanilla rise, the very function the post-temple cutscene uses.
+ *  - Rise finished: it leaves the Gerudo Valley river box LOWERED, because only the
+ *    rando path raises it -- while a client that LOADS the scene with the flag already
+ *    set writes it RAISED. Left alone the two players would end the visit with 80
+ *    units between their water surfaces at the river mouth, which is the same defect
+ *    in miniature. Write what a fresh load writes. zMin is set absolutely, and Destroy
+ *    resets it to the same constant, so this stays idempotent.
+ *
+ * Called every frame from the co-op flag replay; does nothing offline, where the hook
+ * is never registered.
+ */
+void BgSpot06Objects_CoopReplayWaterRise(BgSpot06Objects* self, PlayState* play) {
+    WaterBox* waterBoxes;
+
+    if ((self->dyna.actor.params != LHO_WATER_PLANE) || (self->actionFunc != BgSpot06Objects_DoNothing) ||
+        !Flags_GetEventChkInf(EVENTCHKINF_RAISED_LAKE_HYLIA_WATER)) {
+        return;
+    }
+
+    if (self->lakeHyliaWaterLevel < -0.0001f) {
+        self->actionFunc = BgSpot06Objects_WaterPlaneCutsceneRise;
+        return;
+    }
+
+    waterBoxes = play->colCtx.colHeader->waterBoxes;
+    if (waterBoxes[LHWB_GERUDO_VALLEY_RIVER_LOWER].ySurface != WATER_LEVEL_RIVER_RAISED) {
+        waterBoxes[LHWB_GERUDO_VALLEY_RIVER_LOWER].ySurface = WATER_LEVEL_RIVER_RAISED;
+        waterBoxes[LHWB_GERUDO_VALLEY_RIVER_LOWER].zMin = WATER_LEVEL_RIVER_LOWER_Z;
+    }
+}
+
+/**
  * This is where the Lake Hylia water plane rises in the cutscene after the Water Temple is cleared.
  */
 void BgSpot06Objects_WaterPlaneCutsceneRise(BgSpot06Objects* this, PlayState* play) {

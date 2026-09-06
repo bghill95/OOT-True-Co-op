@@ -773,13 +773,19 @@ void func_809BE798(EnBigokuta* this, PlayState* play) {
 //
 // Vanilla asks Actor_IsFacingPlayer, which reads yawTowardsPlayer. EN_BIGOKUTA is one
 // of the four ids in the perception-override exception list, so that field points at
-// the NEAREST player -- not at whoever landed the hit. With two players, a boomerang
-// correctly thrown at the back was rejected whenever the partner happened to stand in
+// the NEAREST player -- not at whoever landed the hit. With two players, a sword blow
+// correctly landed on the back was rejected whenever the partner happened to stand in
 // front, and the miniboss became invulnerable for as long as they stayed there.
 //
-// ac holds the actor that hit us (z_collision_check.c:1757), which for a boomerang is
-// the boomerang itself: geometrically the right reference, and it is the same actor
-// solo, so single-player behaviour is unchanged. Falls back to the vanilla test if the
+// The boomerang never reaches this test: sDamageTable gives it damageEffect 1, which
+// UpdateDamage routes to the stun two branches earlier. What does reach it is melee --
+// Deku stick, Kokiri sword, spin and jump attacks -- and those are the only non-zero
+// entries left once effects 1 and 0xF are taken out.
+//
+// ac holds the actor that hit us (z_collision_check.c:1757). For every entry that can
+// reach this branch that actor IS the player's own melee collider, so solo the value is
+// identical to yawTowardsPlayer, which z_actor.c recomputes from the same positions
+// earlier in the same Actor_UpdateAll iteration. Falls back to the vanilla test if the
 // hit carries no source.
 static s32 EnBigokuta_IsFacingAttacker(EnBigokuta* this, s16 maxAngle) {
     Actor* attacker = this->collider.base.ac;

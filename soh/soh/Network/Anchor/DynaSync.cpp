@@ -46,9 +46,10 @@ static constexpr uint64_t CLAIM_TICKS = 45;
 // position on top of it only fights the local state machine. That rule was broken
 // once, by BG_MIZU_MOVEBG: the Water Temple platforms take their height straight
 // from the LOCAL waterBoxes, so pinning the mirror to the authority's position
-// dragged a rider up to 700 units through his own water surface. Both it and
-// BG_MIZU_UZU are out now (the latter because its whole Update is the iron-boots
-// collision toggle, and its Draw is empty -- there was never anything to mirror).
+// dragged a rider up to 700 units through his own water surface. It is now split
+// by type (see its case below), and BG_MIZU_UZU is out entirely -- its whole
+// Update is the iron-boots collision toggle plus a spin and a sound, and its Draw
+// is empty, so there was never anything to mirror.
 // What remains excluded from flag replication: the forest elevator and the tower
 // collapse, in SetFlag.cpp.
 static bool IsSyncedDynaActor(const Actor* actor) {
@@ -68,18 +69,6 @@ static bool IsSyncedDynaActor(const Actor* actor) {
                                       // cosmetic, NO DynaPoly, so it is fed to
                                       // OnDynaRegistered by an OnActorInit hook instead
         case ACTOR_BG_SPOT18_BASKET:  // Goron City: spinning vase
-        case ACTOR_BG_SPOT08_ICEBLOCK: // Zora's Fountain: drifting ice floes. Same free-phase
-                                       // signature as BG_MORI_HASHIRA4 below, but the twins
-                                       // TRANSLATE on a radius-100 circle (up to 200 units
-                                       // apart between clients) and Update re-rolls
-                                       // bobIncrSlow/Fast at random every frame. They are the
-                                       // route to the Ice Cavern: "jump to that one" has to
-                                       // mean the same floe for both. NOT a ride -- Roll and
-                                       // SinkUnderPlayer read the trigger, but sinking 4 units
-                                       // is the rider's CONTRIBUTION, not what moves the
-                                       // platform (same arbitration as EN_SIOFUKI / EN_BROB
-                                       // below). Accepted: the mirror only sees it dip under
-                                       // the authority's Link.
         case ACTOR_BG_HAKA_SHIP:      // Shadow Temple: boat (flag then scripted sail — flag
                                       // replay times differ, the hull must not)
         case ACTOR_EN_SIOFUKI:        // Jabu: water-spout platforms (flag + timer + oscillation)
@@ -116,6 +105,37 @@ static bool IsSyncedDynaActor(const Actor* actor) {
         //             re-read every frame in func_8086C9A8 and converges on its own.
         case ACTOR_BG_BDAN_OBJECTS:
             return actor->params == 1;
+
+        // Zora's Fountain ice floes. Free-phase drifters: Bobbing runs from room load
+        // with a randomly seeded phase, and the orbiting variant TRANSLATES on a
+        // radius-100 circle, so two clients can be 200 units apart on the route to the
+        // Ice Cavern. NOT a ride -- Roll and SinkUnderPlayer do read the trigger, but
+        // sinking four units is the rider's CONTRIBUTION, not what moves the platform
+        // (same arbitration as EN_SIOFUKI / EN_BROB above). Accepted: the mirror only
+        // sees a floe dip under the authority's Link.
+        //
+        // The orbiting TWINS (low nibble 3) are excluded, and syncing them would be
+        // worse than leaving them alone. PosKey is the quantised spawn position plus
+        // the actor id, with no instance discriminant -- and BgSpot08Iceblock_Init
+        // registers its DynaPoly BEFORE SpawnTwinFloe, which spawns the second floe at
+        // the parent's own home.pos and only then offsets the parent. Both halves
+        // therefore register at the same rounded position with the same id: one key for
+        // two actors. They would share a RemoteDynaState and the mirror would pin both
+        // floes on top of each other, leaving nothing at all at the opposite point of
+        // the orbit -- where the peer is standing on one. A drop into the water instead
+        // of a phase offset.
+        case ACTOR_BG_SPOT08_ICEBLOCK:
+            return (actor->params & 0xF) != 3;
+
+        // Water Temple moving platforms. Types 0-6 take their height straight from the
+        // LOCAL waterBoxes or from a replicated flag, so streaming a position on top of
+        // them only fights the local state machine -- that is what dragged a rider 700
+        // units through his own water surface. Type 7 is a different actor wearing the
+        // same overlay: func_8089E650 walks a scene path with Actor_MoveXYZ, no flag, no
+        // water, no resync point, from the moment the room loads. Exactly the free-phase
+        // signature BG_MORI_HASHIRA4 is here for -- and it is a platform you stand on.
+        case ACTOR_BG_MIZU_MOVEBG:
+            return (((uint16_t)actor->params >> 0xC) & 0xF) == 7; // MOVEBG_TYPE, private to the overlay
 
         case ACTOR_BG_MORI_HASHIRA4:
             // Forest Temple, the four rotating pillars (params 0 after Init masks

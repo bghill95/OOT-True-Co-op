@@ -870,19 +870,25 @@ void EnFz_UpdateIceSmoke(EnFz* this, PlayState* play) {
                     }
                 }
 
-                if ((this->unusedTimer2 == 0) && (iceSmoke->primAlpha >= 101) && iceSmoke->isTimerMod8) {
+                // Co-op: on a mirror this function is driven from EnFz_Draw, and the
+                // mirror must not touch collider3 AT ALL -- position included. The
+                // adapter parks that cylinder out of the world every packet precisely
+                // because a mirrored Freezard cannot reproduce the freezing jet, and
+                // writing a real position here would undo the parking: EnemySync
+                // resubmits the AT from the streamed enable bits, so the mirror would
+                // freeze on an invisible hitbox until the next packet reparked it.
+                //
+                // It is not a dead branch on a mirror either. Type-2 particles are only
+                // spawned by EnFz_BlowSmokeStationary, an action function, so normally
+                // none exist here -- but the ones already in flight when authority
+                // changes hands survive into suppression, and they are exactly the ones
+                // that would land here.
+                if (!Anchor_IsMirroredActor(&this->actor) && (this->unusedTimer2 == 0) &&
+                    (iceSmoke->primAlpha >= 101) && iceSmoke->isTimerMod8) {
                     this->collider3.dim.pos.x = (s16)iceSmoke->pos.x;
                     this->collider3.dim.pos.y = (s16)iceSmoke->pos.y;
                     this->collider3.dim.pos.z = (s16)iceSmoke->pos.z;
-                    // Co-op: on a mirror this function is driven from the draw (see
-                    // EnFz_Draw), which is past the frame's collision pass — an AT
-                    // registered here would be discarded. Placing collider3 is what
-                    // matters: EnemySync submits it on the next frame, and the adapter
-                    // declares customColliderPos so the generic cylinder path no longer
-                    // drags it back onto the Freezard's body.
-                    if (!Anchor_IsMirroredActor(&this->actor)) {
-                        CollisionCheck_SetAT(play, &play->colChkCtx, &this->collider3.base);
-                    }
+                    CollisionCheck_SetAT(play, &play->colChkCtx, &this->collider3.base);
                 }
 
                 pos.x = iceSmoke->pos.x;

@@ -467,12 +467,16 @@ static void EnDodojr_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
 // that says when it is harmless and can be hit. The sphere collider's dim.scale is
 // written in the same update and read back by the Collider_UpdateSpheres in the
 // draw, so it stayed at full size too.
+// unk_1CA is the fire-hit countdown: the draw watches it reach 1 to spawn the single
+// flame puff, and only the update decrements it. Frozen at 0 on a mirror, a Spike hit
+// by fire never sheds that flame.
 static void EnNy_SerializeExtras(Actor* actor, nlohmann::json& x) {
     EnNy* ny = (EnNy*)actor;
     x["d4"] = ny->unk_1D4;
     x["d8"] = ny->unk_1D8;
     x["e0"] = ny->unk_1E0;
     x["cs"] = ny->elements[0].dim.scale;
+    x["ca"] = ny->unk_1CA;
 }
 
 static void EnNy_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
@@ -482,6 +486,7 @@ static void EnNy_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "d8", ny->unk_1D8);
         ReadField(x, "e0", ny->unk_1E0);
         ReadField(x, "cs", ny->elements[0].dim.scale);
+        ReadField(x, "ca", ny->unk_1CA);
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[EnemySync] EnNy extras parse error: {}", ex.what());
     }
@@ -555,29 +560,38 @@ static void EnFz_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         EnFz* fz = (EnFz*)actor;
         ReadField(x, "ea", fz->envAlpha);
         ReadField(x, "st", fz->state);
+        // Clamp IMMEDIATELY, not at the end of the block: state indexes a four-entry
+        // function-pointer table that EnFz_Draw calls every frame on a mirror, and any
+        // ReadField below can throw on a bad type. The catch would then swallow the
+        // exception with an out-of-range state already written, and the next draw would
+        // call through a pointer read past the end of the table.
+        if (fz->state > 3) {
+            fz->state = 3;
+        }
         ReadField(x, "act", fz->isActive);
         ReadField(x, "frz", fz->isFreezing);
         ReadField(x, "ish", fz->iceSmokeFreezingSpawnHeight);
         ReadField(x, "ut2", fz->unusedTimer2);
-        // state indexes a four-entry table in the overlay; a corrupt or hostile packet
-        // must not walk off it.
-        if (fz->state > 3) {
-            fz->state = 3;
-        }
-        // We own cylinder placement now: put the two body colliders where the generic
-        // path would have...
-        Collider_UpdateCylinder(actor, &fz->collider1);
-        Collider_UpdateCylinder(actor, &fz->collider2);
-        // ...and take the freeze hitbox out of the world. The authority's colEnable
-        // still arms it (SubmitColliders applies those bits after we run, so clearing
-        // AT_ON here would simply be overwritten), but an AT nobody can reach is
-        // harmless — whereas one sitting on the Freezard's body is an invisible freeze.
-        fz->collider3.dim.pos.x = 0x7FFF;
-        fz->collider3.dim.pos.y = 0x7FFF;
-        fz->collider3.dim.pos.z = 0x7FFF;
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[EnemySync] EnFz extras parse error: {}", ex.what());
     }
+
+    // Outside the try, deliberately. Declaring customColliderPos is a contract: the
+    // generic path no longer places ANY of this actor's cylinders, so if a malformed
+    // packet threw halfway through the block above, skipping this would leave all three
+    // wherever the frame's delta drag left them -- including the freeze hitbox we are
+    // here to keep out of the way.
+    EnFz* fz = (EnFz*)actor;
+    // The two body colliders go where the generic path would have put them...
+    Collider_UpdateCylinder(actor, &fz->collider1);
+    Collider_UpdateCylinder(actor, &fz->collider2);
+    // ...and the freeze hitbox goes out of the world. The authority's colEnable still
+    // arms it (SubmitColliders applies those bits after we run, so clearing AT_ON here
+    // would simply be overwritten), but an AT nobody can reach is harmless -- whereas
+    // one sitting on the Freezard's body is an invisible freeze on contact.
+    fz->collider3.dim.pos.x = 0x7FFF;
+    fz->collider3.dim.pos.y = 0x7FFF;
+    fz->collider3.dim.pos.z = 0x7FFF;
 }
 
 static void Register(int16_t id, void (*ser)(Actor*, nlohmann::json&),

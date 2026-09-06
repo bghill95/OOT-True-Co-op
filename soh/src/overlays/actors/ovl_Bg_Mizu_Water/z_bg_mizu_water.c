@@ -7,6 +7,8 @@
 #include "z_bg_mizu_water.h"
 #include "objects/object_mizu_objects/object_mizu_objects.h"
 
+s32 Anchor_IsSessionActive(void);
+
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED)
 
 void BgMizuWater_Init(Actor* thisx, PlayState* play);
@@ -173,7 +175,22 @@ void BgMizuWater_WaitForAction(BgMizuWater* this, PlayState* play) {
             waterLevelActionIndex = BgMizuWater_GetWaterLevelActionIndex(this->actor.params, play);
             if (waterLevelActionIndex != 0) {
                 if (prevSwitchFlag != sWaterLevels[waterLevelActionIndex].switchFlag) {
-                    OnePointCutscene_Init(play, 3120, -100 - waterLevelActionIndex, NULL, MAIN_CAM);
+                    // Co-op: the three water level flags replicate now, so this branch
+                    // runs on BOTH clients. Cutscene 3120 is not just a camera move --
+                    // z_onepointdemo.c does Player_SetCsActionWithHaltedActors(NULL, 8)
+                    // with a 100-frame timer, so the peer would be FROZEN for a hundred
+                    // frames, wherever they stand in the temple, every time the other
+                    // one plays the song.
+                    //
+                    // A distance test is the wrong tool here (the plane spans the whole
+                    // dungeon). MSGMODE_PAUSED is exact instead: En_Okarina_Tag sets it
+                    // on the client that played, and nothing clears it until the
+                    // Message_CloseTextbox at the end of ChangeWaterLevel -- so it holds
+                    // for precisely the client this cutscene belongs to, and for the
+                    // whole window. Offline the guard is skipped and vanilla is intact.
+                    if (!Anchor_IsSessionActive() || play->msgCtx.msgMode == MSGMODE_PAUSED) {
+                        OnePointCutscene_Init(play, 3120, -100 - waterLevelActionIndex, NULL, MAIN_CAM);
+                    }
                     this->actor.params = sWaterLevels[waterLevelActionIndex].switchFlag;
                     this->targetY = sWaterLevels[waterLevelActionIndex].yDiff + this->baseY;
                 }
@@ -236,7 +253,15 @@ void BgMizuWater_ChangeWaterLevel(BgMizuWater* this, PlayState* play) {
             if (Math_StepToF(&this->actor.world.pos.y, this->targetY, 5.0f)) {
                 play->roomCtx.unk_74[0] = 0;
                 this->actionFunc = BgMizuWater_WaitForAction;
-                Message_CloseTextbox(play);
+                // Co-op: this closes the textbox En_Okarina_Tag left paused on the
+                // client that played the song. Now that the level change runs on both,
+                // the peer would have whatever textbox they happen to have open torn
+                // down instead. MSGMODE_PAUSED is precisely the state the ocarina tag
+                // set, so it identifies the right client; offline the guard is skipped
+                // entirely and vanilla is untouched.
+                if (!Anchor_IsSessionActive() || play->msgCtx.msgMode == MSGMODE_PAUSED) {
+                    Message_CloseTextbox(play);
+                }
             }
             BgMizuWater_SetWaterBoxesHeight(play->colCtx.colHeader->waterBoxes, this->actor.world.pos.y);
             break;
