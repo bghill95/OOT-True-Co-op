@@ -78,6 +78,7 @@ enum FxEventKind : uint8_t {
     FX_EV_TIMEBLOCK = 17,  // a Song of Time block with no switch flag toggled (key = position)
     FX_EV_BIGMIRROR = 18,  // Spirit Temple: the upstairs player's cobra-solved bits (sv)
     FX_EV_GERUDOKO = 19,   // a Gerudo guard was knocked out (key = SPAWN position, they patrol)
+    FX_EV_FALSEDOOR = 20,  // a Door_Killer with no switch flag was smashed (key = position)
 };
 
 // --- Spells -----------------------------------------------------------------
@@ -972,6 +973,21 @@ extern "C" void FxSync_OnTimeBlockToggle(Actor* block) {
 // and without this one player clubs a guard, thinks the way is clear, and the
 // other is seized by a guard who never went down on his screen. Keyed by SPAWN
 // position: the guards patrol, so their current position differs per client.
+// False doors (Door_Killer). They set a switch flag on death, but only when
+// params carry one — and every Gerudo Training Ground placement uses 0x3F, the
+// "no flag" sentinel, so the door one player smashed stayed standing on the
+// other screen, hiding the passage behind it.
+extern "C" void FxSync_OnFalseDoorBroken(Actor* door) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || door == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_FALSEDOOR;
+    payload["key"] = PosKey(door);
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] false door tx key={:#x}", PosKey(door));
+}
+
 extern "C" void FxSync_OnGerudoGuardKO(Actor* guard) {
     if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || guard == NULL) {
         return;
@@ -1171,6 +1187,21 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                 func_80088B34(sec);
             }
             ESYNC_LOG("[FxSync] room timer rx sec={} adopted={}", sec, gSaveContext.timerSeconds <= 0);
+            return;
+        }
+
+        if (kind == FX_EV_FALSEDOOR) {
+            uint64_t key = payload.at("key").get<uint64_t>();
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_BG].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_DOOR_KILLER || a->update == NULL || PosKey(a) != key) {
+                    continue;
+                }
+                // Just remove it: the break animation belongs to the player who
+                // hit it, and a door that is simply gone reads fine from afar.
+                Actor_Kill(a);
+                break;
+            }
+            ESYNC_LOG("[FxSync] false door rx key={:#x}", key);
             return;
         }
 

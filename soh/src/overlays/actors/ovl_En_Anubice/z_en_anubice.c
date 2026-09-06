@@ -14,6 +14,8 @@
 
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
+Player* Anchor_NearestPlayer(Actor* from);
+
 void EnAnubice_Init(Actor* thisx, PlayState* play);
 void EnAnubice_Destroy(Actor* thisx, PlayState* play);
 void EnAnubice_Update(Actor* thisx, PlayState* play);
@@ -102,7 +104,11 @@ static DamageTable sDamageTable[] = {
 };
 
 void EnAnubice_Hover(EnAnubice* this, PlayState* play) {
-    Player* player = GET_PLAYER(play);
+    // Co-op: hover at the height of whoever it is actually facing. With the bare
+    // GET_PLAYER it matched the authority's Link, so an Anubis stalking the other
+    // player floated at the wrong altitude — and its fireballs, aimed from that
+    // height, went over their head.
+    Player* player = Anchor_NearestPlayer(&this->actor);
 
     this->hoverVelocityTimer += 1500.0f;
     this->targetHeight = player->actor.world.pos.y + this->playerHeightOffset;
@@ -116,7 +122,8 @@ void EnAnubice_SetFireballRot(EnAnubice* this, PlayState* play) {
     f32 x;
     f32 y;
     f32 z;
-    Player* player = GET_PLAYER(play);
+    // Co-op: aim at the player it is facing, not at the authority's Link.
+    Player* player = Anchor_NearestPlayer(&this->actor);
 
     x = player->actor.world.pos.x - this->fireballPos.x;
     y = player->actor.world.pos.y + 10.0f - this->fireballPos.y;
@@ -213,7 +220,10 @@ void EnAnubice_SetupIdle(EnAnubice* this, PlayState* play) {
 }
 
 void EnAnubice_Idle(EnAnubice* this, PlayState* play) {
-    Player* player = GET_PLAYER(play);
+    // Co-op: an Anubis only shoots when a sword is out, and it used to watch the
+    // authority's Link for that. The other player could swing at it all day
+    // without ever provoking the fireball they need to reflect.
+    Player* player = Anchor_NearestPlayer(&this->actor);
 
     SkelAnime_Update(&this->skelAnime);
     Math_ApproachZeroF(&this->actor.shape.yOffset, 0.5f, 300.0f);
