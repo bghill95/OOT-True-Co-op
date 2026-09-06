@@ -3,6 +3,28 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ResourceManagerHelpers.h"
 
+// Co-op (Anchor/FxSync.cpp): where the last hammer shockwave landed, ours or the
+// peer's, or NULL when none is on record.
+//
+// This one is the sharpest edge of that class: the site below sets
+// `damage = health`, an instant kill. actorCtx.unk_02 only says SOMEONE struck,
+// and the distance was measured to the NEAREST player -- so one player hammering
+// anywhere in the room killed every wall Skulltula standing near the other, while
+// a strike right beside one did nothing if the striker was the further player.
+// Note the site's own `(params & 0xE000) >> 13 == 0` restricts it to the type that
+// EnSw_Init re-categorises to ACTORCAT_ENEMY, i.e. exactly the tracked, redirected
+// variant: there is no NPC escape hatch here.
+Vec3f* Anchor_HammerShockwavePos(void);
+
+static f32 EnSw_HammerDistXYZ(EnSw* this) {
+    Vec3f* hammerPos = Anchor_HammerShockwavePos();
+
+    if (hammerPos == NULL) {
+        return sqrtf(this->actor.xyzDistToPlayerSq);
+    }
+    return Math_Vec3f_DistXYZ(&this->actor.world.pos, hammerPos);
+}
+
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
 void EnSw_Init(Actor* thisx, PlayState* play);
@@ -320,8 +342,8 @@ void EnSw_Destroy(Actor* thisx, PlayState* play) {
 s32 func_80B0C9F0(EnSw* this, PlayState* play) {
     s32 phi_v1 = false;
 
-    if (this->actor.xyzDistToPlayerSq < SQ(400.0f) && ((this->actor.params & 0xE000) >> 0xD) == 0 &&
-        play->actorCtx.unk_02 != 0) {
+    if (((this->actor.params & 0xE000) >> 0xD) == 0 && play->actorCtx.unk_02 != 0 &&
+        EnSw_HammerDistXYZ(this) < 400.0f) {
 
         this->actor.colChkInfo.damage = this->actor.colChkInfo.health;
         phi_v1 = true;

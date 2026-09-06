@@ -14,6 +14,25 @@
 // Co-op (Anchor/EnemySync.cpp): true when this copy is a mirror, i.e. its Update
 // is suppressed and only Draw runs.
 s32 Anchor_IsMirroredActor(Actor* actor);
+// Co-op (Anchor/FxSync.cpp): where the last hammer shockwave landed, ours or the
+// peer's, or NULL when none is on record.
+Vec3f* Anchor_HammerShockwavePos(void);
+
+// How far the hammer strike that armed actorCtx.unk_02 landed from this actor.
+//
+// unk_02 is scene-wide and now armed by BOTH players, while xzDistToPlayer is
+// redirected to the NEAREST player -- so the vanilla pairing answers "someone
+// struck and the nearest player is close", which fires for a strike made across
+// the room and misses one made right here. Measure from the strike instead.
+// Falls back to the vanilla measure when no shockwave is on record.
+static f32 EnFd_HammerDistXZ(EnFd* this) {
+    Vec3f* hammerPos = Anchor_HammerShockwavePos();
+
+    if (hammerPos == NULL) {
+        return this->actor.xzDistToPlayer;
+    }
+    return Math_Vec3f_DistXZ(&this->actor.world.pos, hammerPos);
+}
 
 #define FLAGS                                                                               \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
@@ -281,7 +300,8 @@ s32 EnFd_CheckHammer(EnFd* this, PlayState* play) {
     if (this->actionFunc == EnFd_Reappear || this->actionFunc == EnFd_SpinAndGrow ||
         this->actionFunc == EnFd_JumpToGround || this->actionFunc == EnFd_WaitForCore) {
         return false;
-    } else if (play->actorCtx.unk_02 != 0 && this->actor.xzDistToPlayer < 300.0f && this->actor.yDistToPlayer < 60.0f) {
+    } else if (play->actorCtx.unk_02 != 0 && EnFd_HammerDistXZ(this) < 300.0f &&
+               this->actor.yDistToPlayer < 60.0f) {
         return true;
     } else {
         return false;

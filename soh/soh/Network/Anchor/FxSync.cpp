@@ -595,8 +595,57 @@ extern "C" void FxSync_OnHookSpark(Vec3f* pos) {
     Anchor::Instance->SendPacket_FxEvent(payload);
 }
 
+// --- Where the hammer landed -------------------------------------------------
+// play->actorCtx.unk_02 says "a hammer shockwave happened in this scene" for four
+// frames, and nothing more. That was enough in vanilla, where the only possible
+// striker was the local Link, so actors paired it with actor->xzDistToPlayer to
+// ask "did it land near me". In co-op it is false twice over: the receiver below
+// arms unk_02 for the PEER's strike as well, and xzDistToPlayer is redirected to
+// the NEAREST player. The test therefore reads "someone struck, and the nearest
+// player is close", which fires for a strike made across the room and misses one
+// made right here. Anchor_NearestPlayer would only mend the second half.
+//
+// So record where the shockwave actually was -- ours and the peer's alike -- and
+// let those actors measure from it. Recorded even offline and with sync disabled,
+// so the single-player path takes exactly the same route.
+static Vec3f sLastHammerPos = { 0.0f, 0.0f, 0.0f };
+static uint32_t sLastHammerFrame = 0;
+static bool sHammerPosKnown = false;
+
+// unk_02 is set to 4 and decremented once per Actor_UpdateAll, so the vanilla
+// window is four frames; twice that is slack for a packet landing a frame late
+// without ever letting a stale position answer for a later swing.
+static const uint32_t HAMMER_POS_TTL_FRAMES = 8;
+
+static void NoteHammerShockwave(const Vec3f& pos) {
+    if (gPlayState == NULL) {
+        return;
+    }
+    sLastHammerPos = pos;
+    sLastHammerFrame = gPlayState->gameplayFrames;
+    sHammerPosKnown = true;
+}
+
+// The shockwave an actor should measure itself against, or NULL when we have none
+// on record and the caller should fall back to vanilla's own xzDistToPlayer.
+extern "C" Vec3f* Anchor_HammerShockwavePos(void) {
+    if (!sHammerPosKnown || gPlayState == NULL) {
+        return NULL;
+    }
+    if ((uint32_t)(gPlayState->gameplayFrames - sLastHammerFrame) > HAMMER_POS_TTL_FRAMES) {
+        return NULL;
+    }
+    return &sLastHammerPos;
+}
+
 extern "C" void FxSync_OnHammerShockwave(Vec3f* pos) {
-    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || pos == NULL) {
+    if (pos == NULL) {
+        return;
+    }
+    // Before the sync guards: actors read this position in single player too.
+    NoteHammerShockwave(*pos);
+
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr) {
         return;
     }
     nlohmann::json payload;
@@ -869,6 +918,7 @@ static void Reset(bool killLive) {
     sTorches.clear();
     sTorchByKey.clear();
     sRemoteDoorOpen.clear();
+    sHammerPosKnown = false; // a shockwave from the scene we are leaving answers nothing here
     sBoomReplicas.clear();
     sProj.clear();
     sSpawningReplica = false;
@@ -1365,6 +1415,9 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             Vec3f pos = payload.at("pos").get<Vec3f>();
             Player_RequestQuake(gPlayState, 27767, 7, 20);
             gPlayState->actorCtx.unk_02 = 4; // scene-wide actor shake, as vanilla
+            // ...and where it landed, so the actors that react to a hammer measure
+            // themselves against the strike instead of against the nearest player.
+            NoteHammerShockwave(pos);
             EffectSsBlast_SpawnWhiteShockwave(gPlayState, &pos, &zeroVec, &zeroVec);
             SoundSource_PlaySfxAtFixedWorldPos(gPlayState, &pos, 20, NA_SE_IT_HAMMER_HIT);
             ESYNC_LOG("[FxSync] hammer shockwave rx");
