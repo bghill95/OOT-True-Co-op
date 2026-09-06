@@ -22,12 +22,17 @@ void func_809F73AC(EnDodojr* self, PlayState* play);
 void func_809F7BE4(EnDodojr* self, PlayState* play);
 void func_809F74C4(EnDodojr* self, PlayState* play);
 void func_809F758C(EnDodojr* self, PlayState* play);
+void func_809F768C(EnDodojr* self, PlayState* play);
 void func_809F773C(EnDodojr* self, PlayState* play);
 void func_809F77AC(EnDodojr* self, PlayState* play);
 void func_809F784C(EnDodojr* self, PlayState* play);
 void func_809F786C(EnDodojr* self, PlayState* play);
 void func_809F78EC(EnDodojr* self, PlayState* play);
 void func_809F799C(EnDodojr* self, PlayState* play);
+void func_809F7A00(EnDodojr* self, PlayState* play);
+void func_809F7AB8(EnDodojr* self, PlayState* play);
+void func_809F7B3C(EnDodojr* self, PlayState* play);
+void func_809F7C48(EnDodojr* self, PlayState* play);
 // Keese death state: its PostLimbDraw stops drawing the aura once this is set.
 void EnFirefly_Die(EnFirefly* self, PlayState* play);
 // Wallmaster action functions: defined non-static in z_en_wallmas.c, declared
@@ -341,9 +346,14 @@ static void EnWallmas_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
 // Init, the mirror shows the wrong body for the entire life of the actor,
 // including the swollen state that says it is about to burst. Same portable
 // index trick as the Wallmaster above; these symbols are non-static too.
+// All fifteen states, not just the two the draw switch tests: the point of the
+// table is also a clean authority handoff, and a copy resuming in an unlisted
+// state would silently keep whatever it was left in. The swollen about-to-burst
+// chain (func_809F7AB8 -> func_809F7B3C) is exactly that case.
 static EnDodojrActionFunc sDodojrActions[] = {
-    NULL,          func_809F73AC, func_809F7BE4, func_809F74C4, func_809F758C, func_809F773C,
-    func_809F77AC, func_809F784C, func_809F786C, func_809F78EC, func_809F799C,
+    NULL,          func_809F73AC, func_809F7BE4, func_809F74C4, func_809F758C, func_809F768C,
+    func_809F773C, func_809F77AC, func_809F784C, func_809F786C, func_809F78EC, func_809F799C,
+    func_809F7A00, func_809F7AB8, func_809F7B3C, func_809F7C48,
 };
 
 static void EnDodojr_SerializeExtras(Actor* actor, nlohmann::json& x) {

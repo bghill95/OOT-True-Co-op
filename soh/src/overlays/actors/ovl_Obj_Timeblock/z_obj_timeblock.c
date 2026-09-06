@@ -211,34 +211,14 @@ void ObjTimeblock_SetupNormal(ObjTimeblock* this) {
     this->actionFunc = ObjTimeblock_Normal;
 }
 
-void FxSync_OnTimeBlockToggle(Actor* block);
-s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
-
-/**
- * Toggle this block because the OTHER player played the Song of Time.
- *
- * The trigger is read off the local msgCtx, so only the singer's copy ever
- * flips. For blocks whose unk_177 is 0 — every Gerudo Training Ground placement
- * — the flip is `params ^= 0x8000`, pure private state with no switch flag
- * behind it, so nothing replicates on its own and the other player walks into a
- * block that is not there, or through one that is. Blocks driven by a switch
- * flag need none of this: the flag already travels.
- */
-void ObjTimeblock_ToggleFromPeer(Actor* thisx, PlayState* play) {
-    ObjTimeblock* this = (ObjTimeblock*)thisx;
-
-    if (this->demoEffectTimer > 0 || this->unk_177 != 0) {
-        return;
-    }
-    ObjTimeblock_SpawnDemoEffect(this, play);
-    this->demoEffectTimer = 160;
-    if (Anchor_ShouldPlayCameraCutscene(&this->dyna.actor, 800.0f)) {
-        OnePointCutscene_Attention(play, &this->dyna.actor);
-    }
-    this->demoEffectFirstPartTimer = 12;
-    this->dyna.actor.params ^= 0x8000;
-}
-
+// Co-op note: the `unk_177 == 0` branch below — the one that flips with a bare
+// `params ^= 0x8000` and no switch flag — was briefly given a replication
+// channel, on the belief that the Gerudo Training Ground blocks used it. They do
+// not. unk_177 is only 0 when bit 6 of params is set, and no placement in the
+// game sets it: the four GTG blocks carry 0xB838..0xB83B (bit 6 clear, low bits
+// 0x38..0x3B), so they land in the `else` and take unk_177 = 1 — the switch-flag
+// path, which already replicates on its own. Same for the other eight non-MQ
+// placements. The branch is unreachable in practice and needs nothing.
 void ObjTimeblock_Normal(ObjTimeblock* this, PlayState* play) {
     u32 newIsVisible;
 
@@ -254,10 +234,7 @@ void ObjTimeblock_Normal(ObjTimeblock* this, PlayState* play) {
         this->demoEffectFirstPartTimer = 12;
 
         if (this->unk_177 == 0) {
-            // No switch flag behind this one — announce it, or the peer's copy
-            // never flips. (The flag-driven branch below replicates by itself.)
             this->dyna.actor.params ^= 0x8000;
-            FxSync_OnTimeBlockToggle(&this->dyna.actor);
         } else {
             ObjTimeblock_ToggleSwitchFlag(play, this->dyna.actor.params & 0x3F);
         }

@@ -136,13 +136,16 @@ void BgMenkuriEye_Update(Actor* thisx, PlayState* play) {
             Audio_PlayActorSound2(&this->actor, NA_SE_EN_AMOS_DAMAGE);
             D_8089C1A0 += 1;
             D_8089C1A0 = CLAMP_MAX(D_8089C1A0, 4);
+            // Inside the guard: an arrow landing on an eye that is already lit
+            // changes nothing here, so announcing it would only make the peer
+            // early-return. Only the unlit -> lit edge is worth a packet.
+            FxSync_OnGtgEyeLit(&this->actor);
         }
         this->framesUntilDisable = 416;
         if (D_8089C1A0 == 4) {
             Flags_SetSwitch(play, this->actor.params);
             Sfx_PlaySfxCentered(NA_SE_SY_CORRECT_CHIME);
         }
-        FxSync_OnGtgEyeLit(&this->actor);
     }
     if (this->framesUntilDisable == -1) {
         CollisionCheck_SetAC(play, &play->colChkCtx, &this->collider.base);

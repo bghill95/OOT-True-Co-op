@@ -220,6 +220,7 @@ static InitChainEntry sInitChain[] = {
 // which way to shove a victim already known to be the local player.
 s16 Anchor_LocalPlayerYaw(Actor* from);
 s32 Anchor_NoteCaptureVictim(Actor* enemy, Actor* victim);
+s32 Anchor_HasCaptureVictim(Actor* enemy);
 s32 Anchor_DeliverCapture(Actor* enemy, u8 mode, s16 entrance);
 
 void EnGeldB_SetupAction(EnGeldB* this, EnGeldBActionFunc actionFunc) {
@@ -1594,9 +1595,19 @@ void EnGeldB_Draw(Actor* thisx, PlayState* play) {
                 // Co-op: this warp fires from DRAW, which runs on every client,
                 // and the grab several frames earlier may have landed on the
                 // other player. Send them to the cell instead of going
-                // ourselves; mode 1 carries the destination. Returns 0 when the
-                // victim was our own Link, or when we are playing alone.
-                if (Anchor_DeliverCapture(&this->actor, 1, destination)) {
+                // ourselves; mode 1 carries the destination.
+                //
+                // sawGrab is sampled BEFORE the delivery, which consumes the
+                // note. Anchor_DeliverCapture returns 0 both when the victim is
+                // our own Link and when this machine never saw the grab — only
+                // the first deserves the warp. Today the second cannot happen
+                // here (spinAttackState is deliberately kept out of the stream,
+                // so no client reaches this block without having noted a
+                // victim), but relying on that silently is how the next change
+                // to the adapter would teleport the wrong player.
+                s32 sawGrab = Anchor_HasCaptureVictim(&this->actor);
+
+                if (Anchor_DeliverCapture(&this->actor, 1, destination) || !sawGrab) {
                     this->spinAttackState = 0; // the fighter is done with us
                 } else {
                     play->nextEntranceIndex = destination;

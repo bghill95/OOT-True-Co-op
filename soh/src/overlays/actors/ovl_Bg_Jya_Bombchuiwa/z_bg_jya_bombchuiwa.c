@@ -4,6 +4,7 @@
 #define FLAGS ACTOR_FLAG_ATTENTION_ENABLED
 
 s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
+s32 Anchor_IsSessionActive(void);
 
 void BgJyaBombchuiwa_Init(Actor* thisx, PlayState* play);
 void BgJyaBombchuiwa_Destroy(Actor* thisx, PlayState* play);
@@ -175,7 +176,12 @@ void BgJyaBombchuiwa_CleanUpAfterExplosion(BgJyaBombchuiwa* this, PlayState* pla
     // never gets the MIR_RAY the rest of the puzzle needs. Setting it here also
     // routes through GameInteractor_ExecuteOnSceneFlagSet, which replicates it.
     // 0x3F is the "no flag" sentinel this actor family uses.
-    if ((this->actor.params & 0x3F) != 0x3F) {
+    //
+    // Gated on an active session: this writes a switch flag the vanilla game
+    // never writes, which would otherwise make the rock stay destroyed across
+    // room reloads in single player — and would fire whatever else happens to
+    // share that flag index in the scene.
+    if (Anchor_IsSessionActive() && (this->actor.params & 0x3F) != 0x3F) {
         Flags_SetSwitch(play, this->actor.params & 0x3F);
     }
     this->actionFunc = func_808949B8;

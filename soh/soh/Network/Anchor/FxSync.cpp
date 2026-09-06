@@ -30,8 +30,6 @@ extern "C" {
 void BgMenkuriEye_LightFromPeer(Actor* thisx, PlayState* play);
 // Topples one hammerable totem on behalf of the peer (see FX_EV_TOTEM).
 void BgHidanDalm_BreakFromPeer(Actor* thisx, PlayState* play, u8 reverse);
-// Flips one flagless Song of Time block on behalf of the peer (see FX_EV_TIMEBLOCK).
-void ObjTimeblock_ToggleFromPeer(Actor* thisx, PlayState* play);
 // Applies the upstairs player's cobra-solved bits (see FX_EV_BIGMIRROR).
 void BgJyaBigmirror_ApplySolvedFromPeer(Actor* thisx, u8 solvedBits);
 // Puts one Gerudo guard down on behalf of the peer (see FX_EV_GERUDOKO).
@@ -75,7 +73,6 @@ enum FxEventKind : uint8_t {
     FX_EV_ROOMTIMER = 14,  // Obj_Roomtimer started a room countdown (sec): peers adopt the same clock
     FX_EV_GTGEYE = 15,     // a Gerudo Training Ground eye target was shot (key = position)
     FX_EV_TOTEM = 16,      // a hammerable totem was toppled (key = position, rev = struck face)
-    FX_EV_TIMEBLOCK = 17,  // a Song of Time block with no switch flag toggled (key = position)
     FX_EV_BIGMIRROR = 18,  // Spirit Temple: the upstairs player's cobra-solved bits (sv)
     FX_EV_GERUDOKO = 19,   // a Gerudo guard was knocked out (key = SPAWN position, they patrol)
     FX_EV_FALSEDOOR = 20,  // a Door_Killer with no switch flag was smashed (key = position)
@@ -947,32 +944,6 @@ extern "C" void FxSync_OnHammerTotemBreak(Actor* totem, u8 reverse) {
     ESYNC_LOG("[FxSync] hammer totem tx key={:#x} rev={}", PosKey(totem), reverse);
 }
 
-// Song of Time blocks whose unk_177 is 0 (every Gerudo Training Ground one)
-// flip with `params ^= 0x8000` and no switch flag at all, and the song is read
-// off the singer's own msgCtx — so only the singer's copy moves. The other
-// player then walks into a block that is not there, or through one that is.
-extern "C" void FxSync_OnTimeBlockToggle(Actor* block) {
-    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || block == NULL) {
-        return;
-    }
-    nlohmann::json payload;
-    payload["kind"] = FX_EV_TIMEBLOCK;
-    payload["key"] = PosKey(block);
-    Anchor::Instance->SendPacket_FxEvent(payload);
-    ESYNC_LOG("[FxSync] time block tx key={:#x}", PosKey(block));
-}
-
-// Spirit Temple big mirror. Its two cobra-solved bits are computed only inside
-// the branch that needs the cobras to exist, and they exist only for a player
-// whose own room is one of the two top ones. The player standing in the statue
-// room below — the other half of a puzzle explicitly built for two vantage
-// points — had both bits stuck at zero and never saw the light arrive.
-// Gerudo guards. ACTORCAT_NPC, so outside EnemySync: every client walks its own
-// copy against its own Link. Right for detection — each player must be spotted
-// from where they actually stand — but the knockout is a fact about the world,
-// and without this one player clubs a guard, thinks the way is clear, and the
-// other is seized by a guard who never went down on his screen. Keyed by SPAWN
-// position: the guards patrol, so their current position differs per client.
 // False doors (Door_Killer). They set a switch flag on death, but only when
 // params carry one — and every Gerudo Training Ground placement uses 0x3F, the
 // "no flag" sentinel, so the door one player smashed stayed standing on the
@@ -988,6 +959,12 @@ extern "C" void FxSync_OnFalseDoorBroken(Actor* door) {
     ESYNC_LOG("[FxSync] false door tx key={:#x}", PosKey(door));
 }
 
+// Gerudo guards. ACTORCAT_NPC, so outside EnemySync: every client walks its own
+// copy against its own Link. Right for detection — each player must be spotted
+// from where they actually stand — but the knockout is a fact about the world,
+// and without this one player clubs a guard, thinks the way is clear, and the
+// other is seized by a guard who never went down on his screen. Keyed by SPAWN
+// position: the guards patrol, so their current position differs per client.
 extern "C" void FxSync_OnGerudoGuardKO(Actor* guard) {
     if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || guard == NULL) {
         return;
@@ -999,6 +976,11 @@ extern "C" void FxSync_OnGerudoGuardKO(Actor* guard) {
     ESYNC_LOG("[FxSync] gerudo guard KO tx key={:#x}", HomeKey(guard));
 }
 
+// Spirit Temple big mirror. Its two cobra-solved bits are computed only inside
+// the branch that needs the cobras to exist, and they exist only for a player
+// whose own room is one of the two top ones. The player standing in the statue
+// room below — the other half of a puzzle explicitly built for two vantage
+// points — had both bits stuck at zero and never saw the light arrive.
 extern "C" void FxSync_OnBigMirrorSolved(Actor* mirror, u8 solvedBits) {
     if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || mirror == NULL) {
         return;
@@ -1183,10 +1165,20 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             // Only adopt the peer's clock if we have none running: our own copy
             // of the timer actor may not have reached its start yet, and a
             // second announcement must never reset a countdown in progress.
-            if (sec > 0 && gSaveContext.timerSeconds <= 0) {
+            //
+            // Tested on timerState, like the sender in z_obj_roomtimer.c, and
+            // for the same reason: nothing ever writes timerSeconds back to 0,
+            // so a player who has SUCCEEDED at one timed room keeps a positive
+            // leftover for the rest of the session and would silently discard
+            // every later announcement — landing back on the split clocks this
+            // event exists to prevent. timerState 5 is what func_80088B34 sets
+            // for a running countdown.
+            bool adopt = sec > 0 && gSaveContext.timerState < 5;
+            if (adopt) {
                 func_80088B34(sec);
             }
-            ESYNC_LOG("[FxSync] room timer rx sec={} adopted={}", sec, gSaveContext.timerSeconds <= 0);
+            // Evaluated before the call, or it would report the opposite.
+            ESYNC_LOG("[FxSync] room timer rx sec={} adopted={}", sec, adopt);
             return;
         }
 
@@ -1228,19 +1220,6 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                 break;
             }
             ESYNC_LOG("[FxSync] big mirror rx solved={:#x}", solved);
-            return;
-        }
-
-        if (kind == FX_EV_TIMEBLOCK) {
-            uint64_t key = payload.at("key").get<uint64_t>();
-            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_ITEMACTION].head; a != NULL; a = a->next) {
-                if (a->id != ACTOR_OBJ_TIMEBLOCK || a->update == NULL || PosKey(a) != key) {
-                    continue;
-                }
-                ObjTimeblock_ToggleFromPeer(a, gPlayState);
-                break;
-            }
-            ESYNC_LOG("[FxSync] time block rx key={:#x}", key);
             return;
         }
 

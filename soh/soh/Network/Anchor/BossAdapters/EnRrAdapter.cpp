@@ -2,6 +2,8 @@
 #include "soh/Network/Anchor/EnemySync.h"
 #include "soh/OTRGlobals.h"
 
+#include <cmath>
+
 extern "C" {
 #include "functions.h"
 #include "macros.h"
@@ -38,18 +40,30 @@ extern "C" {
 #define RR_SEG_VALUES 10
 #define RR_SEG_COUNT 5
 
+// Same reason as RoundedVec in EnemySync.cpp: an f32 promoted to double prints
+// at full double precision, so an animated 0.98f goes out as
+// "0.9800000190734863" — 18 bytes for one number. These 25 floats are in
+// constant motion (segMovePhase never settles), so none of them would ever take
+// a short form. Four decimals rather than RoundedVec's two: these are scales
+// around 1.0 and modulations around 0.1, exactly the case its comment warns
+// against rounding to centimetres. Emit-side only; the mirror reads the same
+// field either way.
+static double Rr4(float v) {
+    return std::round((double)v * 10000.0) / 10000.0;
+}
+
 static void EnRr_SerializeExtras(Actor* actor, nlohmann::json& x) {
     EnRr* rr = (EnRr*)actor;
     nlohmann::json segs = nlohmann::json::array();
     for (int32_t i = 0; i < RR_SEG_COUNT; i++) {
         EnRrBodySegment* s = &rr->bodySegs[i];
-        segs.push_back(s->height);
-        segs.push_back(s->scale.x);
-        segs.push_back(s->scale.y);
-        segs.push_back(s->scale.z);
-        segs.push_back(s->scaleMod.x);
-        segs.push_back(s->scaleMod.y);
-        segs.push_back(s->scaleMod.z);
+        segs.push_back(Rr4(s->height));
+        segs.push_back(Rr4(s->scale.x));
+        segs.push_back(Rr4(s->scale.y));
+        segs.push_back(Rr4(s->scale.z));
+        segs.push_back(Rr4(s->scaleMod.x));
+        segs.push_back(Rr4(s->scaleMod.y));
+        segs.push_back(Rr4(s->scaleMod.z));
         segs.push_back(s->rot.x);
         segs.push_back(s->rot.y);
         segs.push_back(s->rot.z);

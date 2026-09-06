@@ -60,6 +60,7 @@ void EnAnubiceTag_SpawnAnubis(EnAnubiceTag* this, PlayState* play) {
 }
 
 s32 Anchor_IsMirroredActor(Actor* actor);
+Player* Anchor_NearestPlayer(Actor* from);
 
 void EnAnubiceTag_ManageAnubis(EnAnubiceTag* this, PlayState* play) {
     EnAnubice* anubis;
@@ -87,6 +88,23 @@ void EnAnubiceTag_ManageAnubis(EnAnubiceTag* this, PlayState* play) {
     if (anubis->deathTimer != 0) {
         Actor_Kill(&this->actor);
         return;
+    }
+
+    // Co-op: this tag is what wakes the Anubis and makes it shadow a player, and
+    // it decides on its OWN xzDistToPlayer / yawTowardsPlayer — the distance to
+    // the LOCAL Link. Being ACTORCAT_SWITCH it is not a tracked actor, so
+    // EnemySync's perception override never rewrites those fields for it, and
+    // the guard above leaves only the authority's tag in charge. The result was
+    // that the other player could stand in front of an Anubis and it would never
+    // emerge, whatever they did — aiming the fireball at the nearest player (see
+    // En_Anubice) fixed where it shoots, not whether it wakes at all.
+    {
+        Player* nearest = Anchor_NearestPlayer(&this->actor);
+        f32 dx = nearest->actor.world.pos.x - this->actor.world.pos.x;
+        f32 dz = nearest->actor.world.pos.z - this->actor.world.pos.z;
+
+        this->actor.xzDistToPlayer = sqrtf(SQ(dx) + SQ(dz));
+        this->actor.yawTowardsPlayer = Math_FAtan2F(dx, dz) * (0x8000 / M_PI);
     }
 
     if (this->actor.xzDistToPlayer < (200.0f + this->triggerRange)) {

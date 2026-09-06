@@ -56,6 +56,7 @@ void ObjRoomtimer_Destroy(Actor* thisx, PlayState* play) {
 }
 
 void FxSync_OnRoomTimerStart(s16 seconds);
+s32 Anchor_IsSessionActive(void);
 
 void func_80B9D054(ObjRoomtimer* this, PlayState* play) {
     if (this->actor.params != 0x3FF) {
@@ -64,7 +65,16 @@ void func_80B9D054(ObjRoomtimer* this, PlayState* play) {
         // gives two different clocks — and the timeout below only void-outs
         // whoever ran out first. Adopt a countdown already running instead of
         // restarting it, and announce ours so the other side can do the same.
-        if (gSaveContext.timerSeconds <= 0) {
+        //
+        // The test is on timerState, NOT on timerSeconds: nothing in the game
+        // ever writes timerSeconds back to 0 (func_80088B34 and the heat timer
+        // only ever assign a positive value, and stopping a clock just sets
+        // timerState = 0). Keying off the leftover seconds would leave this
+        // actor permanently disarmed — offline too — for anyone who had once
+        // been in a hot room or left a timed room early. timerState 5 is what
+        // func_80088B34 sets for a running countdown; anything below that means
+        // no clock of ours is ticking.
+        if (!Anchor_IsSessionActive() || gSaveContext.timerState < 5) {
             func_80088B34(this->actor.params);
             FxSync_OnRoomTimerStart(this->actor.params);
         }

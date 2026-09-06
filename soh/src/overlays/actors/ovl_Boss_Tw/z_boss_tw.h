@@ -9,6 +9,12 @@
 // balls. Lives here rather than in the .c so the co-op layer can tell a blast
 // (simulated locally by every client, so either player can shield it) from a
 // sister (streamed from the authority).
+//
+// Named BossTwType, not TwinrovaType: z_en_tr.h already defines a typedef by
+// that name for the sisters' cutscene actor. Nothing used either as a type name
+// while both lived in .c files, but this one is now in a header the co-op layer
+// includes, so the clash would surface the day one translation unit pulls in
+// both.
 typedef enum {
     /* 0x00 */ TW_KOTAKE,
     /* 0x01 */ TW_KOUME,
@@ -19,7 +25,7 @@ typedef enum {
     /* 0x67 */ TW_ICE_BLAST_GROUND,
     /* 0x68 */ TW_DEATHBALL_KOTAKE,
     /* 0x69 */ TW_DEATHBALL_KOUME
-} TwinrovaType;
+} BossTwType;
 
 typedef enum {
     /*  0 */ TWEFF_NONE,

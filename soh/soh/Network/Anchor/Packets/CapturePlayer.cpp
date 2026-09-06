@@ -31,9 +31,17 @@ extern PlayState* gPlayState;
  * for a second or two of animation.
  */
 
-// Which player each tracked grabber last closed on. Kept here rather than in the
+// Which player each tracked grabber closed on. Kept here rather than in the
 // actor structs so no overlay layout changes: the grab and the actual warp are
 // several frames apart (En_GeldB decides in SpinAttack and warps from Draw).
+//
+// An entry is recorded for OUR OWN Link too, under this sentinel. The presence
+// of an entry is then the answer to a third question the callers need: "did this
+// machine witness the grab at all?" Without it, a client that inherits authority
+// mid-grab — actionFunc is streamed, so it resumes straight into the carry —
+// would find no entry, read that as "the victim is mine", and haul its own Link
+// away. Absence of an entry now means exactly that: we did not see this grab.
+static constexpr uint32_t CAPTURE_VICTIM_IS_LOCAL = UINT32_MAX;
 static std::unordered_map<Actor*, uint32_t> sCaptureVictim;
 
 void Anchor::SendPacket_CapturePlayer(u32 clientId, u8 mode, s16 entrance) {
@@ -91,7 +99,16 @@ s32 Anchor_NoteCaptureVictim(Actor* enemy, Actor* victim) {
         return 0;
     }
     if (victim == &GET_PLAYER(gPlayState)->actor) {
-        sCaptureVictim.erase(enemy); // ours: the caller warps itself
+        // Offline the OnActorDestroy hook that prunes this table is not even
+        // registered (it is a COND_HOOK on isConnected), so entries would pile
+        // up forever, keyed by Actor* addresses the arena reuses. One grab is in
+        // flight at a time on a single machine, so drop the rest first: the
+        // table then holds exactly this one, and a later session cannot inherit
+        // a stale "the victim is mine" note.
+        if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected) {
+            sCaptureVictim.clear();
+        }
+        sCaptureVictim[enemy] = CAPTURE_VICTIM_IS_LOCAL; // ours: the caller warps itself
         return 1;
     }
     if (Anchor::Instance != nullptr) {
@@ -106,16 +123,45 @@ s32 Anchor_NoteCaptureVictim(Actor* enemy, Actor* victim) {
     return 0; // not a player at all
 }
 
+// Did THIS machine witness this grabber closing on someone?
+//
+// 0 means we did not: either the grab happened before we took authority over the
+// enemy, or the note has already been consumed. A caller must never treat that
+// as "the victim is mine" — see the sentinel comment above.
+s32 Anchor_HasCaptureVictim(Actor* enemy) {
+    return (enemy != NULL && sCaptureVictim.find(enemy) != sCaptureVictim.end()) ? 1 : 0;
+}
+
+// Is the victim noted for this grabber somebody else's player?
+//
+// For grabs that play out over many frames: note the victim ONCE, when the enemy
+// closes on them, then ask this every frame instead of recomputing "who is
+// nearest" — which changes as the victim (who is not held on this machine) keeps
+// running, and would eventually name our own Link.
+s32 Anchor_CaptureVictimIsRemote(Actor* enemy) {
+    if (enemy == NULL) {
+        return 0;
+    }
+    auto it = sCaptureVictim.find(enemy);
+    return (it != sCaptureVictim.end() && it->second != CAPTURE_VICTIM_IS_LOCAL) ? 1 : 0;
+}
+
 // Deliver the capture noted above. Returns 1 when it was sent to a remote player
-// (the caller must NOT warp itself), 0 when the victim is our own Link and the
-// caller should run the vanilla warp.
+// (the caller must NOT warp itself).
+//
+// CONTRACT WARNING: 0 folds together two different situations — "the victim is
+// our own Link" and "no note at all", the latter meaning this machine did not
+// witness the grab (authority inherited mid-grab). A caller that warps on 0
+// alone will therefore warp itself in the second case. Pair it with
+// Anchor_HasCaptureVictim, sampled BEFORE this call since a successful delivery
+// consumes the note.
 s32 Anchor_DeliverCapture(Actor* enemy, u8 mode, s16 entrance) {
     if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected || enemy == NULL) {
         return 0;
     }
     auto it = sCaptureVictim.find(enemy);
-    if (it == sCaptureVictim.end()) {
-        return 0;
+    if (it == sCaptureVictim.end() || it->second == CAPTURE_VICTIM_IS_LOCAL) {
+        return 0; // nothing noted, or the victim is our own Link
     }
     uint32_t clientId = it->second;
     sCaptureVictim.erase(it);

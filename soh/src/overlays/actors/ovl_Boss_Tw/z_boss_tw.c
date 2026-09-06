@@ -13,8 +13,8 @@
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
      ACTOR_FLAG_DRAW_CULLING_DISABLED)
 
-// TwinrovaType moved to z_boss_tw.h: the co-op layer needs it to tell the
-// blasts (which run locally on each client) from the sisters.
+// The params enum moved to z_boss_tw.h as BossTwType: the co-op layer needs it
+// to tell the blasts (which run locally on each client) from the sisters.
 
 // Co-op: every live player actor, index 0 being our own Link (DummyPlayer.cpp).
 Actor* Anchor_PlayerActorAt(s32 index);

@@ -15,7 +15,6 @@
 extern "C" {
 #include "variables.h"
 #include "functions.h"
-#include "src/overlays/actors/ovl_Boss_Tw/z_boss_tw.h" // TwinrovaType: blasts vs sisters
 
 extern PlayState* gPlayState;
 }
@@ -334,26 +333,22 @@ static bool IsSyncedProjectile(Actor* actor) {
         return p == FHGFIRE_P_LIGHTNING_STRIKE || p == FHGFIRE_P_SPEAR_LIGHT || p == FHGFIRE_P_WARP_EMERGE ||
                p == FHGFIRE_P_WARP_RETREAT;
     }
-    // Twinrova's fire and ice blasts (params 0x64..0x67), spawned as children of
-    // the boss. Same reason as the Anubis fireball, and the same stakes: the only
-    // way to fight the final phase is to catch a blast on the Mirror Shield,
-    // charge it and throw it back, and every test that decides whether that
-    // happens — BossTw_BlastShieldCheck, Player_HasMirrorShieldEquipped, the
-    // player's shieldMf — reads the LOCAL Link. Those tests live inside the
-    // blast's own update (BossTw_BlastUpdate calls BossTw_BlastShieldCheck), so
-    // running the blast locally puts them on the machine of the player actually
-    // holding up a shield. Streamed, the mirroring player could neither be hit
-    // nor block: they stood in the arena as a spectator.
+    // NOT Twinrova's blasts, despite the temptation: they fail this list's
+    // precondition. A whitelisted projectile must be ballistic from the spawn
+    // broadcast onward, and a blast is not — BossTw_BlastFire (z_boss_tw.c:3920)
+    // and BossTw_BlastIce (:4109) overwrite world.rot.x/y from GET_PLAYER on
+    // their FIRST update and set speedXZ themselves, so the streamed spawn
+    // rotation is discarded and each machine aims at its own Link. Two divergent
+    // arcs would each spawn their own ground blast, and the mirror would get the
+    // authority's on top: two damage zones where the fight has one.
     //
-    // Damage back onto the sister still travels the normal way — the mirror's
-    // local hit is forwarded as ENEMY_HIT_REQUEST like any other.
+    // Running them locally would not buy participation either. Catching a blast
+    // does not damage the sister through a collider — BossTw_BlastShieldCheck
+    // tallies into the file-scope sShieldFireCharge / sShieldIceCharge, which no
+    // packet carries — so a mirroring player charging a shield would still be
+    // adding to a counter nobody reads. Making the final phase co-operative
+    // needs those two counters replicated, which is a channel, not a list entry.
     //
-    // Deathballs (0x68/0x69) stay streamed: they belong to the death cutscene,
-    // not to the fight, and each machine must not stage its own version of it.
-    if (actor->id == ACTOR_BOSS_TW) {
-        int16_t p = (int16_t)actor->params;
-        return p >= TW_FIRE_BLAST && p <= TW_ICE_BLAST_GROUND;
-    }
     // Anubis fireball. The one enemy projectile that MUST run locally: the only
     // way to kill an Anubis is to bounce its fireball back with the Mirror
     // Shield, and that test is Player_HasMirrorShieldEquipped on the local Link
