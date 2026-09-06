@@ -146,6 +146,10 @@ static void EnBw_SerializeExtras(Actor* actor, nlohmann::json& x) {
     x["u260"] = bw->unk_260;
     x["c1"] = ((uint32_t)bw->color1.r << 24) | ((uint32_t)bw->color1.g << 16) | ((uint32_t)bw->color1.b << 8) |
               (uint32_t)bw->color1.a;
+    // The death fade writes both halves of `shadowAlpha = color1.a -= 6`. Carrying
+    // only the left one left the slug's shadow at full strength while its body
+    // dissolved.
+    x["sa"] = bw->actor.shape.shadowAlpha;
 }
 
 static void EnBw_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
@@ -156,6 +160,7 @@ static void EnBw_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "u248", bw->unk_248);
         ReadField(x, "u258", bw->unk_258);
         ReadField(x, "u260", bw->unk_260);
+        ReadField(x, "sa", bw->actor.shape.shadowAlpha);
         if (x.contains("c1")) {
             uint32_t packed = x["c1"].get<uint32_t>();
             bw->color1.r = (packed >> 24) & 0xFF;
@@ -215,6 +220,31 @@ static void EnTest_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "u7de", test->unk_7DE);
         ReadField(x, "mws", test->meleeWeaponState);
         ReadField(x, "hr", test->headRot);
+
+        // Undo the stream for ACTOR_FLAG_REACT_TO_LENS on an invisible Stalfos.
+        //
+        // The flag is in STREAMED_ACTOR_FLAGS, and that is right for actors where
+        // it is genuine AI state -- Bongo Bongo's vanish, Dead Hand's wait -- so it
+        // cannot simply be dropped from the list. Here it is not state: EnTest_Update
+        // derives it from play->actorCtx.lensActive, THIS client's Lens of Truth. A
+        // mirror never runs that update, so it inherited the other player's lens.
+        //
+        // Re-deriving it here rather than at the draw is what makes it correct
+        // everywhere at once: Actor_UpdateAll reads this same flag to decide whether
+        // the actor goes into invisibleActors[] (drawn masked by the lens circle) or
+        // is drawn plainly, and ACTOR_FLAG_ATTENTION_ENABLED rides with it for
+        // Z-targeting. Fixing only the limb draw left the flag lying: with our lens
+        // up and the peer's down, the engine drew the Stalfos plainly, full screen,
+        // outside the lens circle and untargetable.
+        if (gPlayState != NULL && test->actor.params == STALFOS_TYPE_INVISIBLE) {
+            if (gPlayState->actorCtx.lensActive) {
+                test->actor.flags |= ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_REACT_TO_LENS;
+                test->actor.shape.shadowDraw = ActorShadow_DrawFeet;
+            } else {
+                test->actor.flags &= ~(ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_REACT_TO_LENS);
+                test->actor.shape.shadowDraw = NULL;
+            }
+        }
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[EnemySync] EnTest extras parse error: {}", ex.what());
     }
@@ -228,6 +258,12 @@ static void EnWf_SerializeExtras(Actor* actor, nlohmann::json& x) {
     EnWf* wf = (EnWf*)actor;
     x["eye"] = wf->eyeIndex;
     x["act"] = wf->action;
+    // The head-turn, exactly the same field and the same symptom as EnTest::headRot
+    // above: func_80B36F40 writes it from Update only, and OverrideLimbDraw subtracts
+    // its .y from the head and eye limbs. Frozen, the mirror's Wolfos stares straight
+    // ahead while the authority's tracks the player -- and the clamp goes to 0x3127,
+    // about 70 degrees, so it is plainly visible on an enemy that circles you.
+    x["hr"] = wf->unk_4D4;
 }
 
 static void EnWf_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
@@ -235,6 +271,7 @@ static void EnWf_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         EnWf* wf = (EnWf*)actor;
         ReadField(x, "eye", wf->eyeIndex);
         ReadField(x, "act", wf->action);
+        ReadField(x, "hr", wf->unk_4D4);
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[EnemySync] EnWf extras parse error: {}", ex.what());
     }
@@ -456,6 +493,11 @@ static void EnFd_SerializeExtras(Actor* actor, nlohmann::json& x) {
     // units are plenty and keep this off the float path.
     x["fa"] = (int16_t)fd->fadeAlpha;
     x["inv"] = fd->invincibilityTimer;
+    // EnFd_Fade mirrors fadeAlpha into the shadow, and EnFd_Reappear puts it back
+    // to 0xFF. Frozen, it leaves an opaque disc on the floor under a body that has
+    // faded out -- an artefact the fade fix above CREATES, since before it nothing
+    // was drawn at all to be inconsistent with.
+    x["sa"] = fd->actor.shape.shadowAlpha;
 }
 
 static void EnFd_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
@@ -473,6 +515,7 @@ static void EnFd_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             fd->fadeAlpha = (f32)x["fa"].get<int16_t>();
         }
         ReadField(x, "inv", fd->invincibilityTimer);
+        ReadField(x, "sa", fd->actor.shape.shadowAlpha);
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[EnemySync] EnFd extras parse error: {}", ex.what());
     }

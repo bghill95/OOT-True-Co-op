@@ -89,7 +89,16 @@ void Anchor::HandlePacket_UpdateDungeonItems(nlohmann::json payload) {
     }
 
     s8 keyDelta = payload["keyDelta"].get<s8>();
-    if (keyDelta != 0) {
+    if (keyDelta > 0 && gSaveContext.inventory.dungeonKeys[mapIndex] < 0) {
+        // A dungeon never entered holds -1, not 0 (SaveManager writes 0xFF), and
+        // Item_Give does not increment through it -- it ASSIGNS 1 (z_parameter.c,
+        // ITEM_KEY_SMALL). So the sender's first key of a dungeon moves -1 -> 1, a
+        // jump of two, while the wire carries "+1". Adding that to our own -1 left
+        // the peer on 0: no key, in front of a door the sender had just unlocked,
+        // on the FIRST key of EVERY dungeon. Reproduce the engine's own rule
+        // instead of counting through the sentinel.
+        gSaveContext.inventory.dungeonKeys[mapIndex] = keyDelta;
+    } else if (keyDelta != 0) {
         gSaveContext.inventory.dungeonKeys[mapIndex] += keyDelta;
     }
 

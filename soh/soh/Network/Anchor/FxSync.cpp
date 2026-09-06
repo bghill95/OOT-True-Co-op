@@ -606,8 +606,17 @@ extern "C" void FxSync_OnHookSpark(Vec3f* pos) {
 // made right here. Anchor_NearestPlayer would only mend the second half.
 //
 // So record where the shockwave actually was -- ours and the peer's alike -- and
-// let those actors measure from it. Recorded even offline and with sync disabled,
-// so the single-player path takes exactly the same route.
+// let those actors measure from it.
+//
+// OFFLINE THIS STAYS SWITCHED OFF, deliberately. The recorded point is not Link:
+// z_player.c builds it 45 units ahead of him, on the floor. Measuring from it
+// therefore shifts every one of these thresholds by up to 45 units, which in
+// single player is a behaviour change for no gain -- alone, "the nearest player"
+// and "the striker" are the same person, and the vanilla pairing is already
+// right. Anchor_HammerShockwavePos returns NULL unless a session is live, and
+// each caller then falls back to the measure it always used. The position is
+// still recorded offline: it costs nothing and keeps the two paths identical
+// apart from this one test.
 static Vec3f sLastHammerPos = { 0.0f, 0.0f, 0.0f };
 static uint32_t sLastHammerFrame = 0;
 static bool sHammerPosKnown = false;
@@ -629,6 +638,12 @@ static void NoteHammerShockwave(const Vec3f& pos) {
 // The shockwave an actor should measure itself against, or NULL when we have none
 // on record and the caller should fall back to vanilla's own xzDistToPlayer.
 extern "C" Vec3f* Anchor_HammerShockwavePos(void) {
+    // No session, no ambiguity about who struck: let the caller use its own
+    // vanilla measure rather than shift its threshold by the 45 units between
+    // Link and the impact point.
+    if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected) {
+        return NULL;
+    }
     if (!sHammerPosKnown || gPlayState == NULL) {
         return NULL;
     }

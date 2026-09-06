@@ -1839,17 +1839,8 @@ s32 EnTest_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList, Vec3f* 
         CLOSE_DISPS(play->state.gfxCtx);
     }
 
-    // Co-op: read the lens itself, not the flag EnTest_Update derives from it.
-    //
-    // ACTOR_FLAG_REACT_TO_LENS is carried by the enemy stream, and rightly so for
-    // actors where it is genuine AI state (Bongo Bongo's vanish, Dead Hand's
-    // wait). Here it is not state at all: EnTest_Update sets it from
-    // play->actorCtx.lensActive, which describes THIS client's Lens of Truth. On a
-    // mirror, whose Update never runs, the streamed value made an invisible
-    // Stalfos appear and vanish according to the OTHER player's lens -- ours did
-    // nothing, and theirs revealed it for free. The draw below already reads
-    // lensActive directly for the same actor; this now matches it.
-    if ((this->actor.params == STALFOS_TYPE_INVISIBLE) && !play->actorCtx.lensActive) {
+    if ((this->actor.params == STALFOS_TYPE_INVISIBLE) &&
+        !CHECK_FLAG_ALL(this->actor.flags, ACTOR_FLAG_REACT_TO_LENS)) {
         *dList = NULL;
     }
 

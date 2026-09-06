@@ -12,6 +12,23 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ResourceManagerHelpers.h"
 
+// Co-op (Anchor/FxSync.cpp): where the last hammer shockwave landed, ours or the
+// peer's, or NULL when there is no session. Same pairing as En_Bw, word for word:
+// actorCtx.unk_02 only says SOMEONE struck, and xzDistToPlayer is redirected to
+// the nearest player -- so one player hammering across the room flipped every
+// tektite standing near the other, and a strike right beside one did nothing when
+// the striker was the further player.
+Vec3f* Anchor_HammerShockwavePos(void);
+
+static f32 EnTite_HammerDistXZ(Actor* thisx) {
+    Vec3f* hammerPos = Anchor_HammerShockwavePos();
+
+    if (hammerPos == NULL) {
+        return thisx->xzDistToPlayer;
+    }
+    return Math_Vec3f_DistXZ(&thisx->world.pos, hammerPos);
+}
+
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
 // EnTite_Idle
@@ -879,8 +896,8 @@ void EnTite_CheckDamage(Actor* thisx, PlayState* play) {
             }
         }
         // If hammer has recently hit the floor and player is close to tektite, flip over
-    } else if ((thisx->colChkInfo.health != 0) && (play->actorCtx.unk_02 != 0) && (thisx->xzDistToPlayer <= 400.0f) &&
-               (thisx->bgCheckFlags & 1)) {
+    } else if ((thisx->colChkInfo.health != 0) && (play->actorCtx.unk_02 != 0) &&
+               (EnTite_HammerDistXZ(thisx) <= 400.0f) && (thisx->bgCheckFlags & 1)) {
         if (this->flipState == TEKTITE_FLIPPED) {
             EnTite_SetupFlipUpright(this);
         } else if ((this->action >= TEKTITE_IDLE) || (this->action >= TEKTITE_IDLE)) {

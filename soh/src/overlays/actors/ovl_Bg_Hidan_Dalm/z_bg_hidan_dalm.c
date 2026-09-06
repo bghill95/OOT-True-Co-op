@@ -110,7 +110,15 @@ void BgHidanDalm_Init(Actor* thisx, PlayState* play) {
 
     this->switchFlag = (thisx->params >> 8) & 0xFF;
     thisx->params &= 0xFF;
-    if (Flags_GetSwitch(play, this->switchFlag)) {
+    // Same range guard as the co-op fallback in HookHandlers.cpp, and for the same
+    // reason -- but this one is vanilla's, and co-op made it bite. switchFlag is
+    // 0xFF on the placements this file's own comment describes, so Flags_GetSwitch
+    // evaluates tempSwch & (1 << 223), which the hardware folds onto bit 31: the
+    // very bit Flags_SetSwitch(0xFF) sets when the first such totem is broken. That
+    // flag now replicates, so both machines carry it, and on the next room reload
+    // every other 0xFF totem in the scene reads "already broken" and quietly kills
+    // itself here. Out-of-range means "no flag", not "flag set".
+    if (this->switchFlag <= 0x3F && Flags_GetSwitch(play, this->switchFlag)) {
         Actor_Kill(thisx);
     } else {
         this->actionFunc = BgHidanDalm_Wait;

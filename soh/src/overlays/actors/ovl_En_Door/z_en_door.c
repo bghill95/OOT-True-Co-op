@@ -227,13 +227,16 @@ void EnDoor_Idle(EnDoor* this, PlayState* play) {
             if (GameInteractor_Should(VB_CONSUME_SMALL_KEY, true, this)) {
                 if (!remoteOpen) {
                     gSaveContext.inventory.dungeonKeys[gSaveContext.mapIndex]--;
+                    // Inside the guard, not after it: the hook means "a small key was
+                    // spent", and the co-op handler now turns it into a -1 on the
+                    // wire. Left outside, an override that skips the debit (the
+                    // randomizer's locked overworld doors spend a RandomizerInf
+                    // instead) still fired it, and the peer lost a key nobody spent.
+                    GameInteractor_ExecuteOnDungeonKeyUsedHooks(gSaveContext.mapIndex);
                 }
                 Flags_SetSwitch(play, this->actor.params & 0x3F);
             }
             Audio_PlayActorSound2(&this->actor, NA_SE_EV_CHAIN_KEY_UNLOCK);
-            if (!remoteOpen) {
-                GameInteractor_ExecuteOnDungeonKeyUsedHooks(gSaveContext.mapIndex);
-            }
         }
     } else if (!Player_InCsMode(play)) {
         if (fabsf(playerPosRelToDoor.y) < 20.0f && fabsf(playerPosRelToDoor.x) < 20.0f &&
