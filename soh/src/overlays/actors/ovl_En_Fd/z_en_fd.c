@@ -11,7 +11,11 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ResourceManagerHelpers.h"
 
-#define FLAGS                                                                                 \
+// Co-op (Anchor/EnemySync.cpp): true when this copy is a mirror, i.e. its Update
+// is suppressed and only Draw runs.
+s32 Anchor_IsMirroredActor(Actor* actor);
+
+#define FLAGS                                                                               \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
      ACTOR_FLAG_HOOKSHOT_PULLS_ACTOR)
 
@@ -784,6 +788,17 @@ void EnFd_Draw(Actor* thisx, PlayState* play) {
     s32 pad;
 
     frames = play->state.frames;
+
+    // Co-op: EnFd_PostLimbDraw emits FD_EFFECT_DOT every other frame, from the
+    // DRAW path, while the only thing that ages those effects out is called from
+    // EnFd_Update. On a mirror the update never runs, so the 200 effect slots
+    // would fill with dots at full alpha that never expire -- a frozen cloud
+    // around the body. Age them here instead. On the authority this is not
+    // reached: Anchor_IsMirroredActor is false and Update already did it.
+    if (Anchor_IsMirroredActor(&this->actor)) {
+        EnFd_UpdateDots(this);
+        EnFd_UpdateFlames(this);
+    }
 
     OPEN_DISPS(play->state.gfxCtx);
 

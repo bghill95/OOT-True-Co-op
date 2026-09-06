@@ -16,6 +16,16 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_Ik/z_en_ik.h"
 #include "src/overlays/actors/ovl_En_Wallmas/z_en_wallmas.h"
 #include "src/overlays/actors/ovl_En_Dodojr/z_en_dodojr.h"
+#include "src/overlays/actors/ovl_En_Fd/z_en_fd.h"
+// Flare Dancer action functions: non-static in z_en_fd.c. Its draw gate compares
+// actionFunc against EnFd_Reappear, so the pointer needs a portable index.
+void EnFd_Run(EnFd* self, PlayState* play);
+void EnFd_SpinAndSpawnFire(EnFd* self, PlayState* play);
+void EnFd_Reappear(EnFd* self, PlayState* play);
+void EnFd_SpinAndGrow(EnFd* self, PlayState* play);
+void EnFd_JumpToGround(EnFd* self, PlayState* play);
+void EnFd_WaitForCore(EnFd* self, PlayState* play);
+void EnFd_Land(EnFd* self, PlayState* play);
 // Baby Dodongo action functions: non-static in z_en_dodojr.c. Its draw switch
 // compares actionFunc against these two, so they need a portable index too.
 void func_809F73AC(EnDodojr* self, PlayState* play);
@@ -390,7 +400,61 @@ static void Register(int16_t id, void (*ser)(Actor*, nlohmann::json&),
     EnemySync::RegisterAdapter(id, adapter);
 }
 
+// Flare Dancer (EN_FD), the Fire Temple mini-boss. The worst case of this whole
+// class: its ENTIRE body draw sits behind
+//     if (this->actionFunc != EnFd_Reappear && !(this->fadeAlpha < 0.9f))
+// and both fields are written only by Update. EnFd_Init leaves actionFunc on
+// EnFd_Reappear and fadeAlpha at 0, so on a mirror the test failed forever while
+// the 12-sphere AT collider was still dragged along and submitted -- an invisible
+// mini-boss that takes your hearts. invincibilityTimer comes too: the limb
+// override blanks limbs 13 and 21 while it runs, which is the only visual cue
+// that the core is out and the body is open.
+//
+// Not carried: coreActive, spinTimer, attackTimer and the rest are read by Update
+// alone, and a mirror's Update never runs.
+static EnFdActionFunc sFdActions[] = {
+    NULL, EnFd_Run, EnFd_SpinAndSpawnFire, EnFd_Reappear, EnFd_SpinAndGrow, EnFd_JumpToGround, EnFd_WaitForCore,
+    EnFd_Land,
+};
+
+static void EnFd_SerializeExtras(Actor* actor, nlohmann::json& x) {
+    EnFd* fd = (EnFd*)actor;
+    uint8_t idx = 0;
+    for (uint8_t i = 1; i < ARRAY_COUNT(sFdActions); i++) {
+        if (fd->actionFunc == sFdActions[i]) {
+            idx = i;
+            break;
+        }
+    }
+    x["af"] = idx;
+    // 0..255 fade, and the draw gate only asks whether it is below 0.9 -- whole
+    // units are plenty and keep this off the float path.
+    x["fa"] = (int16_t)fd->fadeAlpha;
+    x["inv"] = fd->invincibilityTimer;
+}
+
+static void EnFd_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
+    try {
+        EnFd* fd = (EnFd*)actor;
+        if (x.contains("af")) {
+            uint8_t idx = x["af"].get<uint8_t>();
+            // 0 means the authority held an actionFunc we do not know: keep ours
+            // rather than nulling a pointer an authority handoff would then call.
+            if (idx > 0 && idx < ARRAY_COUNT(sFdActions)) {
+                fd->actionFunc = sFdActions[idx];
+            }
+        }
+        if (x.contains("fa")) {
+            fd->fadeAlpha = (f32)x["fa"].get<int16_t>();
+        }
+        ReadField(x, "inv", fd->invincibilityTimer);
+    } catch (const std::exception& ex) {
+        SPDLOG_WARN("[EnemySync] EnFd extras parse error: {}", ex.what());
+    }
+}
+
 void RegisterFrozenDrawAdapters() {
+    Register(ACTOR_EN_FD, EnFd_SerializeExtras, EnFd_DeserializeExtras);
     Register(ACTOR_EN_BB, EnBb_SerializeExtras, EnBb_DeserializeExtras);
     Register(ACTOR_EN_BW, EnBw_SerializeExtras, EnBw_DeserializeExtras);
     Register(ACTOR_EN_ZF, EnZf_SerializeExtras, EnZf_DeserializeExtras);

@@ -535,7 +535,16 @@ void func_80996F98(DoorShutter* this, PlayState* play) {
 
 void func_80997004(DoorShutter* this, PlayState* play) {
     if (DECR(this->unk_16E) == 0 && play->roomCtx.status == 0 && func_80996D14(this, play) != 0) {
-        if (((this->doorType == SHUTTER_BOSS) ? 20.0f : 50.0f) < this->dyna.actor.xzDistToPlayer) {
+        // Co-op: vanilla holds the slab up until the local Link has walked clear,
+        // because the local Link is the one crossing. On a replay nobody is
+        // crossing here, and that distance test measures OUR Link -- so the door
+        // stayed up exactly while we stood at it, which is the follow-the-leader
+        // case. Worse than cosmetic: while the sequence runs, func_80996B0C does
+        // not, so player->doorActor is never set and we cannot open our own door.
+        // Show the slide, then close and hand the door back.
+        s32 remoteOpen = Anchor_IsRemoteDoorOpen(&this->dyna.actor);
+
+        if (remoteOpen || ((this->doorType == SHUTTER_BOSS) ? 20.0f : 50.0f) < this->dyna.actor.xzDistToPlayer) {
             if (DoorShutter_SetupDoor(this, play)) {
                 this->dyna.actor.velocity.y = 30.0f;
             }
@@ -593,9 +602,13 @@ void func_80997220(DoorShutter* this, PlayState* play) {
     // blue warp that was appearing never comes back. That would fire on EVERY
     // sliding door the other player opens anywhere in the scene.
     //
-    // Consequence accepted: while the slab stands open here it leads into a room
-    // this machine never loaded (the local crossing preloads it at z_player.c,
-    // which we deliberately do not replay). Walking into the gap voids out.
+    // A previous version of this comment claimed the raised slab opens a way into
+    // a room this machine never loaded. It does not: DynaPoly_SetBgActor runs only
+    // for SHUTTER_PG_BARS and SHUTTER_GOHMA_BLOCK, so an ordinary sliding door has
+    // no actor collision at all and never blocked anything. What DOES belong to the
+    // local crossing is the far-room preload (func_8009728C, z_player.c), which we
+    // do not replay -- so a peer who wanders through the opening finds nothing
+    // there. func_80997004 now closes a replayed door immediately for that reason.
     if (Anchor_IsRemoteDoorOpen(&this->dyna.actor)) {
         Anchor_ForgetRemoteDoor(&this->dyna.actor);
         this->unk_164 = 0;
