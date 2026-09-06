@@ -219,6 +219,8 @@ static InitChainEntry sInitChain[] = {
 // retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
 // which way to shove a victim already known to be the local player.
 s16 Anchor_LocalPlayerYaw(Actor* from);
+s32 Anchor_NoteCaptureVictim(Actor* enemy, Actor* victim);
+s32 Anchor_DeliverCapture(Actor* enemy, u8 mode, s16 entrance);
 
 void EnGeldB_SetupAction(EnGeldB* this, EnGeldBActionFunc actionFunc) {
     this->actionFunc = actionFunc;
@@ -920,11 +922,18 @@ void EnGeldB_SpinAttack(EnGeldB* this, PlayState* play) {
             this->skelAnime.playSpeed = 1.5f;
         } else if (this->swordCollider.base.atFlags & AT_HIT) {
             this->swordCollider.base.atFlags &= ~AT_HIT;
-            if (&player->actor == this->swordCollider.base.at) {
-                func_8002F71C(play, &this->actor, 6.0f, Anchor_LocalPlayerYaw(&this->actor), 6.0f);
+            // Co-op: base.at is whoever the blade actually landed on, and the
+            // other player's puppet carries a player-type AC cylinder. The bare
+            // comparison against the local Link meant the mirroring player could
+            // never be captured at all. Accept either, and remember which one so
+            // the warp in Draw goes to the right machine.
+            if (Anchor_NoteCaptureVictim(&this->actor, this->swordCollider.base.at)) {
                 this->spinAttackState = 2;
-                Player_SetCsActionWithHaltedActors(play, &this->actor, 0x18);
-                Message_StartTextbox(play, 0x6003, &this->actor);
+                if (&player->actor == this->swordCollider.base.at) {
+                    func_8002F71C(play, &this->actor, 6.0f, Anchor_LocalPlayerYaw(&this->actor), 6.0f);
+                    Player_SetCsActionWithHaltedActors(play, &this->actor, 0x18);
+                    Message_StartTextbox(play, 0x6003, &this->actor);
+                }
                 this->timer = 30;
                 this->actor.speedXZ = 0.0f;
                 Audio_PlayActorSound2(&this->actor, NA_SE_EN_TWINROBA_YOUNG_LAUGH);
@@ -1572,20 +1581,33 @@ void EnGeldB_Draw(Actor* thisx, PlayState* play) {
         } else {
             this->timer--;
             if (this->timer == 0) {
+                s16 destination;
+
                 if ((INV_CONTENT(ITEM_HOOKSHOT) == ITEM_NONE) || (INV_CONTENT(ITEM_LONGSHOT) == ITEM_NONE)) {
-                    play->nextEntranceIndex = ENTR_GERUDO_VALLEY_1;
+                    destination = ENTR_GERUDO_VALLEY_1;
                 } else if (Flags_GetEventChkInf(EVENTCHKINF_WATCHED_GANONS_CASTLE_COLLAPSE_CAUGHT_BY_GERUDO)) {
-                    play->nextEntranceIndex = ENTR_GERUDOS_FORTRESS_18;
+                    destination = ENTR_GERUDOS_FORTRESS_18;
                 } else {
-                    play->nextEntranceIndex = ENTR_GERUDOS_FORTRESS_17;
+                    destination = ENTR_GERUDOS_FORTRESS_17;
                 }
 
-                if (IS_RANDO) {
-                    Entrance_OverrideGerudoGuardCapture();
-                }
+                // Co-op: this warp fires from DRAW, which runs on every client,
+                // and the grab several frames earlier may have landed on the
+                // other player. Send them to the cell instead of going
+                // ourselves; mode 1 carries the destination. Returns 0 when the
+                // victim was our own Link, or when we are playing alone.
+                if (Anchor_DeliverCapture(&this->actor, 1, destination)) {
+                    this->spinAttackState = 0; // the fighter is done with us
+                } else {
+                    play->nextEntranceIndex = destination;
 
-                play->transitionType = TRANS_TYPE_CIRCLE(TCA_STARBURST, TCC_BLACK, TCS_FAST);
-                play->transitionTrigger = TRANS_TRIGGER_START;
+                    if (IS_RANDO) {
+                        Entrance_OverrideGerudoGuardCapture();
+                    }
+
+                    play->transitionType = TRANS_TYPE_CIRCLE(TCA_STARBURST, TCC_BLACK, TCS_FAST);
+                    play->transitionTrigger = TRANS_TRIGGER_START;
+                }
             }
         }
     }

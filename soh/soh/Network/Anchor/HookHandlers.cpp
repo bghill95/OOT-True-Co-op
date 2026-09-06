@@ -21,6 +21,7 @@ extern "C" {
 #include "variables.h"
 #include "functions.h"
 extern EffectSsInfo sEffectSsInfo; // z_effect_soft_sprite.c (no header declares it)
+void Anchor_ForgetCaptureVictim(Actor* enemy); // Packets/CapturePlayer.cpp
 #include "src/overlays/actors/ovl_Bg_Bombwall/z_bg_bombwall.h"
 #include "src/overlays/actors/ovl_Bg_Breakwall/z_bg_breakwall.h"
 #include "src/overlays/actors/ovl_Bg_Haka_Zou/z_bg_haka_zou.h"
@@ -403,6 +404,11 @@ void Anchor::RegisterHooks() {
     // turns that latent read-after-free into a real 0xc0000005 in
     // EffectSs_Update. NULL is handled by every effect type; sweep is ~100 slots.
     COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
+        // Pending capture (CapturePlayer.cpp) keyed by the grabber's address:
+        // drop it here or a dead Wallmaster leaves a dangling key that the next
+        // actor allocated at the same address would inherit as its own victim.
+        Anchor_ForgetCaptureVictim((Actor*)actorRef);
+
         if (sEffectSsInfo.table == NULL) {
             return;
         }

@@ -132,6 +132,8 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_CarryEvent(payload);
         else if (packetType == CUTSCENE_SYNC)
             HandlePacket_CutsceneSync(payload);
+        else if (packetType == CAPTURE_PLAYER)
+            HandlePacket_CapturePlayer(payload);
         else if (packetType == DAMAGE_PLAYER)
             HandlePacket_DamagePlayer(payload);
         else if (packetType == DISABLE_ANCHOR)

@@ -14,10 +14,42 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_Firefly/z_en_firefly.h"
 #include "src/overlays/actors/ovl_En_Sb/z_en_sb.h"
 #include "src/overlays/actors/ovl_En_Ik/z_en_ik.h"
+#include "src/overlays/actors/ovl_En_Wallmas/z_en_wallmas.h"
+#include "src/overlays/actors/ovl_En_Dodojr/z_en_dodojr.h"
+// Baby Dodongo action functions: non-static in z_en_dodojr.c. Its draw switch
+// compares actionFunc against these two, so they need a portable index too.
+void func_809F73AC(EnDodojr* self, PlayState* play);
+void func_809F7BE4(EnDodojr* self, PlayState* play);
+void func_809F74C4(EnDodojr* self, PlayState* play);
+void func_809F758C(EnDodojr* self, PlayState* play);
+void func_809F773C(EnDodojr* self, PlayState* play);
+void func_809F77AC(EnDodojr* self, PlayState* play);
+void func_809F784C(EnDodojr* self, PlayState* play);
+void func_809F786C(EnDodojr* self, PlayState* play);
+void func_809F78EC(EnDodojr* self, PlayState* play);
+void func_809F799C(EnDodojr* self, PlayState* play);
+// Keese death state: its PostLimbDraw stops drawing the aura once this is set.
+void EnFirefly_Die(EnFirefly* self, PlayState* play);
+// Wallmaster action functions: defined non-static in z_en_wallmas.c, declared
+// only there. Needed to map the actionFunc pointer to a portable index.
+void EnWallmas_WaitToDrop(EnWallmas* self, PlayState* play);
+void EnWallmas_Drop(EnWallmas* self, PlayState* play);
+void EnWallmas_Land(EnWallmas* self, PlayState* play);
+void EnWallmas_Stand(EnWallmas* self, PlayState* play);
+void EnWallmas_JumpToCeiling(EnWallmas* self, PlayState* play);
+void EnWallmas_ReturnToCeiling(EnWallmas* self, PlayState* play);
+void EnWallmas_TakeDamage(EnWallmas* self, PlayState* play);
+void EnWallmas_Cooldown(EnWallmas* self, PlayState* play);
+void EnWallmas_Die(EnWallmas* self, PlayState* play);
+void EnWallmas_TakePlayer(EnWallmas* self, PlayState* play);
+void EnWallmas_WaitForProximity(EnWallmas* self, PlayState* play);
+void EnWallmas_WaitForSwitchFlag(EnWallmas* self, PlayState* play);
+void EnWallmas_Stun(EnWallmas* self, PlayState* play);
+void EnWallmas_Walk(EnWallmas* self, PlayState* play);
 }
 
 /**
- * One bug class, seven enemies: "the mirror's Draw reads a frozen private field".
+ * One bug class, ten enemies: "the mirror's Draw reads a frozen private field".
  *
  * A suppressed mirror never runs Update, but it DOES run Draw every frame. Any
  * private field the AI mutates and the draw path reads therefore stays at its
@@ -28,14 +60,16 @@ extern "C" {
  * None of these fields is part of the generic stream (they are not pos / rot /
  * joints / collider bits), so each actor carries its own as extras.
  *
- * Two kinds of field were deliberately left out everywhere:
- * - ice/freeze timers (EnBb::fireIceTimer, EnBw/EnZf/EnTest::iceTimer): the draw
- *   path decrements them itself and bumps colorFilterTimer, so replaying them
- *   would fight the stream every frame.
- * - actionFunc (EnFirefly, EnDodojr): a function pointer. Its value is a local
- *   code address and comparing it against a file-static symbol cannot be
- *   reproduced across processes. EnDodojr's draw switch keys off nothing else,
- *   so that actor gets no adapter at all rather than a broken one.
+ * On actionFunc: the pointer value is a local code address and means nothing on
+ * the other machine, but these overlays declare their action functions
+ * non-static, so a small table converts the pointer to an index and back
+ * (sWallmasActions, sDodojrActions, and the one "dying" bit EnFirefly needs).
+ * That also gives a clean authority handoff: the copy resumes in the authority's
+ * state rather than wherever it was left.
+ *
+ * Deliberately NOT carried: ice/freeze timers (EnBb::fireIceTimer,
+ * EnBw/EnZf/EnTest::iceTimer). The draw path decrements them itself and bumps
+ * colorFilterTimer, so replaying them would fight the stream every frame.
  */
 
 template <typename T> static void ReadField(const nlohmann::json& x, const char* key, T& out) {
@@ -174,6 +208,9 @@ static void EnFirefly_SerializeExtras(Actor* actor, nlohmann::json& x) {
     x["fire"] = ff->onFire;
     x["aura"] = ff->auraType;
     x["tmr"] = ff->timer;
+    // PostLimbDraw stops drawing the aura once the Keese is dying; that test
+    // is on actionFunc, so send the one bit it actually needs.
+    x["dying"] = (ff->actionFunc == EnFirefly_Die) ? 1 : 0;
 }
 
 static void EnFirefly_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
@@ -182,6 +219,9 @@ static void EnFirefly_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "fire", ff->onFire);
         ReadField(x, "aura", ff->auraType);
         ReadField(x, "tmr", ff->timer);
+        if (x.value("dying", 0) != 0) {
+            ff->actionFunc = EnFirefly_Die;
+        }
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[EnemySync] EnFirefly extras parse error: {}", ex.what());
     }
@@ -236,6 +276,102 @@ static void EnIk_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     }
 }
 
+// Wallmaster (EN_WALLMAS). Both its draw functions branch on actionFunc, and
+// the shadow on the floor is sized from timer: EnWallmas_Draw skips the skeleton
+// entirely while the hand is still WaitToDrop, and EnWallmas_DrawXlu picks
+// between the actor scale and a timer-derived radius. Frozen on the mirror, the
+// hand is drawn in a state that has nothing to do with the position the stream
+// is giving it — a shadow stuck at one size under a hand that has already
+// dropped, or no hand at all above a shadow that keeps growing.
+//
+// actionFunc is a function pointer, so the value itself means nothing across
+// two processes. These are non-static symbols, so map them to an index and back.
+// The table doubles as a clean handoff if authority changes: the copy resumes
+// in the authority's state instead of whatever it was left in.
+static EnWallmasActionFunc sWallmasActions[] = {
+    NULL,
+    EnWallmas_WaitToDrop,
+    EnWallmas_Drop,
+    EnWallmas_Land,
+    EnWallmas_Stand,
+    EnWallmas_JumpToCeiling,
+    EnWallmas_ReturnToCeiling,
+    EnWallmas_TakeDamage,
+    EnWallmas_Cooldown,
+    EnWallmas_Die,
+    EnWallmas_TakePlayer,
+    EnWallmas_WaitForProximity,
+    EnWallmas_WaitForSwitchFlag,
+    EnWallmas_Stun,
+    EnWallmas_Walk,
+};
+
+static void EnWallmas_SerializeExtras(Actor* actor, nlohmann::json& x) {
+    EnWallmas* wm = (EnWallmas*)actor;
+    uint8_t idx = 0;
+    for (uint8_t i = 1; i < ARRAY_COUNT(sWallmasActions); i++) {
+        if (wm->actionFunc == sWallmasActions[i]) {
+            idx = i;
+            break;
+        }
+    }
+    x["af"] = idx;
+    x["tmr"] = wm->timer;
+}
+
+static void EnWallmas_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
+    try {
+        EnWallmas* wm = (EnWallmas*)actor;
+        if (x.contains("af")) {
+            uint8_t idx = x["af"].get<uint8_t>();
+            // 0 means the authority held an actionFunc we do not know: leave ours
+            // alone rather than nulling the pointer an authority handoff would run.
+            if (idx > 0 && idx < ARRAY_COUNT(sWallmasActions)) {
+                wm->actionFunc = sWallmasActions[idx];
+            }
+        }
+        ReadField(x, "tmr", wm->timer);
+    } catch (const std::exception& ex) {
+        SPDLOG_WARN("[EnemySync] EnWallmas extras parse error: {}", ex.what());
+    }
+}
+
+// Baby Dodongo (EN_DODOJR). Its whole draw is a two-way switch on actionFunc —
+// inflated/exploding form versus the normal one — and nothing else. Frozen at
+// Init, the mirror shows the wrong body for the entire life of the actor,
+// including the swollen state that says it is about to burst. Same portable
+// index trick as the Wallmaster above; these symbols are non-static too.
+static EnDodojrActionFunc sDodojrActions[] = {
+    NULL,          func_809F73AC, func_809F7BE4, func_809F74C4, func_809F758C, func_809F773C,
+    func_809F77AC, func_809F784C, func_809F786C, func_809F78EC, func_809F799C,
+};
+
+static void EnDodojr_SerializeExtras(Actor* actor, nlohmann::json& x) {
+    EnDodojr* dj = (EnDodojr*)actor;
+    uint8_t idx = 0;
+    for (uint8_t i = 1; i < ARRAY_COUNT(sDodojrActions); i++) {
+        if (dj->actionFunc == sDodojrActions[i]) {
+            idx = i;
+            break;
+        }
+    }
+    x["af"] = idx;
+}
+
+static void EnDodojr_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
+    try {
+        EnDodojr* dj = (EnDodojr*)actor;
+        if (x.contains("af")) {
+            uint8_t idx = x["af"].get<uint8_t>();
+            if (idx > 0 && idx < ARRAY_COUNT(sDodojrActions)) {
+                dj->actionFunc = sDodojrActions[idx];
+            }
+        }
+    } catch (const std::exception& ex) {
+        SPDLOG_WARN("[EnemySync] EnDodojr extras parse error: {}", ex.what());
+    }
+}
+
 static void Register(int16_t id, void (*ser)(Actor*, nlohmann::json&),
                      void (*deser)(Actor*, const nlohmann::json&)) {
     ActorSyncAdapter adapter;
@@ -253,4 +389,6 @@ void RegisterFrozenDrawAdapters() {
     Register(ACTOR_EN_FIREFLY, EnFirefly_SerializeExtras, EnFirefly_DeserializeExtras);
     Register(ACTOR_EN_SB, EnSb_SerializeExtras, EnSb_DeserializeExtras);
     Register(ACTOR_EN_IK, EnIk_SerializeExtras, EnIk_DeserializeExtras);
+    Register(ACTOR_EN_WALLMAS, EnWallmas_SerializeExtras, EnWallmas_DeserializeExtras);
+    Register(ACTOR_EN_DODOJR, EnDodojr_SerializeExtras, EnDodojr_DeserializeExtras);
 }

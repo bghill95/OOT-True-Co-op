@@ -43,6 +43,8 @@ void EnWallmas_Stun(EnWallmas* this, PlayState* play);
 void EnWallmas_Walk(EnWallmas* this, PlayState* play);
 
 Player* Anchor_NearestPlayer(Actor* from);
+s32 Anchor_NoteCaptureVictim(Actor* enemy, Actor* victim);
+s32 Anchor_DeliverCapture(Actor* enemy, u8 mode, s16 entrance);
 
 const ActorInit En_Wallmas_InitVars = {
     ACTOR_EN_WALLMAS,
@@ -474,6 +476,10 @@ void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
     Player* player = Anchor_NearestPlayer(&this->actor);
     s32 victimIsLocal = (player == GET_PLAYER(play));
 
+    // Tell the module who is in the hand, so the respawn below reaches them
+    // even though only this client simulates the Wallmaster.
+    Anchor_NoteCaptureVictim(&this->actor, &player->actor);
+
     if (Animation_OnFrame(&this->skelAnime, 1.0f) != 0) {
         if (!LINK_IS_ADULT) {
             Player_PlaySfx(&this->actor, NA_SE_VO_LI_DAMAGE_S_KID);
@@ -518,9 +524,16 @@ void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
     Math_StepToF(&this->actor.world.pos.x, player->actor.world.pos.x, 3.0f);
     Math_StepToF(&this->actor.world.pos.z, player->actor.world.pos.z, 3.0f);
 
-    if (this->timer == 0x1E && victimIsLocal) {
-        Sfx_PlaySfxCentered(NA_SE_OC_ABYSS);
-        Play_TriggerRespawn(play);
+    if (this->timer == 0x1E) {
+        // mode 0 = respawn at the last entrance, which is what vanilla does
+        // here. Anchor_DeliverCapture returns 1 when it sent the order to the
+        // other player, in which case we must not take the trip ourselves.
+        if (!Anchor_DeliverCapture(&this->actor, 0, 0)) {
+            if (victimIsLocal) {
+                Sfx_PlaySfxCentered(NA_SE_OC_ABYSS);
+                Play_TriggerRespawn(play);
+            }
+        }
     }
 }
 

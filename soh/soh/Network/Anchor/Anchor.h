@@ -124,6 +124,7 @@ class Anchor : public Network {
     void HandlePacket_BossEntry(nlohmann::json payload);
     void HandlePacket_ConsumeAdultTradeItem(nlohmann::json payload);
     void HandlePacket_CutsceneSync(nlohmann::json payload);
+    void HandlePacket_CapturePlayer(nlohmann::json payload);
     void HandlePacket_DamagePlayer(nlohmann::json payload);
     void HandlePacket_DisableAnchor(nlohmann::json payload);
     void HandlePacket_EnemyDespawn(nlohmann::json payload);
@@ -175,6 +176,7 @@ class Anchor : public Network {
     inline static const std::string BOMB_EVENT = "BOMB_EVENT";
     inline static const std::string BREAK_EVENT = "BREAK_EVENT";
     inline static const std::string BOSS_ENTRY = "BOSS_ENTRY";
+    inline static const std::string CAPTURE_PLAYER = "CAPTURE_PLAYER";
     inline static const std::string CARRY_EVENT = "CARRY_EVENT";
     inline static const std::string CUTSCENE_SYNC = "CUTSCENE_SYNC";
     inline static const std::string DAMAGE_PLAYER = "DAMAGE_PLAYER";
@@ -238,6 +240,9 @@ class Anchor : public Network {
     void SendPacket_CarryEvent(nlohmann::json& event);
     void SendPacket_ClearTeamState(std::string teamId);
     void SendPacket_CutsceneSync(u8 kind, s16 sceneNum, s32 entranceIndex, s32 cutsceneIndex, s16 csFlag);
+    // An enemy simulated on THIS client grabbed another player: tell them to be
+    // taken. mode 0 = respawn at the last entrance, 1 = warp to `entrance`.
+    void SendPacket_CapturePlayer(u32 clientId, u8 mode, s16 entrance);
     void SendPacket_DamagePlayer(u32 clientId, u8 damageEffect, u8 damage);
     void SendPacket_EnemyDespawn(uint64_t enemyKey);
     void SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanent, u32 dmgFlags);
