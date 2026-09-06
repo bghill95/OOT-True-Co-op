@@ -580,23 +580,29 @@ void func_80997220(DoorShutter* this, PlayState* play) {
     Player* player = GET_PLAYER(play);
     s8 room = this->dyna.actor.room;
 
-    // Co-op: was this slide a replay of the other player's crossing? The sequence
-    // ends here either way, so drop the mark now.
+    // Co-op: end of a replayed sequence. Nothing below may run -- this whole
+    // function commits a room transition, and no Link crossed on this machine.
     //
-    // Almost nothing below needs suppressing, which is worth stating because the
-    // obvious reading is that it all does. The room block is already written in
-    // terms of OUR Link: it re-sides the door on our own position and only swaps
-    // curRoom/prevRoom when WE changed side. Standing still, that is a no-op; and
-    // if we DID walk through the doorway while it stood open for him -- which is
-    // reachable, the slab is genuinely up on this machine -- then the swap is not
-    // merely harmless but required, and skipping it would strand us in a room the
-    // engine still thinks we left. Same for the respawn point.
+    // Only the curRoom/prevRoom swap is conditional on our own Link having changed
+    // side. func_80097534 and Play_SetupRespawnPoint are not: func_80097534 clears
+    // prevRoom, calls func_80031B14 -- which deletes every actor belonging to
+    // another room and then wipes actorCtx.flags.tempClear and the top byte of
+    // tempSwch -- and respawns the transition actors. tempClear is latched exactly
+    // once, when the last ACTORCAT_ENEMY leaves the room, so clearing it after the
+    // room is already empty is unrecoverable without reloading: the chest or the
+    // blue warp that was appearing never comes back. That would fire on EVERY
+    // sliding door the other player opens anywhere in the scene.
     //
-    // The tail is the exception: it hands us to a 30-frame camera hold with every
-    // actor halted, for a door we may never have touched.
-    s32 remoteOpen = Anchor_IsRemoteDoorOpen(&this->dyna.actor);
-
-    Anchor_ForgetRemoteDoor(&this->dyna.actor);
+    // Consequence accepted: while the slab stands open here it leads into a room
+    // this machine never loaded (the local crossing preloads it at z_player.c,
+    // which we deliberately do not replay). Walking into the gap voids out.
+    if (Anchor_IsRemoteDoorOpen(&this->dyna.actor)) {
+        Anchor_ForgetRemoteDoor(&this->dyna.actor);
+        this->unk_164 = 0;
+        this->dyna.actor.velocity.y = 0.0f;
+        DoorShutter_SetupDoor(this, play); // back to the right closed-and-waiting state
+        return;
+    }
 
     if (this->dyna.actor.room >= 0) {
         Vec3f vec;
@@ -616,7 +622,7 @@ void func_80997220(DoorShutter* this, PlayState* play) {
     }
     this->unk_164 = 0;
     this->dyna.actor.velocity.y = 0.0f;
-    if (DoorShutter_SetupDoor(this, play) && !(player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) && !remoteOpen) {
+    if (DoorShutter_SetupDoor(this, play) && !(player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR)) {
         DoorShutter_SetupAction(this, func_80997568);
         Player_SetCsActionWithHaltedActors(play, NULL, 2);
     }

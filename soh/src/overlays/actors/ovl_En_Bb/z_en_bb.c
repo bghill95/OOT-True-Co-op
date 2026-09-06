@@ -426,6 +426,16 @@ void EnBb_FlameTrail(EnBb* this, PlayState* play) {
         if (this->actor.parent == NULL) {
             EnBb_SetupDeath(this, play);
         }
+    } else if ((this->targetActor == NULL) || (this->actor.parent == NULL)) {
+        // Co-op: a trail link is only ever created by EnBb_SpawnFlameTrail, which
+        // wires targetActor and parent in the statements right after Actor_Spawn --
+        // which is why the reads below need no check in vanilla. A link that gets
+        // here unwired was built some other way (EnemySync used to replicate these
+        // and materialised them from Actor_Spawn alone, crashing on the line below).
+        // Vanilla already kills a link whose flame has faded; do that rather than
+        // dereference NULL. Unreachable in single player.
+        Actor_Kill(&this->actor);
+        return;
     } else {
         if (this->timer == 0) {
             if (((EnBb*)this->targetActor)->flameScaleY != 0.0f) {

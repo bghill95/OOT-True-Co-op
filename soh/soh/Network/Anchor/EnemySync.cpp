@@ -297,6 +297,13 @@ enum CoopFhgFireParam : int16_t {
     FHGFIRE_P_LIGHTNING_TRAIL = 100 // child of a strike (local), 100..107
 };
 
+// EN_BB params (z_en_bb.h). Scene-placed Bubbles are all negative; the two
+// non-negative values are the flame-trail chain links, never a real enemy.
+enum CoopBbParam : int16_t {
+    ENBB_P_FLAME_TRAIL = 0, // one of five links the bubble spawns behind itself
+    ENBB_P_KILL_TRAIL = 11  // the same links, re-tagged when the bubble dies
+};
+
 static bool IsTrackedCategory(Actor* actor) {
     return actor->category == ACTORCAT_ENEMY || actor->category == ACTORCAT_BOSS || IsForcedTracked(actor);
 }
@@ -401,6 +408,20 @@ static bool IsTrackingExcluded(Actor* actor) {
     // death draw): local on every client.
     if (actor->id == ACTOR_EN_VB_BALL) {
         return actor->params != 100;
+    }
+    // En_Bb flame trail: the bubble spawns five chain links and wires each one's
+    // targetActor / parent / vTrailIdx in the statements right after Actor_Spawn.
+    // Same shape as the Tailpasaran tails guarded by gActorInitDepth in
+    // OnEnemyActorSpawn, but one step out of reach of that guard: EnBb spawns its
+    // trail from an action func, not from Init, so the depth is 0 and the links
+    // were getting dynamic keys and being announced. The peer built them from
+    // Actor_Spawn alone -- targetActor NULL, since EnBb_Init nulls it -- and
+    // EnBb_FlameTrail dereferences it unguarded on the first update (crash on the
+    // main thread, z_en_bb.c:431, seen 2026-09-06). Nothing to replicate anyway:
+    // the trail is decoration that each client draws behind the bubble it runs.
+    if (actor->id == ACTOR_EN_BB) {
+        int16_t p = (int16_t)actor->params;
+        return p == ENBB_P_FLAME_TRAIL || p == ENBB_P_KILL_TRAIL;
     }
     return actor->id == ACTOR_EN_GOMA && (uint16_t)actor->params >= 6;
 }
@@ -1992,6 +2013,13 @@ void HandleRemoteSpawn(uint64_t key, int16_t actorId, uint16_t params, Vec3f pos
     // support-cut replay / intro on every client (BossVaAdapter) — a remote
     // copy would double them.
     if (actorId == ACTOR_BOSS_VA && (int16_t)params >= 16) {
+        return;
+    }
+    // En_Bb flame-trail links: excluded from tracking above, so a current peer no
+    // longer announces them. Refused here too because the sender is the one that
+    // decides, and a peer on an older binary would still crash us -- the replica
+    // has no targetActor and EnBb_FlameTrail dereferences it unguarded.
+    if (actorId == ACTOR_EN_BB && ((int16_t)params == ENBB_P_FLAME_TRAIL || (int16_t)params == ENBB_P_KILL_TRAIL)) {
         return;
     }
 

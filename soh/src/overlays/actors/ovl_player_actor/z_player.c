@@ -5381,12 +5381,19 @@ s32 Player_ActionHandler_1(Player* this, PlayState* play) {
 
                 doorShutter->unk_164 = 1;
 
-                // Co-op: unk_164 is written nowhere else, and only ever by the local
-                // Link -- so the peer's copy of this slab never moves. Announce it.
-                // Clear first: if a replay was already running on our copy for HIM,
-                // this crossing is ours and must commit normally.
+                // Co-op: this is the only place unk_164 is written as an OPEN
+                // trigger, and only ever by the local Link -- so the peer's copy of
+                // this slab never moves. Announce it. Clear first: if a replay was
+                // already running on our copy for HIM, this crossing is ours and
+                // must commit normally.
+                // Sliding doors only: Door_Gerudo also routes through this branch
+                // (z_door_gerudo.c sets PLAYER_DOORTYPE_SLIDING and the cast above
+                // is layout-compatible only up to unk_164), and its cell grates are
+                // already carried by the flag replay.
                 Anchor_ForgetRemoteDoor(&doorShutter->dyna.actor);
-                FxSync_OnShutterOpen(&doorShutter->dyna.actor);
+                if (doorShutter->dyna.actor.id == ACTOR_DOOR_SHUTTER) {
+                    FxSync_OnShutterOpen(&doorShutter->dyna.actor);
+                }
 
                 func_80832224(this);
 

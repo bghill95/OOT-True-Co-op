@@ -56,6 +56,8 @@ void DoorAna_WaitClosed(DoorAna* self, PlayState* play);
 // file means the door is already busy and must not be handed a second trigger.
 void func_80996B0C(DoorShutter* self, PlayState* play);
 void func_80996F98(DoorShutter* self, PlayState* play);
+// Puts a shutter back into whichever closed-and-waiting state its type calls for.
+s32 DoorShutter_SetupDoor(DoorShutter* self, PlayState* play);
 }
 
 namespace FxSync {
@@ -833,6 +835,24 @@ static void Reset(bool killLive) {
                 Actor_Kill(actor);
             }
         }
+        // Sliding doors still replaying the other player's crossing. The scene
+        // keeps running here, so simply dropping the mark below would re-arm all
+        // three suppressions in the middle of the sequence and the door would
+        // finish as if WE had walked through: func_80996B0C debits a small key we
+        // never owed (a real loss, the count is a synchronised absolute value),
+        // func_80996C60 seizes the camera with a stale bg-cam index, and
+        // func_80997220 freezes us for the closing camera hold. Put them back to
+        // closed-and-idle first. Only reachable with killLive, where the actors
+        // are known live -- on a scene change the destroy hook has already pruned.
+        for (Actor* door : sRemoteDoorOpen) {
+            if (door != NULL && door->update != NULL && door->id == ACTOR_DOOR_SHUTTER) {
+                DoorShutter* shutter = (DoorShutter*)door;
+                shutter->unk_164 = 0;
+                door->velocity.y = 0.0f;
+                door->world.pos.y = door->home.pos.y; // home.y is intact; only .z is clobbered at init
+                DoorShutter_SetupDoor(shutter, gPlayState);
+            }
+        }
     }
     sSilverAnnounced.clear();
     sSpellReplicas.clear();
@@ -864,6 +884,25 @@ static uint64_t HomeKey(const Actor* actor) {
     int16_t qz = (int16_t)lroundf(actor->home.pos.z);
     return ((uint64_t)(uint16_t)qx << 48) | ((uint64_t)(uint16_t)qy << 32) | ((uint64_t)(uint16_t)qz << 16) |
            (uint16_t)actor->id;
+}
+
+// Door_Shutter can be keyed by NEITHER position. Current position is out because
+// the slab travels 200 units up mid-sequence; spawn position is out because
+// DoorShutter_Init does
+//     this->dyna.actor.home.pos.z = this->dyna.actor.shape.yOffset;
+// and yOffset is still 0 there -- Actor_Init runs ActorShape_Init(.., 0.0f, ..)
+// before calling the actor's init, and sInitChain never sets it. So EVERY sliding
+// door in the game has home.pos.z == 0, and HomeKey would collapse a Z corridor
+// with a door at each end onto one key: the wrong door opens on the peer, and if
+// it is locked, func_80996B0C sets its switch flag for a crossing nobody made.
+//
+// The transition-actor index in the top 6 bits of params is the door's real
+// identity. It comes from the scene file, so it is identical on every client, and
+// it indexes a table with one entry per door. Boss-spawned shutters (the Gohma
+// slab, the Phantom Ganon bars) can alias an index, but they never sit in the two
+// states the receiver accepts, so they cannot be mistaken for a door.
+static uint64_t ShutterKey(const Actor* actor) {
+    return ((uint64_t)((uint16_t)actor->params >> 10) << 16) | (uint16_t)actor->id;
 }
 
 static uint64_t PosKey(const Actor* actor) {
@@ -932,17 +971,17 @@ extern "C" void Anchor_ForgetRemoteDoor(Actor* doorActor) {
 //
 // So the peer runs the SAME vanilla sequence -- motion, both sfx, the dust ring,
 // the quake and the Jabu variant all come free -- with those three commit points
-// suppressed by the mark above. Keyed on the SPAWN position: this door is about
-// to slide 200 units up, and the peer's copy is elsewhere in the animation.
+// suppressed by the mark above. Keyed by transition-actor index, for the reasons
+// spelled out at ShutterKey: NEITHER position identifies one of these doors.
 extern "C" void FxSync_OnShutterOpen(Actor* doorActor) {
     if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || doorActor == NULL) {
         return;
     }
     nlohmann::json payload;
     payload["kind"] = FX_EV_SHUTTER;
-    payload["key"] = HomeKey(doorActor);
+    payload["key"] = ShutterKey(doorActor);
     Anchor::Instance->SendPacket_FxEvent(payload);
-    ESYNC_LOG("[FxSync] shutter open tx key={:#x}", HomeKey(doorActor));
+    ESYNC_LOG("[FxSync] shutter open tx key={:#x}", ShutterKey(doorActor));
 }
 
 extern "C" void FxSync_OnStormSong(Actor* okarinaEffect) {
@@ -1428,10 +1467,11 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                     // the Player door code, so this cannot echo back.
                     //
                     // Marked as somebody else's crossing so EnDoor_Idle skips the small
-                    // key: lockTimer is set at scene load from the switch flag and is
-                    // never revised when that flag later arrives over the wire, so our
-                    // copy of a locked door is still armed and would charge a second key
-                    // for a door he has already paid to open.
+                    // key. HookHandlers.cpp unwinds lockTimer once the switch flag
+                    // arrives, but that always loses the race -- this event leaves
+                    // Player_ActionHandler_1 several frames before the sender sets the
+                    // flag -- so our copy of a locked door is still armed and would
+                    // charge a second key for a door he has already paid to open.
                     sRemoteDoorOpen.insert(a);
                     door->animStyle = style;
                     door->playerIsOpening = 1;
@@ -1445,7 +1485,7 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
         if (kind == FX_EV_SHUTTER) {
             uint64_t key = payload.at("key").get<uint64_t>();
             for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_DOOR].head; a != NULL; a = a->next) {
-                if (a->id != ACTOR_DOOR_SHUTTER || a->update == NULL || HomeKey(a) != key) {
+                if (a->id != ACTOR_DOOR_SHUTTER || a->update == NULL || ShutterKey(a) != key) {
                     continue;
                 }
                 DoorShutter* door = (DoorShutter*)a;

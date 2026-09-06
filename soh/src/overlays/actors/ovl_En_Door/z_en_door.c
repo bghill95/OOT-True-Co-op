@@ -208,11 +208,16 @@ void EnDoor_Idle(EnDoor* this, PlayState* play) {
     if (this->playerIsOpening != 0) {
         // Co-op: playerIsOpening also arrives over the wire (FX_EV_DOOR) when the
         // OTHER player pushed this door, and he has already spent the key for it.
-        // lockTimer is set once at scene load from the switch flag and is never
-        // revised when that flag later arrives through the save sync, so our copy
-        // of a locked door is still armed and would charge a second one. The flag
-        // is still set: same flag, idempotent, and it leaves our door unlocked
-        // even if his packet never lands.
+        //
+        // Our copy is still locked when it lands, and this is a race, not an
+        // oversight: HookHandlers.cpp does unwind lockTimer once the switch flag
+        // arrives, but it takes 10 frames of DECR, and the flag necessarily loses
+        // the race -- FxSync_OnDoorOpen goes out from Player_ActionHandler_1,
+        // several frames before the sender's own EnDoor_Idle sets the flag here.
+        // So lockTimer is always still armed and would charge a second key.
+        //
+        // The flag is still set on a replay: same flag, idempotent, and it leaves
+        // our door unlocked even if his own packet never lands.
         s32 remoteOpen = Anchor_IsRemoteDoorOpen(&this->actor);
 
         this->actionFunc = EnDoor_Open;
