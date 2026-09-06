@@ -122,6 +122,22 @@ void func_80A90264(EnKakasi2* this, PlayState* play) {
 
     this->unk_194++;
 
+    // Co-op: Init reads switchFlag exactly once. When the other player summons
+    // Pierre, the flag replicates but our copy is still sitting here with
+    // yOffset -8000 — invisible and un-hookshottable until the room reloads.
+    // Re-read it and take the same path the summoner took, minus the parts that
+    // belong to whoever played the song: no attention cutscene, no chime, and no
+    // Flags_SetSwitch (it is already set, and re-setting it would echo back).
+    if (this->switchFlag >= 0 && Flags_GetSwitch(play, this->switchFlag)) {
+        this->actor.draw = func_80A90948;
+        Collider_InitCylinder(play, &this->collider);
+        Collider_SetCylinder(play, &this->collider, &this->actor, &sCylinderInit);
+        SkelAnime_InitFlex(play, &this->skelAnime, &object_ka_Skel_0065B0, &object_ka_Anim_000214, NULL, NULL, 0);
+        this->actor.flags |= ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_LOCK_ON_DISABLED;
+        this->actionFunc = func_80A904D8;
+        return;
+    }
+
     if ((BREG(1) != 0) || GameInteractor_Should(VB_SKIP_SCARECROWS_SONG, false) &&
                               (this->actor.xzDistToPlayer < this->maxSpawnDistance.x) &&
                               (fabsf(player->actor.world.pos.y - this->actor.world.pos.y) < this->maxSpawnDistance.y)) {

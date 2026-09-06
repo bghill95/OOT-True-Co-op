@@ -420,6 +420,23 @@ extern "C" Player* Anchor_NearestPlayer(Actor* from) {
     return best;
 }
 
+// Should THIS client play `actor`'s one-point camera cutscene?
+//
+// Scenery that polls a switch flag every frame (gates, grates, shutters) replays
+// its opening on both clients as soon as the flag replicates — which is exactly
+// right for the geometry, and exactly wrong for the camera: OnePointCutscene_Init
+// yanks the peer's view to the gate no matter where they are standing, mid-fight
+// or mid-jump. FlagReplay already dodges this by hand for Bg_Jya_Megami; this is
+// the reusable form. Offline it is always true, so single-player is untouched.
+extern "C" s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range) {
+    if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected || actor == NULL) {
+        return 1;
+    }
+    // xzDistToPlayer is the distance to the LOCAL Link for scenery actors: the
+    // perception override only rewrites it for tracked enemies on the authority.
+    return actor->xzDistToPlayer < range ? 1 : 0;
+}
+
 // Yaw from `from` toward the LOCAL Link, whatever actor->yawTowardsPlayer holds.
 //
 // The other half of the perception override. EnemySync::OverridePlayerPerception

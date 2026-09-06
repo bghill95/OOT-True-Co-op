@@ -13,6 +13,7 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_Wf/z_en_wf.h"
 #include "src/overlays/actors/ovl_En_Firefly/z_en_firefly.h"
 #include "src/overlays/actors/ovl_En_Sb/z_en_sb.h"
+#include "src/overlays/actors/ovl_En_Ik/z_en_ik.h"
 }
 
 /**
@@ -199,6 +200,42 @@ static void EnSb_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     }
 }
 
+// Iron Knuckle (EN_IK). drawMode indexes sDrawFuncs, so a frozen mirror keeps
+// running the wrong draw function for the whole fight. unk_2FA and unk_2FB are
+// the armour bits the limb draw reads to decide which limbs still wear plate:
+// stuck at their Init value, the mirror shows an Iron Knuckle still fully
+// armoured after the authority has smashed the armour off — losing the one
+// visual cue that says how far along the fight is. unk_2F8 is the action id the
+// limb draw keys off, unk_2FE the axe trail.
+//
+// Note on the axe itself: it does hurt the non-authority player. Its quad
+// carries AT_ON | AT_TYPE_ENEMY with 0x40 of damage in the collider (sQuadInit,
+// z_en_ik.c:115), and SubmitColliders streams AT quad vertices, so the mirrored
+// axe lands through the normal player damage path. Only the explicit
+// damagePlayer call — which exists to pierce invincibility frames — is
+// authority-only, so the mirror simply keeps its i-frames. Not worth a packet.
+static void EnIk_SerializeExtras(Actor* actor, nlohmann::json& x) {
+    EnIk* ik = (EnIk*)actor;
+    x["dm"] = ik->drawMode;
+    x["u2f8"] = ik->unk_2F8;
+    x["u2fa"] = ik->unk_2FA;
+    x["u2fb"] = ik->unk_2FB;
+    x["u2fe"] = ik->unk_2FE;
+}
+
+static void EnIk_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
+    try {
+        EnIk* ik = (EnIk*)actor;
+        ReadField(x, "dm", ik->drawMode);
+        ReadField(x, "u2f8", ik->unk_2F8);
+        ReadField(x, "u2fa", ik->unk_2FA);
+        ReadField(x, "u2fb", ik->unk_2FB);
+        ReadField(x, "u2fe", ik->unk_2FE);
+    } catch (const std::exception& ex) {
+        SPDLOG_WARN("[EnemySync] EnIk extras parse error: {}", ex.what());
+    }
+}
+
 static void Register(int16_t id, void (*ser)(Actor*, nlohmann::json&),
                      void (*deser)(Actor*, const nlohmann::json&)) {
     ActorSyncAdapter adapter;
@@ -215,4 +252,5 @@ void RegisterFrozenDrawAdapters() {
     Register(ACTOR_EN_WF, EnWf_SerializeExtras, EnWf_DeserializeExtras);
     Register(ACTOR_EN_FIREFLY, EnFirefly_SerializeExtras, EnFirefly_DeserializeExtras);
     Register(ACTOR_EN_SB, EnSb_SerializeExtras, EnSb_DeserializeExtras);
+    Register(ACTOR_EN_IK, EnIk_SerializeExtras, EnIk_DeserializeExtras);
 }

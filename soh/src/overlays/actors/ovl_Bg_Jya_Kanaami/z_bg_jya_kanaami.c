@@ -78,10 +78,17 @@ void func_80899880(BgJyaKanaami* this) {
     this->unk_16A = 0;
 }
 
+s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
+
 void func_80899894(BgJyaKanaami* this, PlayState* play) {
     if (Flags_GetSwitch(play, this->dyna.actor.params & 0x3F) || this->unk_16A > 0) {
         if (this->dyna.actor.world.pos.x > -1000.0f && this->unk_16A == 0) {
-            OnePointCutscene_Init(play, 3450, -99, &this->dyna.actor, MAIN_CAM);
+            // Co-op: the grate polls its flag every frame, so the peer replays
+            // the opening too. FlagReplay skips this same cutscene by hand for
+            // Bg_Jya_Megami; this actor needs no hook, only the camera guard.
+            if (Anchor_ShouldPlayCameraCutscene(&this->dyna.actor, 800.0f)) {
+                OnePointCutscene_Init(play, 3450, -99, &this->dyna.actor, MAIN_CAM);
+            }
         }
         this->unk_16A += 1;
         if (this->unk_16A >= 0xA) {

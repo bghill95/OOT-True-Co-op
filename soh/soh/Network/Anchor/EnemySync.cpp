@@ -2424,3 +2424,12 @@ void RegisterHooks(bool isConnected) {
 extern "C" void Anchor_OnActorSfx(Actor* actor, uint16_t sfxId) {
     EnemySync::NoteActorSfx(actor, sfxId);
 }
+
+// For overlays that DRIVE another actor from the outside — a trigger volume
+// steering an enemy, one actor repositioning another. Those helpers run on every
+// client, but if their target is a suppressed mirror their writes fight the
+// stream: the pin restores the streamed pose each frame while the local helper
+// keeps shoving it somewhere else. Ask this before writing into another actor.
+extern "C" s32 Anchor_IsMirroredActor(Actor* actor) {
+    return (actor != NULL && EnemySync::IsSuppressed(actor)) ? 1 : 0;
+}

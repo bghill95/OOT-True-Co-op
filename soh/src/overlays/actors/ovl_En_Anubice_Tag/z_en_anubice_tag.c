@@ -59,6 +59,8 @@ void EnAnubiceTag_SpawnAnubis(EnAnubiceTag* this, PlayState* play) {
     }
 }
 
+s32 Anchor_IsMirroredActor(Actor* actor);
+
 void EnAnubiceTag_ManageAnubis(EnAnubiceTag* this, PlayState* play) {
     EnAnubice* anubis;
     Vec3f offset;
@@ -66,6 +68,15 @@ void EnAnubiceTag_ManageAnubis(EnAnubiceTag* this, PlayState* play) {
     if (this->anubis != NULL) {
         anubis = this->anubis;
         if (anubis->actor.update == NULL) {
+            return;
+        }
+        // This tag is ACTORCAT_SWITCH, so it runs on BOTH clients — but the
+        // Anubis it steers is a tracked enemy that only the authority simulates.
+        // On a mirror, everything below writes world.pos and the Anubis's own
+        // isMirroringLink / isLinkOutOfRange straight over the streamed state,
+        // once per frame, using the LOCAL player's distance and yaw. Let the
+        // authority's tag do the steering and just watch here.
+        if (Anchor_IsMirroredActor(&anubis->actor)) {
             return;
         }
     } else {

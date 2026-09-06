@@ -12,6 +12,7 @@ extern "C" {
 #include "variables.h"
 #include "functions.h"
 #include "src/overlays/actors/ovl_Bg_Po_Event/z_bg_po_event.h"
+#include "src/overlays/actors/ovl_Bg_Jya_Cobra/z_bg_jya_cobra.h"
 extern PlayState* gPlayState;
 }
 
@@ -323,6 +324,24 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
         actor->world.rot.y = pullYaw;
         actor->minVelocityY = (actor->world.pos.x - actor->home.pos.x) * Math_SinS(pullYaw) +
                               (actor->world.pos.z - actor->home.pos.z) * Math_CosS(pullYaw);
+    }
+    // Bg_Jya_Cobra keeps its rotation as a DETENT INDEX, not as an angle:
+    // unk_16C counts eighths and the actor recomputes
+    //   shape.rot.y = unk_16C * 0x2000 + home.rot.y + unk_170
+    // whenever it is pushed (z_bg_jya_cobra.c:496-502). The mirror is claimable,
+    // so its update keeps running but never increments unk_16C — only the
+    // pusher's copy does. The moment the mirroring player pushes in turn, that
+    // stale index is written back over the streamed angle and the mirror SNAPS
+    // to the orientation from before the peer's rotations. Rebuild the index
+    // from the streamed angle, same idea as Bg_Haka's pull distance above.
+    // unk_170 is the in-progress sweep, zero at rest, so the streamed angle is
+    // a whole number of detents whenever it matters.
+    if (actor->id == ACTOR_BG_JYA_COBRA) {
+        BgJyaCobra* cobra = (BgJyaCobra*)actor;
+        int32_t delta = (int16_t)(actor->shape.rot.y - actor->home.rot.y);
+        // Round to nearest eighth rather than truncating: mid-sweep frames would
+        // otherwise land a detent short and undo part of the peer's turn.
+        cobra->unk_16C = (s16)(((delta + 0x1000) >> 13) & 7);
     }
     st.suppressed = true;
     // Claimables keep their update RUNNING while mirroring: the block's own

@@ -81,10 +81,17 @@ void func_808B30C0(BgSpot12Gate* this) {
     this->dyna.actor.world.pos.y = this->dyna.actor.home.pos.y;
 }
 
+s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
+
 void func_808B30D8(BgSpot12Gate* this, PlayState* play) {
     if (Flags_GetSwitch(play, this->dyna.actor.params & 0x3F)) {
         func_808B3134(this);
-        OnePointCutscene_Init(play, 4160, -99, &this->dyna.actor, MAIN_CAM);
+        // Co-op: this gate polls its flag every frame, so it opens on both
+        // clients as soon as the peer sets it — right for the gate, wrong for
+        // the camera, which would be yanked here from wherever we are standing.
+        if (Anchor_ShouldPlayCameraCutscene(&this->dyna.actor, 800.0f)) {
+            OnePointCutscene_Init(play, 4160, -99, &this->dyna.actor, MAIN_CAM);
+        }
     }
 }
 
