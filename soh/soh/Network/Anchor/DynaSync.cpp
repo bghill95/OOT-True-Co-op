@@ -43,20 +43,15 @@ static constexpr uint64_t CLAIM_TICKS = 45;
 static bool IsSyncedDynaActor(const Actor* actor) {
     switch (actor->id) {
         case ACTOR_BG_YDAN_HASI:      // Deku Tree: water plank + seesaw
-        case ACTOR_BG_HIDAN_SYOKU:    // Fire Temple: elevator pillar
         case ACTOR_BG_DDAN_JD:        // Dodongo's Cavern: cycling pillars/platform
         case ACTOR_BG_BDAN_OBJECTS:   // Jabu-Jabu: elevator platform & co
-        case ACTOR_BG_GND_FIREMEIRO:  // Ganon's Castle fire trial: sinking platforms
         case ACTOR_BG_HAKA_TRAP:      // Shadow Temple: guillotines / spike traps (cyclic)
         case ACTOR_BG_HAKA_TUBO:      // Shadow Temple: spinning pot
         case ACTOR_BG_HAKA_MEGANEBG:  // Shadow Temple: moving invisible platforms
-        case ACTOR_BG_HIDAN_FSLIFT:   // Fire Temple: flame elevator
-        case ACTOR_BG_HIDAN_SIMA:     // Fire Temple: rising fire platform (timer)
         case ACTOR_BG_HIDAN_RSEKIZOU: // Fire Temple: rotating spiked statues
-        case ACTOR_BG_JYA_1FLIFT:     // Spirit Temple: 1F elevator
         case ACTOR_BG_JYA_LIFT:       // Spirit Temple: chain lift
         case ACTOR_BG_JYA_ZURERUKABE: // Spirit Temple: sliding walls (cyclic)
-        case ACTOR_BG_MENKURI_KAITEN: // GTG: rotating ring platform
+        case ACTOR_BG_MENKURI_KAITEN: // GTG: rotating ring platform (see the ride note below)
         case ACTOR_BG_RELAY_OBJECTS:  // Windmill: rotating center structure
         case ACTOR_BG_SPOT01_FUSYA:   // Kakariko: windmill sails seen from outside —
                                       // cosmetic, NO DynaPoly, so it is fed to
@@ -124,12 +119,42 @@ static bool IsClaimableDynaActor(const Actor* actor) {
 // Mori_Elevator picks a target from OUR room and flag), so a mirror must be
 // suppressed outright: the pin cannot fight the update. Our rider still claims
 // it — interactFlags are read in the hook, before the update would run.
+// THE RULE THIS LIST ENCODES, learned the expensive way (Fire Temple audit,
+// 2026-09-06): a dyna actor whose Update reads DynaPolyActor_IsPlayerOnTop or
+// IsPlayerAbove belongs HERE, never in IsSyncedDynaActor. Classed `synced`, the
+// platform moves for NOBODY. The mirror never evaluates the test because its
+// Update is suppressed; and the authority's own test is false too, because a
+// puppet never writes DYNA_INTERACT_PLAYER_ON_TOP -- DynaPoly_SetPlayerOnTop and
+// SetPlayerAbove have exactly two callers, both in z_player.c, and
+// DummyPlayer_Update never calls Actor_UpdateBgCheckInfo. The player who steps on
+// it is stuck until the OTHER one steps on it too.
+//
+// This list had been grown case by case and never swept, so five actors sat in
+// the synced list with that exact signature. Before adding anything to
+// IsSyncedDynaActor, grep its overlay for those two functions.
+//
+// Deliberately NOT moved here, though they do read the trigger -- each needs its
+// own study rather than a blanket reclassification, and a wrong `ride` is as bad
+// as a wrong `synced`:
+//   BG_BDAN_OBJECTS   one overlay for several params (water level AND platform);
+//                     only the platform half is a ride.
+//   BG_HAKA_SHIP      the voyage is scripted, the trigger appears only in the
+//                     final CrashFall; making the whole ship a ride would hand
+//                     the scripted run to whoever stands on it.
+//   BG_MENKURI_KAITEN the trigger's output is a switch flag, which already
+//                     replicates; the rotation itself is not rider-driven.
+//   EN_BROB, EN_SIOFUKI  not in DynaSync's tables at all today.
 static bool IsRideClaimable(const Actor* actor) {
     switch (actor->id) {
         case ACTOR_OBJ_BEAN: // magic bean leaf platform (adult); the child soil never moves
             return LINK_AGE_IN_YEARS == YEARS_ADULT;
-        case ACTOR_BG_MORI_ELEVATOR: // Forest Temple elevator (flag 0x1B stays per-client by design)
-        case ACTOR_OBJ_ELEVATOR:     // stone elevator (Gerudo Training Ground), toggles on each rider
+        case ACTOR_BG_MORI_ELEVATOR:  // Forest Temple elevator (flag 0x1B stays per-client by design)
+        case ACTOR_OBJ_ELEVATOR:      // stone elevator (Gerudo Training Ground), toggles on each rider
+        case ACTOR_BG_HIDAN_SYOKU:    // Fire Temple: elevator pillar, rises under its rider
+        case ACTOR_BG_HIDAN_FSLIFT:   // Fire Temple: hookshot elevator, rises while ridden
+        case ACTOR_BG_HIDAN_SIMA:     // Fire Temple: platform that sinks under its rider
+        case ACTOR_BG_GND_FIREMEIRO:  // Ganon's Castle fire trial: sinks, shakes and rises under its rider
+        case ACTOR_BG_JYA_1FLIFT:     // Spirit Temple: 1F elevator (its own code calls the rider `tempIsRiding`)
             return true;
         default:
             return false;

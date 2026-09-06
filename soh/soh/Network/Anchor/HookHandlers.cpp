@@ -155,7 +155,11 @@ void Anchor::RegisterHooks() {
         // Handle vanilla dungeon items a bit differently
         if (itemEntry.modIndex == MOD_NONE &&
             (itemEntry.itemId >= ITEM_KEY_BOSS && itemEntry.itemId <= ITEM_KEY_SMALL)) {
-            SendPacket_UpdateDungeonItems();
+            // The range is boss key / compass / map / small key. Only the last is a
+            // count; the other three are bits and merge on their own (see the
+            // packet). Sending the delta is what lets two simultaneous key events
+            // commute instead of one erasing the other.
+            SendPacket_UpdateDungeonItems(itemEntry.itemId == ITEM_KEY_SMALL ? 1 : 0);
             return;
         }
 
@@ -177,8 +181,10 @@ void Anchor::RegisterHooks() {
     });
 
     COND_HOOK(OnDungeonKeyUsed, isConnected, [&](uint16_t mapIndex) {
-        // Handle vanilla dungeon items a bit differently
-        SendPacket_UpdateDungeonItems();
+        // One key spent. The peer applies -1 rather than our absolute count, so two
+        // players unlocking two different doors at once each lose exactly one key
+        // instead of one of the two spends going missing.
+        SendPacket_UpdateDungeonItems(-1);
     });
 
     // #endregion

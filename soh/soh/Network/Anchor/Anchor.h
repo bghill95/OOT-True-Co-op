@@ -109,6 +109,9 @@ class Anchor : public Network {
     // send; the receive path only drift-snaps to a peer's absolute total after a
     // ~40-frame quiet window (see Packets/RupeeChange.cpp).
     uint32_t lastLocalRupeeSendFrame = 0;
+    // Same role as the rupee one, for the small-key drift snap. One counter is
+    // enough: only the dungeon we are standing in can change.
+    uint32_t lastLocalDungeonKeySendFrame = 0;
     std::queue<nlohmann::json> incomingPacketQueue;
     std::mutex incomingPacketQueueMutex;
 
@@ -271,7 +274,9 @@ class Anchor : public Network {
     void SendPacket_UnsetFlag(s16 sceneNum, s16 flagType, s16 flag);
     void SendPacket_UpdateBeansCount();
     void SendPacket_UpdateClientState();
-    void SendPacket_UpdateDungeonItems();
+    // keyDelta: the small-key change this event carries (+1 picked up, -1 spent,
+    // 0 for a boss key / compass / map, which are bits and travel absolute).
+    void SendPacket_UpdateDungeonItems(s8 keyDelta = 0);
     void SendPacket_UpdateRoomState();
     void SendPacket_UpdateTeamState();
 };
