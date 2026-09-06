@@ -1,5 +1,8 @@
 #include "soh/Network/Anchor/BossAdapters/ActorSyncAdapter.h"
 #include "soh/Network/Anchor/EnemySync.h"
+// Vec3f / Vec3s <-> json. EnZf's "headRot" is a bare s16 and needed none of this;
+// EnTest's is a Vec3s and EnDodongo's bodyScale a Vec3f.
+#include "soh/Network/Anchor/JsonConversions.hpp"
 #include "soh/OTRGlobals.h"
 
 extern "C" {
@@ -17,6 +20,7 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_Wallmas/z_en_wallmas.h"
 #include "src/overlays/actors/ovl_En_Dodojr/z_en_dodojr.h"
 #include "src/overlays/actors/ovl_En_Fd/z_en_fd.h"
+#include "src/overlays/actors/ovl_En_Dodongo/z_en_dodongo.h"
 // Flare Dancer action functions: non-static in z_en_fd.c. Its draw gate compares
 // actionFunc against EnFd_Reappear, so the pointer needs a portable index.
 void EnFd_Run(EnFd* self, PlayState* play);
@@ -126,6 +130,13 @@ static void EnBb_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
 // Torch slug (EN_BW). unk_248 is the whole-body scale applied in Draw: frozen at
 // its Init value the slug is drawn at the wrong size. unk_258 / unk_260 are the
 // writhing rotation and squash, unk_220 the body state, unk_23A a texture scroll.
+//
+// color1 came later, from the Fire Temple audit: the draw feeds all four of its
+// channels into the prim and env colours, and Update is its only writer -- Init
+// leaves it opaque red, then the action funcs recolour it per state and finally
+// fade the alpha out on death (`shadowAlpha = color1.a -= 6`). A mirror kept the
+// Init red for the slug's whole life and never faded it, so the body vanished in
+// one frame instead of dissolving. Packed into one number rather than four keys.
 static void EnBw_SerializeExtras(Actor* actor, nlohmann::json& x) {
     EnBw* bw = (EnBw*)actor;
     x["u220"] = bw->unk_220;
@@ -133,6 +144,8 @@ static void EnBw_SerializeExtras(Actor* actor, nlohmann::json& x) {
     x["u248"] = bw->unk_248;
     x["u258"] = bw->unk_258;
     x["u260"] = bw->unk_260;
+    x["c1"] = ((uint32_t)bw->color1.r << 24) | ((uint32_t)bw->color1.g << 16) | ((uint32_t)bw->color1.b << 8) |
+              (uint32_t)bw->color1.a;
 }
 
 static void EnBw_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
@@ -143,6 +156,13 @@ static void EnBw_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "u248", bw->unk_248);
         ReadField(x, "u258", bw->unk_258);
         ReadField(x, "u260", bw->unk_260);
+        if (x.contains("c1")) {
+            uint32_t packed = x["c1"].get<uint32_t>();
+            bw->color1.r = (packed >> 24) & 0xFF;
+            bw->color1.g = (packed >> 16) & 0xFF;
+            bw->color1.b = (packed >> 8) & 0xFF;
+            bw->color1.a = packed & 0xFF;
+        }
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[EnemySync] EnBw extras parse error: {}", ex.what());
     }
@@ -182,6 +202,10 @@ static void EnTest_SerializeExtras(Actor* actor, nlohmann::json& x) {
     x["u7c8"] = test->unk_7C8;
     x["u7de"] = test->unk_7DE;
     x["mws"] = test->meleeWeaponState;
+    // The limb draw adds headRot into the neck rotation, and only
+    // EnTest_UpdateHeadRot writes it. Frozen, the mirror's Stalfos stares dead
+    // ahead while the authority's tracks the player.
+    x["hr"] = test->headRot;
 }
 
 static void EnTest_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
@@ -190,6 +214,7 @@ static void EnTest_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "u7c8", test->unk_7C8);
         ReadField(x, "u7de", test->unk_7DE);
         ReadField(x, "mws", test->meleeWeaponState);
+        ReadField(x, "hr", test->headRot);
     } catch (const std::exception& ex) {
         SPDLOG_WARN("[EnemySync] EnTest extras parse error: {}", ex.what());
     }
@@ -453,8 +478,33 @@ static void EnFd_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     }
 }
 
+// Dodongo (EN_DODONGO). bodyScale is applied to limbs 15 and 16 in the limb
+// override, and only EnDodongo_SwallowBomb writes it, from colorFilterTimer. A
+// mirror keeps the 1.0 its Init set, so the Dodongo that swallowed a bomb stays
+// its normal size on the peer's screen -- losing the one cue that says step back.
+//
+// Deliberately NOT carried: actionState. It gates the tail blur, which is only
+// cosmetic, but it ALSO gates EnDodongo_UpdateQuad in PostLimbDraw, which rewrites
+// the AT quad vertices from skelAnime.curFrame -- and curFrame is frozen on a
+// mirror. Streaming actionState alone would drive that rewrite off a stale frame;
+// it would need curFrame with it, for a tail trail.
+static void EnDodongo_SerializeExtras(Actor* actor, nlohmann::json& x) {
+    EnDodongo* dd = (EnDodongo*)actor;
+    x["bs"] = dd->bodyScale;
+}
+
+static void EnDodongo_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
+    try {
+        EnDodongo* dd = (EnDodongo*)actor;
+        ReadField(x, "bs", dd->bodyScale);
+    } catch (const std::exception& ex) {
+        SPDLOG_WARN("[EnemySync] EnDodongo extras parse error: {}", ex.what());
+    }
+}
+
 void RegisterFrozenDrawAdapters() {
     Register(ACTOR_EN_FD, EnFd_SerializeExtras, EnFd_DeserializeExtras);
+    Register(ACTOR_EN_DODONGO, EnDodongo_SerializeExtras, EnDodongo_DeserializeExtras);
     Register(ACTOR_EN_BB, EnBb_SerializeExtras, EnBb_DeserializeExtras);
     Register(ACTOR_EN_BW, EnBw_SerializeExtras, EnBw_DeserializeExtras);
     Register(ACTOR_EN_ZF, EnZf_SerializeExtras, EnZf_DeserializeExtras);
