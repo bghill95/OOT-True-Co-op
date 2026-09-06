@@ -4,6 +4,8 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ObjectExtension/ActorMaximumHealth.h"
 
+s32 Anchor_IsMirroredActor(Actor* actor);
+
 #define FLAGS                                                                                 \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
      ACTOR_FLAG_HOOKSHOT_PULLS_PLAYER)
@@ -752,6 +754,21 @@ void EnFz_Draw(Actor* thisx, PlayState* play) {
     }
 
     CLOSE_DISPS(play->state.gfxCtx);
+
+    // Co-op: the whole ice breath lives in the update — the particle table is filled
+    // by iceSmokeSpawnFuncs and aged by EnFz_UpdateIceSmoke, both at the end of
+    // EnFz_Update. On a mirror that update never runs, so EnFz_DrawIceSmoke below
+    // looped over forty empty slots and the Freezard breathed nothing, while
+    // EnemySync went on submitting the freeze cylinder — recentred on the body by the
+    // generic path, since the overlay is the only thing that ever moves it. A player
+    // was frozen by touching a Freezard that visibly did nothing. Run the breath here
+    // instead: `state` and the spawn height are streamed, so both clients breathe on
+    // the same frames, and collider3 follows the breath our player can actually see.
+    if (Anchor_IsMirroredActor(&this->actor)) {
+        iceSmokeSpawnFuncs[this->state](this);
+        EnFz_UpdateIceSmoke(this, play);
+    }
+
     EnFz_DrawIceSmoke(this, play);
 }
 
@@ -850,7 +867,15 @@ void EnFz_UpdateIceSmoke(EnFz* this, PlayState* play) {
                     this->collider3.dim.pos.x = (s16)iceSmoke->pos.x;
                     this->collider3.dim.pos.y = (s16)iceSmoke->pos.y;
                     this->collider3.dim.pos.z = (s16)iceSmoke->pos.z;
-                    CollisionCheck_SetAT(play, &play->colChkCtx, &this->collider3.base);
+                    // Co-op: on a mirror this function is driven from the draw (see
+                    // EnFz_Draw), which is past the frame's collision pass — an AT
+                    // registered here would be discarded. Placing collider3 is what
+                    // matters: EnemySync submits it on the next frame, and the adapter
+                    // declares customColliderPos so the generic cylinder path no longer
+                    // drags it back onto the Freezard's body.
+                    if (!Anchor_IsMirroredActor(&this->actor)) {
+                        CollisionCheck_SetAT(play, &play->colChkCtx, &this->collider3.base);
+                    }
                 }
 
                 pos.x = iceSmoke->pos.x;

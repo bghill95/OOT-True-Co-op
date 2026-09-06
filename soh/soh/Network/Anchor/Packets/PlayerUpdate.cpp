@@ -81,6 +81,7 @@ void Anchor::SendPacket_PlayerUpdate() {
     }
     payload["jointTable"] = jointArray;
     payload["upperLimbRot"] = player->upperLimbRot;
+    payload["shapeYOffset"] = player->actor.shape.yOffset;
     payload["currentBoots"] = player->currentBoots;
     payload["currentShield"] = player->currentShield;
     payload["currentTunic"] = player->currentTunic;
@@ -168,6 +169,9 @@ void Anchor::HandlePacket_PlayerUpdate(nlohmann::json payload) {
             client.jointTable[i].z = jointArray[i * 3 + 2];
         }
         client.upperLimbRot = payload["upperLimbRot"].get<Vec3s>();
+        // Absent on an older peer: 0 is the resting value, so the puppet simply keeps
+        // the behaviour it had before.
+        client.shapeYOffset = payload.value("shapeYOffset", 0.0f);
         client.currentBoots = payload["currentBoots"].get<s8>();
         client.currentShield = payload["currentShield"].get<s8>();
         client.currentTunic = payload["currentTunic"].get<s8>();

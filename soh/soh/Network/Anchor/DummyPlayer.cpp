@@ -135,6 +135,7 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
     Math_Vec3s_Copy(&player->upperLimbRot, &client.upperLimbRot);
     Math_Vec3s_Copy(&actor->shape.rot, &client.posRot.rot);
     Math_Vec3f_Copy(&actor->world.pos, &client.posRot.pos);
+    actor->shape.yOffset = client.shapeYOffset; // ledge pull-up: see the field's note in Anchor.h
     player->skelAnime.jointTable = client.jointTable;
     player->currentBoots = client.currentBoots;
     player->currentShield = client.currentShield;

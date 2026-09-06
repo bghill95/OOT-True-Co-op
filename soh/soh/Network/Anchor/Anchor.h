@@ -60,6 +60,10 @@ typedef struct {
     s16 dekuStickFlame; // player->unk_860: burning deku stick timer
     f32 dekuStickLength; // player->unk_85C: remaining stick fraction (draw scale + tip reach)
     f32 bowString; // player->unk_858: bow string draw amount (stale on puppets = bow stuck drawn)
+    f32 shapeYOffset; // player->actor.shape.yOffset: the render offset a ledge climb uses. world.pos
+                      // jumps to the top of the ledge in one frame and this pulls the model back down
+                      // for the pull-up; without it the puppet teleported onto the ledge and then
+                      // played the climb in mid-air. Most visible getting out of water.
     u8 currentMask;  // player->currentMask: worn mask (PlayerMask). Never streamed before -> puppets showed no mask.
     s8 meleeWeaponState; // player->meleeWeaponState: swing trail live (the puppet owns a blure from Player_Init)
     bool bgsBroken;      // owner's gSaveContext.swordHealth <= 0: snapped Giant's Knife (model reads OUR save otherwise)

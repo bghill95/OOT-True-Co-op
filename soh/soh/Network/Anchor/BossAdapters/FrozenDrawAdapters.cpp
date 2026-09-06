@@ -21,6 +21,9 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_Dodojr/z_en_dodojr.h"
 #include "src/overlays/actors/ovl_En_Fd/z_en_fd.h"
 #include "src/overlays/actors/ovl_En_Dodongo/z_en_dodongo.h"
+#include "src/overlays/actors/ovl_En_Ny/z_en_ny.h"
+#include "src/overlays/actors/ovl_En_Fz/z_en_fz.h"
+#include "src/overlays/actors/ovl_En_Okuta/z_en_okuta.h"
 // Flare Dancer action functions: non-static in z_en_fd.c. Its draw gate compares
 // actionFunc against EnFd_Reappear, so the pointer needs a portable index.
 void EnFd_Run(EnFd* self, PlayState* play);
@@ -454,6 +457,111 @@ static void EnDodojr_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     }
 }
 
+// Spike (EN_NY). Its draw picks between two skins and decides whether the spikes
+// are out, from three fields the action functions own:
+//   unk_1D8  metal skin alpha, unk_1D4 rock skin alpha -- the crossfade between
+//            the rolling form and the stone form,
+//   unk_1E0  the spike scale, drawn only above 0.25.
+// Init leaves them on metal, spikes fully out, so a mirror shows a Spike that is
+// permanently armed while the authority has turned it to stone -- exactly the cue
+// that says when it is harmless and can be hit. The sphere collider's dim.scale is
+// written in the same update and read back by the Collider_UpdateSpheres in the
+// draw, so it stayed at full size too.
+static void EnNy_SerializeExtras(Actor* actor, nlohmann::json& x) {
+    EnNy* ny = (EnNy*)actor;
+    x["d4"] = ny->unk_1D4;
+    x["d8"] = ny->unk_1D8;
+    x["e0"] = ny->unk_1E0;
+    x["cs"] = ny->elements[0].dim.scale;
+}
+
+static void EnNy_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
+    try {
+        EnNy* ny = (EnNy*)actor;
+        ReadField(x, "d4", ny->unk_1D4);
+        ReadField(x, "d8", ny->unk_1D8);
+        ReadField(x, "e0", ny->unk_1E0);
+        ReadField(x, "cs", ny->elements[0].dim.scale);
+    } catch (const std::exception& ex) {
+        SPDLOG_WARN("[EnemySync] EnNy extras parse error: {}", ex.what());
+    }
+}
+
+// Octorok (EN_OKUTA). headScale is the snout deformation -- the swell before it
+// spits, the suck as it drops back into the water. EnOkuta_UpdateHeadScale reads
+// the CURRENT action function to pick the shape, so nothing about it can be derived
+// on a mirror, whose actionFunc pointer is its own. Left frozen it is merely stiff,
+// except in one case that is worse: if suppression starts before the first local
+// update, headScale is still {0,0,0} from the actor memset and the limb draw scales
+// the head to nothing -- a headless Octorok. Three floats, only while it moves.
+static void EnOkuta_SerializeExtras(Actor* actor, nlohmann::json& x) {
+    EnOkuta* ok = (EnOkuta*)actor;
+    x["hsx"] = ok->headScale.x;
+    x["hsy"] = ok->headScale.y;
+    x["hsz"] = ok->headScale.z;
+}
+
+static void EnOkuta_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
+    try {
+        EnOkuta* ok = (EnOkuta*)actor;
+        ReadField(x, "hsx", ok->headScale.x);
+        ReadField(x, "hsy", ok->headScale.y);
+        ReadField(x, "hsz", ok->headScale.z);
+    } catch (const std::exception& ex) {
+        SPDLOG_WARN("[EnemySync] EnOkuta extras parse error: {}", ex.what());
+    }
+}
+
+// Freezard (EN_FZ). Three faults stacked on one actor.
+//
+// envAlpha is the alpha the body draw hands to gDPSetEnvColor, and the combiner
+// multiplies the final alpha by ENVIRONMENT. Only Init, Appear, Disappear and Melt
+// write it, all from the update. For the instances spawned with params < 0, Init sets
+// it to 0 and EnFz_Appear is what raises it to 255 — so on a mirror those Freezards
+// were completely transparent, and still solid, and still freezing.
+//
+// state drives which spawn function fills the ice-smoke table, and isActive gates the
+// body draw. Both are streamed so the mirror's own breath (run from EnFz_Draw, see the
+// overlay) starts and stops on the same frames as the authority's.
+//
+// customColliderPos: collider3 is the freeze hitbox, and the overlay walks it onto the
+// breath particle by hand. The generic cylinder path would drag it back onto the
+// actor's own position every frame, which is what put an invisible freeze on the
+// Freezard's body. Taking ownership means placing the other two ourselves — they are
+// the body colliders and belong exactly where the generic path would have put them.
+static void EnFz_SerializeExtras(Actor* actor, nlohmann::json& x) {
+    EnFz* fz = (EnFz*)actor;
+    x["ea"] = fz->envAlpha;
+    x["st"] = fz->state;
+    x["act"] = fz->isActive;
+    x["frz"] = fz->isFreezing;
+    x["ish"] = fz->iceSmokeFreezingSpawnHeight;
+    x["ut2"] = fz->unusedTimer2;
+}
+
+static void EnFz_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
+    try {
+        EnFz* fz = (EnFz*)actor;
+        ReadField(x, "ea", fz->envAlpha);
+        ReadField(x, "st", fz->state);
+        ReadField(x, "act", fz->isActive);
+        ReadField(x, "frz", fz->isFreezing);
+        ReadField(x, "ish", fz->iceSmokeFreezingSpawnHeight);
+        ReadField(x, "ut2", fz->unusedTimer2);
+        // state indexes a four-entry table in the overlay; a corrupt or hostile packet
+        // must not walk off it.
+        if (fz->state > 3) {
+            fz->state = 3;
+        }
+        // We own cylinder placement now: put the two body colliders where the generic
+        // path would have, and leave collider3 on the breath particle.
+        Collider_UpdateCylinder(actor, &fz->collider1);
+        Collider_UpdateCylinder(actor, &fz->collider2);
+    } catch (const std::exception& ex) {
+        SPDLOG_WARN("[EnemySync] EnFz extras parse error: {}", ex.what());
+    }
+}
+
 static void Register(int16_t id, void (*ser)(Actor*, nlohmann::json&),
                      void (*deser)(Actor*, const nlohmann::json&)) {
     ActorSyncAdapter adapter;
@@ -558,4 +666,13 @@ void RegisterFrozenDrawAdapters() {
     Register(ACTOR_EN_IK, EnIk_SerializeExtras, EnIk_DeserializeExtras);
     Register(ACTOR_EN_WALLMAS, EnWallmas_SerializeExtras, EnWallmas_DeserializeExtras);
     Register(ACTOR_EN_DODOJR, EnDodojr_SerializeExtras, EnDodojr_DeserializeExtras);
+    Register(ACTOR_EN_NY, EnNy_SerializeExtras, EnNy_DeserializeExtras);
+    Register(ACTOR_EN_OKUTA, EnOkuta_SerializeExtras, EnOkuta_DeserializeExtras);
+
+    // Freezard owns its cylinder placement — see the note above EnFz_SerializeExtras.
+    ActorSyncAdapter fz;
+    fz.SerializeExtras = EnFz_SerializeExtras;
+    fz.DeserializeExtras = EnFz_DeserializeExtras;
+    fz.customColliderPos = true;
+    EnemySync::RegisterAdapter(ACTOR_EN_FZ, fz);
 }

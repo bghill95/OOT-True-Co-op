@@ -11,6 +11,8 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ResourceManagerHelpers.h"
 
+s32 Anchor_IsMirroredActor(Actor* actor);
+
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
 void EnVm_Init(Actor* thisx, PlayState* play);
@@ -547,6 +549,14 @@ void EnVm_Draw(Actor* thisx, PlayState* play2) {
         gSPMatrix(POLY_XLU_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
         gSPSegment(POLY_XLU_DISP++, 0x08, SEGMENTED_TO_VIRTUAL(D_80B2EB88[(play->gameplayFrames + 4) % 8]));
         gSPDisplayList(POLY_XLU_DISP++, gEffEnemyDeathFlameDL);
+    }
+    // Co-op: beamTexScroll is advanced by EnVm_Update, which the mirror never runs, so
+    // the peer's laser had a frozen texture. It is a constant step with no state, so
+    // age it here rather than pay for it on the wire every frame — the same treatment
+    // the Flare Dancer's effects get. Only on the mirror: the authority's update has
+    // already stepped it this frame.
+    if (Anchor_IsMirroredActor(&this->actor)) {
+        this->beamTexScroll += 0xC;
     }
     gSPSegment(POLY_OPA_DISP++, 0x08, func_80094E78(play->state.gfxCtx, 0, this->beamTexScroll));
     Matrix_Translate(this->beamPos1.x, this->beamPos1.y, this->beamPos1.z, MTXMODE_NEW);
