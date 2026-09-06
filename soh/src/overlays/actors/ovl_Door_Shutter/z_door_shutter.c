@@ -25,6 +25,14 @@
 #include "objects/object_ouke_haka/object_ouke_haka.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 
+// Co-op (Anchor/FxSync.cpp): true while this door is replaying the OTHER player's
+// crossing. The slide itself is what we want to show; the three things vanilla
+// bundles into it -- spending a small key, aiming the door camera, and committing
+// the room change -- belong to the player who actually walked through, and are
+// suppressed here. Offline this is a constant false, so the solo path is unchanged.
+s32 Anchor_IsRemoteDoorOpen(Actor* doorActor);
+void Anchor_ForgetRemoteDoor(Actor* doorActor);
+
 #define FLAGS ACTOR_FLAG_UPDATE_CULLING_DISABLED
 
 void DoorShutter_Init(Actor* thisx, PlayState* play);
@@ -384,14 +392,26 @@ void func_80996B00(DoorShutter* this, PlayState* play) {
 
 void func_80996B0C(DoorShutter* this, PlayState* play) {
     if (this->unk_164 != 0) {
+        // Co-op: on a replay the other player already paid for this door. The key
+        // count is a synchronised absolute value, so a second debit here does not
+        // just charge us twice -- it races his own update and loses a key outright.
+        // The switch flag stays (same flag, idempotent, and it keeps our copy
+        // unlocked even if his flag packet never lands) and so does the unlock
+        // sound, which is half of what the replay exists to show.
+        s32 remoteOpen = Anchor_IsRemoteDoorOpen(&this->dyna.actor);
+
         DoorShutter_SetupAction(this, func_80997004);
         this->dyna.actor.velocity.y = 0.0f;
         if (this->unk_16E != 0) {
             Flags_SetSwitch(play, this->dyna.actor.params & 0x3F);
             if (this->doorType != SHUTTER_BOSS) {
-                gSaveContext.inventory.dungeonKeys[gSaveContext.mapIndex]--;
+                if (!remoteOpen) {
+                    gSaveContext.inventory.dungeonKeys[gSaveContext.mapIndex]--;
+                }
                 Audio_PlayActorSound2(&this->dyna.actor, NA_SE_EV_CHAIN_KEY_UNLOCK);
-                GameInteractor_ExecuteOnDungeonKeyUsedHooks(gSaveContext.mapIndex);
+                if (!remoteOpen) {
+                    GameInteractor_ExecuteOnDungeonKeyUsedHooks(gSaveContext.mapIndex);
+                }
             } else {
                 Audio_PlayActorSound2(&this->dyna.actor, NA_SE_EV_CHAIN_KEY_UNLOCK_B);
             }
@@ -433,8 +453,14 @@ void func_80996C60(DoorShutter* this, PlayState* play) {
         DoorShutter_SetupAction(this, func_80997004);
         this->unk_16C = sp38;
         this->unk_170 = 0.0f;
-        Camera_ChangeDoorCam(play->cameraPtrs[MAIN_CAM], &this->dyna.actor, player->cv.slidingDoorBgCamIndex, 0.0f, 12,
-                             sp34, 10);
+        // Co-op: on a replay this shot belongs to the other player's crossing.
+        // slidingDoorBgCamIndex is OUR Link's, left over from whichever door WE
+        // last opened, so aiming the door cam with it would swing our view onto an
+        // unrelated angle for a door we are not walking through.
+        if (!Anchor_IsRemoteDoorOpen(&this->dyna.actor)) {
+            Camera_ChangeDoorCam(play->cameraPtrs[MAIN_CAM], &this->dyna.actor, player->cv.slidingDoorBgCamIndex, 0.0f,
+                                 12, sp34, 10);
+        }
     }
 }
 
@@ -554,6 +580,24 @@ void func_80997220(DoorShutter* this, PlayState* play) {
     Player* player = GET_PLAYER(play);
     s8 room = this->dyna.actor.room;
 
+    // Co-op: was this slide a replay of the other player's crossing? The sequence
+    // ends here either way, so drop the mark now.
+    //
+    // Almost nothing below needs suppressing, which is worth stating because the
+    // obvious reading is that it all does. The room block is already written in
+    // terms of OUR Link: it re-sides the door on our own position and only swaps
+    // curRoom/prevRoom when WE changed side. Standing still, that is a no-op; and
+    // if we DID walk through the doorway while it stood open for him -- which is
+    // reachable, the slab is genuinely up on this machine -- then the swap is not
+    // merely harmless but required, and skipping it would strand us in a room the
+    // engine still thinks we left. Same for the respawn point.
+    //
+    // The tail is the exception: it hands us to a 30-frame camera hold with every
+    // actor halted, for a door we may never have touched.
+    s32 remoteOpen = Anchor_IsRemoteDoorOpen(&this->dyna.actor);
+
+    Anchor_ForgetRemoteDoor(&this->dyna.actor);
+
     if (this->dyna.actor.room >= 0) {
         Vec3f vec;
 
@@ -572,7 +616,7 @@ void func_80997220(DoorShutter* this, PlayState* play) {
     }
     this->unk_164 = 0;
     this->dyna.actor.velocity.y = 0.0f;
-    if (DoorShutter_SetupDoor(this, play) && !(player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR)) {
+    if (DoorShutter_SetupDoor(this, play) && !(player->stateFlags1 & PLAYER_STATE1_CARRYING_ACTOR) && !remoteOpen) {
         DoorShutter_SetupAction(this, func_80997568);
         Player_SetCsActionWithHaltedActors(play, NULL, 2);
     }

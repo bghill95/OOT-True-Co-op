@@ -15,6 +15,12 @@
 
 #define FLAGS ACTOR_FLAG_UPDATE_CULLING_DISABLED
 
+// Co-op (Anchor/FxSync.cpp): true while this swing is a replay of the OTHER
+// player pushing the door (FX_EV_DOOR). The animation is what we want to show;
+// the small key vanilla spends alongside it is his, not ours.
+s32 Anchor_IsRemoteDoorOpen(Actor* doorActor);
+void Anchor_ForgetRemoteDoor(Actor* doorActor);
+
 #define DOOR_AJAR_SLAM_RANGE 120.0f
 #define DOOR_AJAR_OPEN_RANGE (2 * DOOR_AJAR_SLAM_RANGE)
 
@@ -200,16 +206,29 @@ void EnDoor_Idle(EnDoor* this, PlayState* play) {
     doorType = this->actor.params >> 7 & 7;
     Actor_WorldToActorCoords(&this->actor, &playerPosRelToDoor, &player->actor.world.pos);
     if (this->playerIsOpening != 0) {
+        // Co-op: playerIsOpening also arrives over the wire (FX_EV_DOOR) when the
+        // OTHER player pushed this door, and he has already spent the key for it.
+        // lockTimer is set once at scene load from the switch flag and is never
+        // revised when that flag later arrives through the save sync, so our copy
+        // of a locked door is still armed and would charge a second one. The flag
+        // is still set: same flag, idempotent, and it leaves our door unlocked
+        // even if his packet never lands.
+        s32 remoteOpen = Anchor_IsRemoteDoorOpen(&this->actor);
+
         this->actionFunc = EnDoor_Open;
         Animation_PlayOnceSetSpeed(&this->skelAnime, D_809FCECC[this->animStyle],
                                    (player->stateFlags1 & PLAYER_STATE1_IN_WATER) ? 0.75f : 1.5f);
         if (this->lockTimer != 0) {
             if (GameInteractor_Should(VB_CONSUME_SMALL_KEY, true, this)) {
-                gSaveContext.inventory.dungeonKeys[gSaveContext.mapIndex]--;
+                if (!remoteOpen) {
+                    gSaveContext.inventory.dungeonKeys[gSaveContext.mapIndex]--;
+                }
                 Flags_SetSwitch(play, this->actor.params & 0x3F);
             }
             Audio_PlayActorSound2(&this->actor, NA_SE_EV_CHAIN_KEY_UNLOCK);
-            GameInteractor_ExecuteOnDungeonKeyUsedHooks(gSaveContext.mapIndex);
+            if (!remoteOpen) {
+                GameInteractor_ExecuteOnDungeonKeyUsedHooks(gSaveContext.mapIndex);
+            }
         }
     } else if (!Player_InCsMode(play)) {
         if (fabsf(playerPosRelToDoor.y) < 20.0f && fabsf(playerPosRelToDoor.x) < 20.0f &&
@@ -282,6 +301,7 @@ void EnDoor_Open(EnDoor* this, PlayState* play) {
         if (SkelAnime_Update(&this->skelAnime)) {
             this->actionFunc = EnDoor_Idle;
             this->playerIsOpening = 0;
+            Anchor_ForgetRemoteDoor(&this->actor); // the swing is over, replay or not
         } else if (Animation_OnFrame(&this->skelAnime, sDoorAnimOpenFrames[this->animStyle])) {
             Audio_PlayActorSound2(&this->actor,
                                   (play->sceneNum == SCENE_SHADOW_TEMPLE ||

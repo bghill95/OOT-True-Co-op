@@ -25,6 +25,7 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_Horse/z_en_horse.h"
 #include "src/overlays/actors/ovl_Door_Ana/z_door_ana.h"
 #include "src/overlays/actors/ovl_En_Door/z_en_door.h"
+#include "src/overlays/actors/ovl_Door_Shutter/z_door_shutter.h"
 #include "src/overlays/actors/ovl_Bg_Menkuri_Eye/z_bg_menkuri_eye.h"
 // Lights one GTG eye target on behalf of the peer (see FX_EV_GTGEYE).
 void BgMenkuriEye_LightFromPeer(Actor* thisx, PlayState* play);
@@ -51,6 +52,10 @@ void Player_RequestQuake(PlayState* play, s32 speed, s32 y, s32 countdown);
 // z_door_ana.c: the open-grotto update routine (non-static, like BgPoEvent above).
 void DoorAna_WaitOpen(DoorAna* self, PlayState* play);
 void DoorAna_WaitClosed(DoorAna* self, PlayState* play);
+// z_door_shutter.c: the two closed-and-waiting states. Everything else in that
+// file means the door is already busy and must not be handed a second trigger.
+void func_80996B0C(DoorShutter* self, PlayState* play);
+void func_80996F98(DoorShutter* self, PlayState* play);
 }
 
 namespace FxSync {
@@ -76,6 +81,7 @@ enum FxEventKind : uint8_t {
     FX_EV_BIGMIRROR = 18,  // Spirit Temple: the upstairs player's cobra-solved bits (sv)
     FX_EV_GERUDOKO = 19,   // a Gerudo guard was knocked out (key = SPAWN position, they patrol)
     FX_EV_FALSEDOOR = 20,  // a Door_Killer with no switch flag was smashed (key = position)
+    FX_EV_SHUTTER = 21,    // a sliding door was pushed open here (key = SPAWN position, it slides)
 };
 
 // --- Spells -----------------------------------------------------------------
@@ -105,6 +111,24 @@ struct TorchState {
 
 static std::unordered_map<Actor*, TorchState> sTorches;
 static std::unordered_map<uint64_t, Actor*> sTorchByKey;
+
+// --- Doors ------------------------------------------------------------------
+// Doors currently running an open sequence that the OTHER player triggered.
+//
+// Vanilla has no notion of a door opening for somebody who is not this machine's
+// Link, so both door overlays fold the crossing into the opening: the swing also
+// spends the small key, the slide also seizes the camera and commits the room
+// change. Replaying a sequence verbatim on the peer would therefore charge a
+// second key, hijack his view and move his respawn point. The mark says "this
+// sequence is a picture of someone else's crossing", and the four points that
+// commit a crossing check it (EnDoor_Idle, func_80996B0C, func_80996C60,
+// func_80997220 -- see FxSync_OnShutterOpen below for the full route).
+//
+// Kept here rather than in the actor structs so the overlays keep their layout,
+// same reasoning as sCaptureVictim. Offline nothing ever inserts -- the only
+// writer is the packet receiver -- so the COND_HOOK pruning not being registered
+// then is harmless: the table simply stays empty and the predicate constant.
+static std::unordered_set<Actor*> sRemoteDoorOpen;
 
 bool SyncEnabled() {
     return CVarGetInteger(CVAR_REMOTE_ANCHOR("FxSync"), 1);
@@ -824,6 +848,7 @@ static void Reset(bool killLive) {
     sA73Saved = 0;
     sTorches.clear();
     sTorchByKey.clear();
+    sRemoteDoorOpen.clear();
     sBoomReplicas.clear();
     sProj.clear();
     sSpawningReplica = false;
@@ -879,6 +904,45 @@ extern "C" void FxSync_OnDoorOpen(Actor* doorActor, uint8_t animStyle) {
     payload["ast"] = animStyle;
     Anchor::Instance->SendPacket_FxEvent(payload);
     ESYNC_LOG("[FxSync] door open tx key={:#x} style={}", PosKey(doorActor), animStyle);
+}
+
+// Is this door's open sequence a replay of the other player's crossing?
+// See sRemoteDoorOpen at the top of the file for what the mark protects.
+extern "C" s32 Anchor_IsRemoteDoorOpen(Actor* doorActor) {
+    return (doorActor != NULL && sRemoteDoorOpen.count(doorActor) != 0) ? 1 : 0;
+}
+
+// Dropped at the end of the replayed sequence, and by z_player.c the moment our
+// OWN Link starts opening the same door -- a local crossing always supersedes a
+// replay, so the key, the camera and the room commit go back to being ours.
+extern "C" void Anchor_ForgetRemoteDoor(Actor* doorActor) {
+    if (doorActor != NULL) {
+        sRemoteDoorOpen.erase(doorActor);
+    }
+}
+
+// Sliding doors (Door_Shutter): every dungeon slab, the key-locked ones, the boss
+// doors, the Phantom Ganon bars, Jabu's fleshy shutters. Same blind spot as the
+// hinged doors above -- Player_ActionHandler_1 writes unk_164 straight into the
+// door struct and is its only writer, so the peer's copy never moves -- but the
+// cure cannot be the same one. EnDoor_Open touches nothing outside the door;
+// the shutter's sequence spends a key in func_80996B0C, aims the door camera in
+// func_80996C60, and ends in func_80997220 by swapping curRoom/prevRoom, moving
+// the respawn point and, on a boss door, freezing the player for a camera hold.
+//
+// So the peer runs the SAME vanilla sequence -- motion, both sfx, the dust ring,
+// the quake and the Jabu variant all come free -- with those three commit points
+// suppressed by the mark above. Keyed on the SPAWN position: this door is about
+// to slide 200 units up, and the peer's copy is elsewhere in the animation.
+extern "C" void FxSync_OnShutterOpen(Actor* doorActor) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr || doorActor == NULL) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_SHUTTER;
+    payload["key"] = HomeKey(doorActor);
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] shutter open tx key={:#x}", HomeKey(doorActor));
 }
 
 extern "C" void FxSync_OnStormSong(Actor* okarinaEffect) {
@@ -1362,10 +1426,41 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                     // Straight into the vanilla trigger: its own EnDoor_Idle picks this
                     // up next frame and runs the real open sequence. Never routed through
                     // the Player door code, so this cannot echo back.
+                    //
+                    // Marked as somebody else's crossing so EnDoor_Idle skips the small
+                    // key: lockTimer is set at scene load from the switch flag and is
+                    // never revised when that flag later arrives over the wire, so our
+                    // copy of a locked door is still armed and would charge a second key
+                    // for a door he has already paid to open.
+                    sRemoteDoorOpen.insert(a);
                     door->animStyle = style;
                     door->playerIsOpening = 1;
                 }
                 ESYNC_LOG("[FxSync] door open rx key={:#x}", key);
+                break;
+            }
+            return;
+        }
+
+        if (kind == FX_EV_SHUTTER) {
+            uint64_t key = payload.at("key").get<uint64_t>();
+            for (Actor* a = gPlayState->actorCtx.actorLists[ACTORCAT_DOOR].head; a != NULL; a = a->next) {
+                if (a->id != ACTOR_DOOR_SHUTTER || a->update == NULL || HomeKey(a) != key) {
+                    continue;
+                }
+                DoorShutter* door = (DoorShutter*)a;
+                // Only from the two closed-and-waiting states. Anything else means our
+                // copy is already busy -- sliding for our own Link, or opening on a
+                // switch or room-clear flag it reached by itself -- and unk_164 would
+                // either sit there unread until the NEXT time the door goes idle, or
+                // stack a second sequence on the running one.
+                if (door->actionFunc == func_80996B0C || door->actionFunc == func_80996F98) {
+                    sRemoteDoorOpen.insert(a);
+                    door->unk_164 = 1; // the same trigger Player_ActionHandler_1 writes locally
+                    ESYNC_LOG("[FxSync] shutter open rx key={:#x}", key);
+                } else {
+                    ESYNC_LOG("[FxSync] shutter open rx key={:#x} ignored (already busy)", key);
+                }
                 break;
             }
             return;
@@ -1495,6 +1590,7 @@ void RegisterHooks(bool isConnected) {
             }
         }
         sSilverAnnounced.erase(a);
+        sRemoteDoorOpen.erase(a);
         // A dying puppet takes its projectile replicas with it: that reap lives
         // in DummyPlayer_Destroy, keyed by the puppet's own client id (matching
         // `client.player == a` here never fired, see there).

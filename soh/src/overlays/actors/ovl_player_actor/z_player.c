@@ -18,10 +18,16 @@
 #include "overlays/actors/ovl_En_Horse/z_en_horse.h"
 #include "overlays/effects/ovl_Effect_Ss_Fhg_Flash/z_eff_ss_fhg_flash.h"
 
-// Co-op (Anchor/FxSync.cpp): tell peers a hinged door was just pushed open.
+// Co-op (Anchor/FxSync.cpp): tell peers a door was just pushed open -- hinged
+// (En_Door) and sliding (Door_Shutter) travel on separate events because the two
+// overlays need very different treatment on the receiving side.
 // Declared up here because the call site sits ~3700 lines above the file's
 // function definitions, and an implicit declaration there clashes with it.
 void FxSync_OnDoorOpen(Actor* doorActor, u8 animStyle);
+void FxSync_OnShutterOpen(Actor* doorActor);
+// Our own Link is crossing this door: whatever replay was armed on it for the
+// other player is superseded, so the key, the camera and the room commit are ours.
+void Anchor_ForgetRemoteDoor(Actor* doorActor);
 #include "overlays/misc/ovl_kaleido_scope/z_kaleido_scope.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "objects/object_link_child/object_link_child.h"
@@ -5374,6 +5380,14 @@ s32 Player_ActionHandler_1(Player* this, PlayState* play) {
                 this->unk_45C.z = this->actor.world.pos.z + ((doorDirection * -120.0f) * sp78);
 
                 doorShutter->unk_164 = 1;
+
+                // Co-op: unk_164 is written nowhere else, and only ever by the local
+                // Link -- so the peer's copy of this slab never moves. Announce it.
+                // Clear first: if a replay was already running on our copy for HIM,
+                // this crossing is ours and must commit normally.
+                Anchor_ForgetRemoteDoor(&doorShutter->dyna.actor);
+                FxSync_OnShutterOpen(&doorShutter->dyna.actor);
+
                 func_80832224(this);
 
                 if (this->doorTimer != 0) {
@@ -5445,6 +5459,9 @@ s32 Player_ActionHandler_1(Player* this, PlayState* play) {
                 // playerIsOpening is only ever set right here, by the local Link. Tell it,
                 // with the swing side we just chose. Hinged doors only: doorActor may also
                 // be a DoorKiller, whose "opening" is an attack on whoever opened it.
+                // Clear first, as in the sliding branch above: our own crossing pays for
+                // its own small key, whatever was armed for the other player.
+                Anchor_ForgetRemoteDoor(doorActor);
                 if (doorActor->id == ACTOR_EN_DOOR) {
                     FxSync_OnDoorOpen(doorActor, door->animStyle);
                 }
