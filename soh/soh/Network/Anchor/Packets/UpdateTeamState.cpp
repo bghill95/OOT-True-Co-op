@@ -13,6 +13,9 @@ extern "C" {
 extern PlayState* gPlayState;
 }
 
+// Defined in Packets/SetFlag.cpp, next to the other half of the Gold Skulltula path.
+void Anchor_RecomputeGsTokensFromFlags();
+
 /**
  * UPDATE_TEAM_STATE
  *
@@ -200,24 +203,18 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
         //
         // This packet is sent on every save (OnSaveFile) and on every REQUEST_TEAM_STATE,
         // so it lands mid-session, not just at connect. Assigning made the sender's set
-        // the truth: a token the RECEIVER had picked up, and whose SET_FLAG/GIVE_ITEM was
-        // still in flight (or landed after the sender built this payload), was erased --
-        // flag and count both, so the player watched their total go down. Same shape the
-        // dungeon items were fixed for, and the same fix: OR, which commutes, so two
-        // simultaneous pickups both survive whichever order they arrive in.
+        // the truth: a token the RECEIVER had picked up, and whose SET_FLAG was still in
+        // flight (or landed after the sender built this payload), was erased -- so the
+        // player watched their total go down. Same shape the dungeon items were fixed
+        // for, and the same fix: OR, which commutes, so two simultaneous pickups both
+        // survive whichever order they arrive in.
         //
         // Safe because the GS bits are purely cumulative. Outside of file creation
         // (SaveManager.cpp:618) and the debug save editor, nothing in the game ever
-        // clears one, so there is no "unset" for the OR to swallow.
+        // clears one -- RawAction::UnsetFlag has no FLAG_GS_TOKEN case at all, so no
+        // network path can retract one either. There is no "unset" for the OR to swallow.
         for (int i = 0; i < ARRAY_COUNT(gSaveContext.gsFlags); i++) {
             gSaveContext.gsFlags[i] |= loadedData.gsFlags[i];
-        }
-
-        // The count that goes with those bits. inventory is assigned wholesale below, so
-        // without this it would be pulled back down to the sender's total even though the
-        // flags above just kept ours. Highest wins: monotonic, like the OR.
-        if (gSaveContext.inventory.gsTokens > loadedData.inventory.gsTokens) {
-            loadedData.inventory.gsTokens = gSaveContext.inventory.gsTokens;
         }
 
         gSaveContext.ship.stats.fileCreatedAt = loadedData.ship.stats.fileCreatedAt;
@@ -246,7 +243,26 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
             }
         }
 
+        // Randomizer only: keep the count from being pulled DOWN by the assignment
+        // below. There the token still travels on the item channel, so a GIVE_ITEM in
+        // flight while the peer saves would be undone by the sender's older total, and
+        // the merged bit means that Skulltula never comes back. Highest wins is the
+        // best available rule when the count cannot be derived -- and it cannot be here,
+        // because RSK_STARTING_SKULLTULA_TOKEN grants tokens with no bits behind them.
+        // Vanilla does not take this path: it derives instead, just below.
+        if (IS_RANDO && gSaveContext.inventory.gsTokens > loadedData.inventory.gsTokens) {
+            loadedData.inventory.gsTokens = gSaveContext.inventory.gsTokens;
+        }
+
         gSaveContext.inventory = loadedData.inventory;
+
+        // The Gold Skulltula count belongs to the bits merged above, not to whichever
+        // inventory just won. It has to run AFTER the wholesale assignment, which would
+        // otherwise pull the count back to the sender's while our flags kept the union.
+        // Derived rather than merged: see Anchor_RecomputeGsTokensFromFlags (SetFlag.cpp)
+        // for why no merge rule on the count itself can be made to hold. No-op in rando,
+        // which is why the guarded max() above exists.
+        Anchor_RecomputeGsTokensFromFlags();
 
         // Shared wallet — initial reconciliation ("the running session's wallet wins").
         // Applied AFTER inventory so CUR_CAPACITY(UPG_WALLET) reflects the just-synced

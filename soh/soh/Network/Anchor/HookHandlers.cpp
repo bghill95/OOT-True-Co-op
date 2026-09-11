@@ -67,6 +67,10 @@ void BgYdanSp_BurnWeb(BgYdanSp* bgYdanSp, PlayState* play);
 void EnDoor_Idle(EnDoor* enDoor, PlayState* play);
 }
 
+// Defined in Packets/SetFlag.cpp. C++ linkage on purpose, like its definition --
+// declaring it inside the extern "C" block above would not link.
+void Anchor_RecomputeGsTokensFromFlags();
+
 void Anchor::RegisterHooks() {
 
     // #region Hooks that are required for basic Anchor functionality
@@ -122,8 +126,18 @@ void Anchor::RegisterHooks() {
         }
     });
 
-    COND_HOOK(OnFlagSet, isConnected,
-              [&](s16 flagType, s16 flag) { SendPacket_SetFlag(SCENE_ID_MAX, flagType, flag); });
+    COND_HOOK(OnFlagSet, isConnected, [&](s16 flagType, s16 flag) {
+        SendPacket_SetFlag(SCENE_ID_MAX, flagType, flag);
+        // A derived count has to be derived on BOTH sides, or the local pickup is the
+        // one that gets lost. En_Si increments at pickup (z_en_si.c:126) but only sets
+        // the bit when the textbox closes (:144); a peer's SET_FLAG for a DIFFERENT
+        // Skulltula landing inside that window recomputes from bits that do not yet
+        // include ours, and silently drops it. Recomputing here too closes the loop:
+        // when our own bit finally lands, the count catches up with it.
+        if (flagType == FLAG_GS_TOKEN) {
+            Anchor_RecomputeGsTokensFromFlags();
+        }
+    });
 
     COND_HOOK(OnFlagUnset, isConnected,
               [&](s16 flagType, s16 flag) { SendPacket_UnsetFlag(SCENE_ID_MAX, flagType, flag); });
@@ -178,8 +192,9 @@ void Anchor::RegisterHooks() {
         }
 
         // Channel exclusivity, same shape as the rupees above: a Gold Skulltula token's
-        // count travels ONLY through its GS flag (SET_FLAG -> FLAG_GS_TOKEN, applied in
-        // Packets/SetFlag.cpp, which adds one only when the bit was not already set).
+        // count is DERIVED from its GS bits rather than carried at all -- see
+        // Anchor_RecomputeGsTokensFromFlags (Packets/SetFlag.cpp), which runs both when a
+        // peer's flag arrives and when we set one of our own, just above.
         //
         // It has to leave this channel because the gold Skulltula is NOT tracked --
         // EnSw_Init re-categorises only type 0 to ACTORCAT_ENEMY and the gold ones are
@@ -191,8 +206,15 @@ void Anchor::RegisterHooks() {
         // tokensanity on, RG_GOLD_SKULLTULA_TOKEN is itemId ITEM_SKULL_TOKEN / MOD_NONE
         // (item_list.cpp:60) but can be placed in a chest or bought from a shop, where no
         // GS flag is ever set -- so taking it off the item channel would leave nothing to
-        // carry it. The flag path only substitutes for the item path where En_Si is the
-        // one handing the token out, which is exactly vanilla.
+        // carry it. And with tokensanity OFF the count could not be rebuilt either:
+        // RSK_STARTING_SKULLTULA_TOKEN grants tokens with no bits behind them, so the
+        // popcount the receiving side uses would erase them.
+        //
+        // The randomizer therefore keeps the pre-branch behaviour in full, including its
+        // own double-count when both players collect the same Skulltula under tokensanity
+        // OFF. That is pre-existing, not introduced here, and closing it needs a count
+        // that can survive tokens without bits -- a third rule, which is what this whole
+        // correction was about removing.
         if (!IS_RANDO && itemEntry.modIndex == MOD_NONE && itemEntry.itemId == ITEM_SKULL_TOKEN) {
             return;
         }

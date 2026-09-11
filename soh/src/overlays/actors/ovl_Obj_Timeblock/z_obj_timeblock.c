@@ -229,11 +229,16 @@ s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
 // enough; the rest of the action function does the work it does for the player
 // who played the song.
 //
-// Covered: every placement that takes the switch-flag path (unk_177 != 0), which
-// is all twelve non-MQ placements -- the four Gerudo Training Ground blocks
-// carry 0xB838..0xB83B, bit 6 clear, so unk_177 == 1.
-// Excluded: unk_177 == 0, which flips a bare params bit with no flag at all and
-// so has nothing to replicate through; see the note on ObjTimeblock_Normal.
+// Covered: every placement that takes the switch-flag path (unk_177 != 0).
+// Excluded: unk_177 == 0. Careful with that exclusion -- it is exact only for
+// ObjTimeblock_Normal, the one action function that branches on unk_177 before
+// toggling. ObjTimeblock_AltBehaviorVisible toggles the switch flag unconditionally,
+// and CalculateIsVisible reads unk_174 whatever unk_177 holds, so a placement with
+// bit 10 AND bit 6 set would be entirely on the flag path with unk_177 == 0, and this
+// guard would skip it. Whether such a placement exists cannot be settled from the
+// repository: actor params live in the .otr, not in source. The note on
+// ObjTimeblock_Normal below calls that branch unreachable -- that claim predates this
+// one and is not demonstrable here either; treat both as unverified.
 // Offline this is inert -- the local toggle arms the timer in the same frame it
 // flips the flag, so the divergence test never fires, and the session guard
 // makes that structural rather than incidental.
@@ -376,8 +381,14 @@ void ObjTimeblock_AltBehaviourNotVisible(ObjTimeblock* this, PlayState* play) {
         this->demoEffectFirstPartTimer = 12;
     }
 
-    // No camera here: the vanilla branch has none, and this one covers the
-    // direction its unk_176 test does not.
+    // No camera here: the vanilla branch has none either.
+    //
+    // Two reviewers disagreed on whether this call can ever fire. In this state
+    // isVisible == 0 == (bit15 ^ unk_174), so unk_174 == bit15, and the vanilla test
+    // above only misses a change when the flag equals bit15 -- which is exactly when
+    // switchFlagIsSet == unk_174 and the replay returns anyway. By that argument it is
+    // unreachable. Kept regardless: it costs one comparison, it cannot fire twice
+    // (the timer guard), and the argument rests on an invariant no test pins down.
     ObjTimeblock_CoopReplayFlagChange(this, play, false);
 
     func_80BA06AC(this, play);
