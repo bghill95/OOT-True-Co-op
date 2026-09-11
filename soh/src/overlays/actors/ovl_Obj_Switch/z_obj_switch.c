@@ -605,8 +605,14 @@ void ObjSwitch_CrystalOff(ObjSwitch* this, PlayState* play) {
     // flag here. The flag itself travels, so the door opens for both players --
     // but on the screen of whoever did NOT strike it, the crystal stayed RED and
     // the room read backwards. Let every subtype follow the shared flag, the way
-    // subtype 4 already does. The OFF direction needs nothing: it polls the flag
-    // for all subtypes further down.
+    // subtype 4 already does.
+    // Scope, counted in the scene data: ObjSwitch_CrystalOff is only ever the
+    // action function of TYPES 3 and 4 (see ObjSwitch_Init), which is 18 placed
+    // actors -- 15 subtype 0, 1 subtype 1, 2 subtype 4. So this changes 16
+    // instances across MIZUsin, jyasinzou, HIDAN and ganontika, and 14 of them
+    // already polled the same flag in their ON state and at Init. The OFF
+    // direction is handled in ObjSwitch_CrystalOn -- including subtype 1, which
+    // needed its own branch there.
     s32 flagOn = Anchor_IsSessionActive() && Flags_GetSwitch(play, (this->dyna.actor.params >> 8 & 0x3F));
 
     switch ((this->dyna.actor.params >> 4 & 7)) {
@@ -674,6 +680,16 @@ void ObjSwitch_CrystalOn(ObjSwitch* this, PlayState* play) {
                 play = play;
                 ObjSwitch_CrystalTurnOffInit(this);
                 ObjSwitch_SetOff(this, play);
+            } else if (Anchor_IsSessionActive() &&
+                       !Flags_GetSwitch(play, (this->dyna.actor.params >> 8 & 0x3F))) {
+                // The OFF half of the same fix. Subtypes 0 and 4 already poll the
+                // flag here; subtype 1 only ever left this state on a LOCAL hit, so
+                // replicating ON without this left the peer's crystal stuck blue
+                // after the toggle was switched back -- the fix would have moved the
+                // stale colour from one end to the other instead of removing it.
+                // ObjSwitch_SetOff is deliberately not called: the flag is already
+                // clear, and this copy is following it, not driving it.
+                ObjSwitch_CrystalTurnOffInit(this);
             }
             break;
     }
