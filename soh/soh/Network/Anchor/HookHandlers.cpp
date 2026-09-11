@@ -177,6 +177,26 @@ void Anchor::RegisterHooks() {
             return;
         }
 
+        // Channel exclusivity, same shape as the rupees above: a Gold Skulltula token's
+        // count travels ONLY through its GS flag (SET_FLAG -> FLAG_GS_TOKEN, applied in
+        // Packets/SetFlag.cpp, which adds one only when the bit was not already set).
+        //
+        // It has to leave this channel because the gold Skulltula is NOT tracked --
+        // EnSw_Init re-categorises only type 0 to ACTORCAT_ENEMY and the gold ones are
+        // types 1..4, so they stay ACTORCAT_NPC and each client runs its own copy. Both
+        // players can kill and collect the same one; through GIVE_ITEM that counted twice
+        // on both saves, while the flag is a bit and cannot be set twice.
+        //
+        // Vanilla only. Under the randomizer this exclusion would LOSE tokens: with
+        // tokensanity on, RG_GOLD_SKULLTULA_TOKEN is itemId ITEM_SKULL_TOKEN / MOD_NONE
+        // (item_list.cpp:60) but can be placed in a chest or bought from a shop, where no
+        // GS flag is ever set -- so taking it off the item channel would leave nothing to
+        // carry it. The flag path only substitutes for the item path where En_Si is the
+        // one handing the token out, which is exactly vanilla.
+        if (!IS_RANDO && itemEntry.modIndex == MOD_NONE && itemEntry.itemId == ITEM_SKULL_TOKEN) {
+            return;
+        }
+
         SendPacket_GiveItem(itemEntry.tableId, itemEntry.getItemId);
     });
 

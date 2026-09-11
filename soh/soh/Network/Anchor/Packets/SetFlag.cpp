@@ -42,10 +42,35 @@ void Anchor::HandlePacket_SetFlag(nlohmann::json payload) {
     s16 flag = payload["flag"].get<s16>();
 
     if (sceneNum == SCENE_ID_MAX) {
+        // Gold Skulltulas: the COUNT is derived from the flag, not carried by the
+        // item channel (see the ITEM_SKULL_TOKEN exclusion in HookHandlers).
+        //
+        // The token actor is not tracked -- EnSw_Init only re-categorises type 0 to
+        // ACTORCAT_ENEMY, and the gold variants are types 1..4, so they stay
+        // ACTORCAT_NPC and every client simulates its own. Both players can
+        // therefore kill and collect the SAME Skulltula, and with the count on the
+        // item channel each pickup added one everywhere: one Skulltula, four tokens.
+        //
+        // Reading the bit first makes it idempotent instead. The GS bits are the
+        // authority on how many have been collected, a second pickup of the same one
+        // finds its bit already set, and nothing is added.
+        //
+        // Vanilla only, matching the exclusion side: under the randomizer the token stays
+        // on the item channel (tokensanity can place it where no GS flag is ever set), so
+        // counting it here as well would be the double it is meant to prevent.
+        bool gsTokenWasUnset = false;
+        if (flagType == FLAG_GS_TOKEN && !IS_RANDO) {
+            gsTokenWasUnset = !(GET_GS_FLAGS((flag & 0x1F00) >> 8) & (flag & 0xFF));
+        }
+
         auto effect = new GameInteractionEffect::SetFlag();
         effect->parameters[0] = flagType;
         effect->parameters[1] = flag;
         effect->Apply();
+
+        if (gsTokenWasUnset) {
+            gSaveContext.inventory.gsTokens++;
+        }
 
         // Special case: If King Zora moved, and the player has Ruto's Letter, convert it to an empty bottle
         if (flagType == FLAG_EVENT_CHECK_INF && flag == EVENTCHKINF_KING_ZORA_MOVED &&

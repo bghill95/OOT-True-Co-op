@@ -196,8 +196,28 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
             gSaveContext.ship.randomizerInf[i] = loadedData.ship.randomizerInf[i];
         }
 
+        // Gold Skulltulas MERGE, they do not overwrite.
+        //
+        // This packet is sent on every save (OnSaveFile) and on every REQUEST_TEAM_STATE,
+        // so it lands mid-session, not just at connect. Assigning made the sender's set
+        // the truth: a token the RECEIVER had picked up, and whose SET_FLAG/GIVE_ITEM was
+        // still in flight (or landed after the sender built this payload), was erased --
+        // flag and count both, so the player watched their total go down. Same shape the
+        // dungeon items were fixed for, and the same fix: OR, which commutes, so two
+        // simultaneous pickups both survive whichever order they arrive in.
+        //
+        // Safe because the GS bits are purely cumulative. Outside of file creation
+        // (SaveManager.cpp:618) and the debug save editor, nothing in the game ever
+        // clears one, so there is no "unset" for the OR to swallow.
         for (int i = 0; i < ARRAY_COUNT(gSaveContext.gsFlags); i++) {
-            gSaveContext.gsFlags[i] = loadedData.gsFlags[i];
+            gSaveContext.gsFlags[i] |= loadedData.gsFlags[i];
+        }
+
+        // The count that goes with those bits. inventory is assigned wholesale below, so
+        // without this it would be pulled back down to the sender's total even though the
+        // flags above just kept ours. Highest wins: monotonic, like the OR.
+        if (gSaveContext.inventory.gsTokens > loadedData.inventory.gsTokens) {
+            loadedData.inventory.gsTokens = gSaveContext.inventory.gsTokens;
         }
 
         gSaveContext.ship.stats.fileCreatedAt = loadedData.ship.stats.fileCreatedAt;
