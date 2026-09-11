@@ -17,6 +17,10 @@ void BgMizuShutter_WaitForSwitch(BgMizuShutter* this, PlayState* play);
 void BgMizuShutter_Move(BgMizuShutter* this, PlayState* play);
 void BgMizuShutter_WaitForCutscene(BgMizuShutter* this, PlayState* play);
 
+// Co-op (Anchor/DummyPlayer.cpp)
+s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
+s32 Anchor_IsSessionActive(void);
+
 const ActorInit Bg_Mizu_Shutter_InitVars = {
     ACTOR_BG_MIZU_SHUTTER,
     ACTORCAT_PROP,
@@ -72,8 +76,18 @@ void BgMizuShutter_Init(BgMizuShutter* thisx, PlayState* play) {
         this->openPos.x += this->dyna.actor.world.pos.x;
         this->openPos.y += this->dyna.actor.world.pos.y;
         this->openPos.z += this->dyna.actor.world.pos.z;
+        // Vanilla resets a timed door to shut when the room loads. In co-op that
+        // reset is BROADCAST: Flags_UnsetSwitch only fires its hook when the flag
+        // WAS set -- precisely the window during which the door stands open -- and
+        // SendPacket_UnsetFlag goes out ungated. Walking into room 0, 8 or 21 while
+        // the peer had just opened the door cleared HIS flag, and his door closed
+        // on him mid-Move. The switch flag is shared state now, so a local room
+        // load has no business clearing it: leave it alone during a session and let
+        // the test below put this copy in whatever state the flag describes.
         if (this->timerMax != 0x3F * 20) {
-            Flags_UnsetSwitch(play, (u16)this->dyna.actor.params & 0x3F);
+            if (!Anchor_IsSessionActive()) {
+                Flags_UnsetSwitch(play, (u16)this->dyna.actor.params & 0x3F);
+            }
             this->dyna.actor.world.pos = this->closedPos;
         }
         if (Flags_GetSwitch(play, (u16)this->dyna.actor.params & 0x3F)) {
@@ -94,10 +108,18 @@ void BgMizuShutter_Destroy(BgMizuShutter* thisx, PlayState* play) {
 
 void BgMizuShutter_WaitForSwitch(BgMizuShutter* this, PlayState* play) {
     if (Flags_GetSwitch(play, (u16)this->dyna.actor.params & 0x3F)) {
-        if (ABS(this->dyna.actor.world.rot.x) > 0x2C60) {
-            OnePointCutscene_Init(play, 4510, -99, &this->dyna.actor, MAIN_CAM);
-        } else {
-            OnePointCutscene_Attention(play, &this->dyna.actor);
+        // Co-op: the flag travels, so BOTH clients arrive here the moment either
+        // one hits the crystal -- right for the door, wrong for the camera. And
+        // this one does more than steal the view: OnePointCutscene_Init with
+        // cutscene 4510 runs Player_SetCsActionWithHaltedActors(play, NULL, 8),
+        // which takes the player's CONTROLS away for a door he did not open.
+        // Same guard as the six other overlays that poll a shared flag.
+        if (Anchor_ShouldPlayCameraCutscene(&this->dyna.actor, 800.0f)) {
+            if (ABS(this->dyna.actor.world.rot.x) > 0x2C60) {
+                OnePointCutscene_Init(play, 4510, -99, &this->dyna.actor, MAIN_CAM);
+            } else {
+                OnePointCutscene_Attention(play, &this->dyna.actor);
+            }
         }
         this->actionFunc = BgMizuShutter_WaitForCutscene;
         this->timer = 30;

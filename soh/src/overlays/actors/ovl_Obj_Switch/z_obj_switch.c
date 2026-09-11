@@ -9,6 +9,9 @@
 #include "vt.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 
+// Co-op (Anchor/DummyPlayer.cpp)
+s32 Anchor_IsSessionActive(void);
+
 #define FLAGS ACTOR_FLAG_UPDATE_CULLING_DISABLED
 
 // type:        (this->dyna.actor.params & 7)
@@ -598,9 +601,17 @@ void ObjSwitch_CrystalOffInit(ObjSwitch* this) {
 }
 
 void ObjSwitch_CrystalOff(ObjSwitch* this, PlayState* play) {
+    // Co-op: of the three crystal subtypes, only CRYSTAL_4 re-reads its switch
+    // flag here. The flag itself travels, so the door opens for both players --
+    // but on the screen of whoever did NOT strike it, the crystal stayed RED and
+    // the room read backwards. Let every subtype follow the shared flag, the way
+    // subtype 4 already does. The OFF direction needs nothing: it polls the flag
+    // for all subtypes further down.
+    s32 flagOn = Anchor_IsSessionActive() && Flags_GetSwitch(play, (this->dyna.actor.params >> 8 & 0x3F));
+
     switch ((this->dyna.actor.params >> 4 & 7)) {
         case OBJSWITCH_SUBTYPE_CRYSTAL_0:
-            if ((this->jntSph.col.base.acFlags & AC_HIT) && this->disableAcTimer <= 0) {
+            if (((this->jntSph.col.base.acFlags & AC_HIT) && this->disableAcTimer <= 0) || flagOn) {
                 this->disableAcTimer = 10;
                 ObjSwitch_SetOn(this, play);
                 ObjSwitch_CrystalTurnOnInit(this);
@@ -615,7 +626,8 @@ void ObjSwitch_CrystalOff(ObjSwitch* this, PlayState* play) {
             }
             break;
         case OBJSWITCH_SUBTYPE_CRYSTAL_1:
-            if ((this->jntSph.col.base.acFlags & AC_HIT) && !(this->unk_17F & 2) && this->disableAcTimer <= 0) {
+            if ((((this->jntSph.col.base.acFlags & AC_HIT) && !(this->unk_17F & 2)) && this->disableAcTimer <= 0) ||
+                flagOn) {
                 this->disableAcTimer = 10;
                 ObjSwitch_SetOn(this, play);
                 ObjSwitch_CrystalTurnOnInit(this);
