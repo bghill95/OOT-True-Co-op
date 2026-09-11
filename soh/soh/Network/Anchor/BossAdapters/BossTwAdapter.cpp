@@ -127,13 +127,36 @@ static void BossTw_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     }
 }
 
+// NOT REGISTERED YET, on purpose. Review found that simply registering this makes
+// the fight WORSE than having no adapter at all, and the reason is structural:
+//
+//   EnemySync's leftStream test is `health == 0 && GetAdapter(id) == nullptr`, and
+//   Kotake and Koume carry colChkInfo.health = 0 permanently (z_boss_tw.c:454) --
+//   only the merged form gets 24. So today the sisters are never streamed and never
+//   suppressed: each machine runs its own pair locally. Registering an adapter for
+//   ACTOR_BOSS_TW flips BOTH sisters into the suppressed-mirror regime at once, and
+//   their draw path reads a whole family of fields this file does not send:
+//   beamDist (which gates the beam being drawn at all), beamScale, beamPitch/Yaw/
+//   Roll, the beamReflection* set, groundBlastPos2, flameAlpha, flameRotation and
+//   portalRotation. The mirror would stop seeing the beam it is supposed to reflect
+//   back at the sisters -- the central mechanic of the fight.
+//
+// Three further findings to settle before this is turned on:
+//   - IsHealthless without ReplicateKill leaves mirrored blasts immortal: the
+//     authority Actor_Kills them on impact and broadcasts nothing, so the mirror
+//     keeps one alive for STREAM_STALE_TICKS and then hands it back to local AI with
+//     an AT collider and undecremented timers -- it can hit the other player half a
+//     second after it exploded, somewhere its owner never saw it.
+//   - The fog* claim above is WRONG: they are rewritten every frame in
+//     BossTw_Update (:2880) and, pointedly, inside BossTw_DeathCS (:1754), which is
+//     the very scene coopInDeathCS exists to reproduce.
+//   - visible and coopInDeathCS latch: when suppression ends (stale, authority
+//     handover, death) the actor resumes local AI holding the authority's last
+//     value. A sister released while the authority had visible = 0 stays invisible
+//     for the rest of the fight.
+//
+// The serialise/deserialise pair below is sound as far as it goes (types check out,
+// the trail rebuild is correct) and the clamps it needed are now in the draws
+// themselves. Finish the field list and the three points above, then register.
 void RegisterBossTwAdapter() {
-    ActorSyncAdapter adapter;
-    adapter.SerializeExtras = BossTw_SerializeExtras;
-    adapter.DeserializeExtras = BossTw_DeserializeExtras;
-    // The projectiles are spawned copies whose colChkInfo.health is not a life
-    // total -- the roster must stream and announce them regardless of it, and an
-    // Actor_Kill on one must not be broadcast as an enemy death.
-    adapter.IsHealthless = [](Actor* actor) { return actor->params >= TW_FIRE_BLAST; };
-    EnemySync::RegisterAdapter(ACTOR_BOSS_TW, adapter);
 }

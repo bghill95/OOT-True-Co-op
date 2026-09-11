@@ -1445,6 +1445,15 @@ void EnWf_Draw(Actor* thisx, PlayState* play) {
     if ((this->action != WOLFOS_ACTION_WAIT_TO_APPEAR) || !this->unk_300) {
         Gfx_SetupDL_25Opa(play->state.gfxCtx);
 
+        // eyeIndex arrives off the wire on a mirrored Wolfos (EnWf_DeserializeExtras
+        // in FrozenDrawAdapters.cpp reads it straight into this s16), and it indexes
+        // a four-entry table whose result goes to the GPU as a segment. An index out
+        // of range does not merely draw the wrong eye: it poisons segment 8 with an
+        // arbitrary pointer, and EVERY texture submitted through that segment
+        // afterwards -- including other actors' -- faults on it. Clamp at the point
+        // of use, as EnBili_Draw does with its own index.
+        this->eyeIndex = CLAMP(this->eyeIndex, 0, (s16)ARRAY_COUNT(sWolfosNormalEyeTextures) - 1);
+
         if (this->actor.params == WOLFOS_NORMAL) {
             gSPSegment(POLY_OPA_DISP++, 0x08, SEGMENTED_TO_VIRTUAL(sWolfosNormalEyeTextures[this->eyeIndex]));
         } else {

@@ -3509,6 +3509,10 @@ void BossTw_Draw(Actor* thisx, PlayState* play2) {
     OPEN_DISPS(play->state.gfxCtx);
 
     if (this->visible) {
+        // Same reason as EnWf_Draw: an eye index that reaches the GPU as a segment
+        // must be in range whatever wrote it, because a bad one poisons that segment
+        // for every texture drawn after it, not just this actor's.
+        this->eyeTexIdx = CLAMP(this->eyeTexIdx, 0, (s16)ARRAY_COUNT(sEyeTextures) - 1);
         gSPSegment(POLY_OPA_DISP++, 10, SEGMENTED_TO_VIRTUAL(sEyeTextures[this->eyeTexIdx]));
         gSPSegment(POLY_XLU_DISP++, 10, SEGMENTED_TO_VIRTUAL(sEyeTextures[this->eyeTexIdx]));
         gSPSegment(POLY_XLU_DISP++, 8,
@@ -3595,6 +3599,10 @@ s32 BossTw_TwinrovaOverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList,
         case 21:
             gSPSegment(POLY_OPA_DISP++, 0xC,
                        Gfx_TexScroll(play->state.gfxCtx, 0, (s16)(f32)this->work[CS_TIMER_1], 8, 8));
+            // Bounded here too: both indices can arrive off the wire, and they end up
+            // in segments 8 and 9 -- poisoning either one breaks every later texture.
+            this->eyeTexIdx = CLAMP(this->eyeTexIdx, 0, (s16)ARRAY_COUNT(D_8094A9B0) - 1);
+            this->leftEyeTexIdx = CLAMP(this->leftEyeTexIdx, 0, (s16)ARRAY_COUNT(D_8094A9B0) - 1);
             gSPSegment(POLY_OPA_DISP++, 8, SEGMENTED_TO_VIRTUAL(D_8094A9B0[this->eyeTexIdx]));
             gSPSegment(POLY_OPA_DISP++, 9, SEGMENTED_TO_VIRTUAL(D_8094A9B0[this->leftEyeTexIdx]));
             gDPSetEnvColor(POLY_OPA_DISP++, 255, 255, 255, this->work[UNK_S8]);
