@@ -13,14 +13,21 @@ extern PlayState* gPlayState;
 // MARK: - Overrides
 
 void Anchor::Enable() {
-    // A PERMANENT frame hook, installed before the socket can ever connect: it is what
-    // carries OnConnected / OnDisconnected over to the game thread (see TickConnection).
-    // It cannot live in RegisterHooks, whose own hooks are conditioned on isConnected --
+    // A PERMANENT hook, installed before the socket can ever connect: it is what carries
+    // OnConnected / OnDisconnected over to the game thread (see TickConnection). It
+    // cannot live in RegisterHooks, whose own hooks are conditioned on isConnected --
     // they do not exist yet at the moment a connection has to be reacted to.
+    //
+    // OnGameStateMainStart, NOT OnGameFrameUpdate, and that is load-bearing:
+    // TickConnection calls RegisterHooks, which registers an OnGameFrameUpdate hook,
+    // and RegisterGameHook inserts into the hook map immediately. Running from an
+    // OnGameFrameUpdate hook would mean inserting into the unordered_map that
+    // ExecuteHooks is iterating right then -- a rehash invalidates the loop's own
+    // reference and iterator. Anchor registers nothing on OnGameStateMainStart.
     static bool sConnectionTickInstalled = false;
     if (!sConnectionTickInstalled) {
         sConnectionTickInstalled = true;
-        GameInteractor::Instance->RegisterGameHook<GameInteractor::OnGameFrameUpdate>(
+        GameInteractor::Instance->RegisterGameHook<GameInteractor::OnGameStateMainStart>(
             [this]() { TickConnection(); });
     }
 
@@ -33,13 +40,7 @@ void Anchor::Enable() {
 void Anchor::Disable() {
     Network::Disable();
 
-    // Anything still queued belongs to the session that just ended; replaying it
-    // after a reconnect would apply a dead session's state to the new one.
-    {
-        std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
-        std::queue<nlohmann::json>().swap(incomingPacketQueue);
-        pendingPlayerUpdates.clear();
-    }
+    DropQueuedPackets();
 
     clients.clear();
     RefreshClientActors();
@@ -57,8 +58,23 @@ void Anchor::OnConnected() {
     pendingConnected = true;
 }
 
+void Anchor::EnqueuePacket(nlohmann::json payload) {
+    std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+    incomingPacketQueue.push_back(std::move(payload));
+}
+
+void Anchor::DropQueuedPackets() {
+    std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+    incomingPacketQueue.clear();
+}
+
 void Anchor::TickConnection() {
     if (pendingDisconnected.exchange(false)) {
+        // An ordinary network drop never goes through Disable() -- ReceiveFromServer
+        // loops and reconnects by itself -- and the drain is conditioned on
+        // isConnected, so it stops while the socket is down. Without this, whatever
+        // was queued when the link died is replayed into the new session.
+        DropQueuedPackets();
         RegisterHooks();
     }
     if (pendingConnected.exchange(false)) {
@@ -118,16 +134,33 @@ void Anchor::OnIncomingJson(nlohmann::json payload) {
     // the top of the next frame costs at most one frame of staleness and nothing else.
     // Queue all packets to be processed on the game thread
     std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
-    // Coalesce poses per client rather than queueing every one: see
-    // pendingPlayerUpdates. is_string/is_number_unsigned rather than get<>, because
-    // nothing here is inside a try and this is the websocket thread -- an exception
-    // escaping would take the process with it.
+
+    // Poses coalesce: a client's queued pose is REPLACED IN PLACE by its newer one
+    // rather than queued behind it. Without that, a scene load -- during which the
+    // game thread stops draining -- builds an unbounded backlog and then replays it
+    // in a single frame, which means N kill+respawn of every puppet at once. Replacing
+    // in place rather than holding poses aside keeps them in TCP order with the rest,
+    // so a stale pose can never be applied after the scene change that followed it.
+    // is_string / is_number_unsigned rather than get<>, because nothing here is inside
+    // a try and this is the websocket thread: an exception escaping ends the process.
     if (payload["type"].is_string() && payload["type"].get<std::string>() == PLAYER_UPDATE &&
         payload.contains("clientId") && payload["clientId"].is_number_unsigned()) {
-        pendingPlayerUpdates[payload["clientId"].get<uint32_t>()] = std::move(payload);
-        return;
+        uint32_t poseClientId = payload["clientId"].get<uint32_t>();
+        for (nlohmann::json& queued : incomingPacketQueue) {
+            // find(), not operator[]: queued is non-const, so a subscript would INSERT
+            // a null "clientId" into a packet that has none and defeat the
+            // contains("clientId") guards its handler relies on.
+            const nlohmann::json& q = queued;
+            auto queuedType = q.find("type");
+            auto queuedId = q.find("clientId");
+            if (queuedType != q.end() && *queuedType == PLAYER_UPDATE && queuedId != q.end() &&
+                *queuedId == poseClientId) {
+                queued = std::move(payload);
+                return;
+            }
+        }
     }
-    incomingPacketQueue.push(payload);
+    incomingPacketQueue.push_back(std::move(payload));
 }
 
 void Anchor::ProcessIncomingPacketQueue() {
@@ -136,21 +169,21 @@ void Anchor::ProcessIncomingPacketQueue() {
     // Network::Disable() joins the receive thread, which may itself be blocked on
     // this very mutex trying to enqueue. It also meant every blocking send a handler
     // makes froze the receive thread along with it.
-    std::queue<nlohmann::json> batch;
+    std::deque<nlohmann::json> batch;
     {
         std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
         batch.swap(incomingPacketQueue);
-        // Poses go last, so a coalesced (newest) pose always wins over a scene change
-        // that arrived in the same batch rather than the other way round.
-        for (auto& [cid, pose] : pendingPlayerUpdates) {
-            batch.push(std::move(pose));
-        }
-        pendingPlayerUpdates.clear();
     }
 
     while (!batch.empty()) {
+        // A handler can disable Anchor mid-batch (HandlePacket_DisableAnchor). What it
+        // clears is the queue, not this batch, which was already swapped out of it --
+        // so stop here rather than keep applying a dead session's items and warps.
+        if (!isEnabled) {
+            break;
+        }
         nlohmann::json payload = batch.front();
-        batch.pop();
+        batch.pop_front();
 
         std::string packetType;
         try {

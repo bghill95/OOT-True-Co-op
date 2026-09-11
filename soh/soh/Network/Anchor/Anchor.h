@@ -5,6 +5,7 @@
 #include "soh/Network/Network.h"
 #include <libultraship/libultraship.h>
 #include <queue>
+#include <deque>
 #include <atomic>
 #include <mutex>
 
@@ -121,13 +122,23 @@ class Anchor : public Network {
     // TickConnection on the game thread. See the comment above OnConnected.
     std::atomic<bool> pendingConnected{ false };
     std::atomic<bool> pendingDisconnected{ false };
-    std::queue<nlohmann::json> incomingPacketQueue;
-    // Poses are absolute state, so only the newest one per client is worth keeping.
-    // Held apart from the queue so a scene load -- during which the game thread stops
-    // draining -- cannot build an unbounded backlog and then replay it all in one
-    // frame, which would mean N kill+respawn of every puppet at once.
-    std::unordered_map<uint32_t, nlohmann::json> pendingPlayerUpdates;
+    // A deque, not a queue: OnIncomingJson replaces a client's queued pose in place
+    // with its newer one, which needs to see the elements.
+    std::deque<nlohmann::json> incomingPacketQueue;
     std::mutex incomingPacketQueueMutex;
+    // Drops whatever is still queued. Anything held belongs to the session that just
+    // ended, and replaying it into the next one applies a dead session's state.
+    void DropQueuedPackets();
+
+  public:
+    // The ONE way to add to the queue, from either thread. Handlers run on the game
+    // thread without the drain holding the mutex, so a handler pushing packets of its
+    // own (UpdateTeamState replays the server's catch-up queue) races the receive
+    // thread unless it goes through here. Such packets are picked up by the next
+    // frame's drain rather than the current batch.
+    void EnqueuePacket(nlohmann::json payload);
+
+  private:
 
     nlohmann::json PrepClientState();
     nlohmann::json PrepRoomState();

@@ -149,7 +149,13 @@ static void Morpha_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
                 }
             }
             if (x.contains("ring") && x["ring"].size() == 2) {
-                mo->widthIndex = x["ring"][0].get<int16_t>();
+                // Clamped HERE, at the one place it enters, because three readers index
+                // f32 tentWidth[300] with it and only one of them is on a path a local
+                // clamp could cover: BossMo_TentWidthAndScale, BossMo_UpdateCore, and
+                // BossMo_CoopMirrorCoreTick -- where the CORE reads the TENTACLE's
+                // widthIndex, a separate actor fed by a separate packet.
+                int32_t ring0 = x["ring"][0].get<int32_t>();
+                mo->widthIndex = (int16_t)((ring0 < 0 || ring0 >= 300) ? 0 : ring0);
                 mo->pulsePhase = x["ring"][1].get<int16_t>();
             }
             if (x.contains("cut") && x["cut"].size() == 4) {

@@ -351,7 +351,7 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
     if (payload.contains("queue")) {
         for (auto& item : payload["queue"]) {
             nlohmann::json itemPayload = nlohmann::json::parse(item.get<std::string>());
-            incomingPacketQueue.push(itemPayload);
+            EnqueuePacket(std::move(itemPayload));
         }
     }
 }
