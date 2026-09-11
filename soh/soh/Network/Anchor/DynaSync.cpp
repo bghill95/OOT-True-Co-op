@@ -47,7 +47,8 @@ static constexpr uint64_t CLAIM_TICKS = 45;
 // once, by BG_MIZU_MOVEBG: the Water Temple platforms take their height straight
 // from the LOCAL waterBoxes, so pinning the mirror to the authority's position
 // dragged a rider up to 700 units through his own water surface. It is now split
-// by type (see its case below), and BG_MIZU_UZU is out entirely -- its whole
+// by type (see its case below), and BG_MIZU_UZU is out entirely (2 instances in
+// the game: MIZUsin and men) -- its whole
 // Update is the iron-boots collision toggle plus a spin and a sound, and its Draw
 // is empty, so there was never anything to mirror.
 // What remains excluded from flag replication: the forest elevator and the tower
@@ -70,8 +71,12 @@ static bool IsSyncedDynaActor(const Actor* actor) {
         case ACTOR_BG_SPOT18_BASKET:  // Goron City: spinning vase
         case ACTOR_BG_HAKA_SHIP:      // Shadow Temple: boat (flag then scripted sail — flag
                                       // replay times differ, the hull must not)
-        case ACTOR_EN_SIOFUKI:        // Jabu: water-spout platforms (flag + timer + oscillation)
-        case ACTOR_EN_BROB:           // Jabu: wobbling blob platform (timers + proximity)
+        case ACTOR_EN_SIOFUKI:        // WATER TEMPLE: water-spout platforms (flag + timer +
+                                      // oscillation). Counted in the scene data: 6 instances,
+                                      // all in MIZUsin, NONE in Jabu-Jabu -- this comment said
+                                      // "Jabu" until 2026-09-11 and was simply wrong.
+        case ACTOR_EN_BROB:           // Jabu: wobbling blob platform (timers + proximity).
+                                      // 7 instances, all in bdan -- verified.
             // NOT one-shot switch-flag movers (Bg_Ddan_Kd stairs, Hamsteps, gates,
             // shutters...): Anchor's flag sync already replays those on both
             // clients. NOT flag-driven movers at all, replicated flag or not.
@@ -133,6 +138,12 @@ static bool IsSyncedDynaActor(const Actor* actor) {
         // same overlay: func_8089E650 walks a scene path with Actor_MoveXYZ, no flag, no
         // water, no resync point, from the moment the room loads. Exactly the free-phase
         // signature BG_MORI_HASHIRA4 is here for -- and it is a platform you stand on.
+        // Counted in the scene data (2026-09-11): 17 instances in the whole game.
+        // Types 0-5 are the eight Water Temple platforms this case excludes, all in
+        // MIZUsin rooms 0/1/3/6. Type 7 is nine instances -- eight in MIZUsin room 5
+        // and ONE in jyasinzou (Spirit Temple) room 23, so this case reaches beyond
+        // the Water Temple; it is the same free-phase path walker there, so the
+        // treatment holds, but do not read this case as dungeon-scoped.
         case ACTOR_BG_MIZU_MOVEBG:
             return (((uint16_t)actor->params >> 0xC) & 0xF) == 7; // MOVEBG_TYPE, private to the overlay
 
