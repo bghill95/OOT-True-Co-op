@@ -19,6 +19,7 @@ extern "C" {
 #include "src/overlays/actors/ovl_Obj_Comb/z_obj_comb.h"
 #include "src/overlays/actors/ovl_En_Wood02/z_en_wood02.h"
 #include "src/overlays/actors/ovl_En_Kanban/z_en_kanban.h"
+#include "src/overlays/actors/ovl_Bg_Haka_Tubo/z_bg_haka_tubo.h"
 extern PlayState* gPlayState;
 }
 
@@ -38,6 +39,11 @@ namespace BreakSync {
 //   OBJ_COMB     beehive  AC_HIT + elements[0] acHitInfo; dmgFlags must NOT
 //                         match 0x4001F866 (that mask only wobbles it)
 //   EN_WOOD02    trees    home.rot.y != 0 (player-bonk drop channel)
+//   BG_HAKA_TUBO skull jar AC_HIT + base.ac WITHIN 50 UNITS: the jar dereferences
+//                         base.ac->world.pos rather than acHitInfo
+//                         (z_bg_haka_tubo.c:125), so the spoof points it at the
+//                         jar itself -- distance zero passes the gate and no
+//                         attacker actor has to be alive for it.
 // dmgFlags 0x8 (explosive) passes every gate above: & 0x4FC1FFFC != 0,
 // & 0x40000048 != 0, & 0x4001F866 == 0.
 //
@@ -67,6 +73,7 @@ static bool IsSyncedBreakable(int16_t id) {
         case ACTOR_OBJ_COMB:
         case ACTOR_EN_WOOD02:
         case ACTOR_EN_KANBAN:
+        case ACTOR_BG_HAKA_TUBO:
             return true;
         default:
             return false;
@@ -209,6 +216,21 @@ static void OnKanbanPostUpdate(Actor* actor) {
     }
 }
 
+// Skull jars announce the instant they shatter, not on Actor_Kill: the jar stays
+// alive five more frames in BgHakaTubo_DropCollectible before it dies, and the
+// peer's copy would keep spinning (and keep hurting him with its flame circle)
+// for that whole delay. `draw = NULL` is written on the break frame and nowhere
+// else in the overlay (z_bg_haka_tubo.c:134), so it is the edge.
+static void OnTuboPreUpdate(Actor* actor) {
+    auto it = sTracked.find(actor);
+    if (it == sTracked.end() || !SyncEnabled()) {
+        return;
+    }
+    if (actor->draw == NULL) {
+        SendBreak(actor, it->second);
+    }
+}
+
 // Trees announce on the bonk channel (they drop but never die either).
 static void OnWoodPreUpdate(Actor* actor) {
     auto it = sTracked.find(actor);
@@ -348,6 +370,18 @@ void Ingest(const nlohmann::json& payload) {
             case ACTOR_EN_WOOD02:
                 actor->home.rot.y = 1; // bonk-drop channel
                 break;
+            case ACTOR_BG_HAKA_TUBO: {
+                // BgHakaTubo_Idle gates the break on the ATTACKER's position, not on
+                // dmgFlags: it reads base.ac->world.pos and demands < 50 units of XZ
+                // distance and < 50 of height (z_bg_haka_tubo.c:125-126). Point base.ac
+                // at the jar itself -- distance zero, and a pointer that stays valid for
+                // the one frame the update needs it, which no remote attacker's actor
+                // would (the peer's sword swing has no actor of ours to name).
+                BgHakaTubo* tubo = (BgHakaTubo*)actor;
+                tubo->potCollider.base.ac = actor;
+                tubo->potCollider.base.acFlags |= AC_HIT;
+                break;
+            }
             default:
                 break;
         }
@@ -372,6 +406,7 @@ void RegisterHooks(bool isConnected) {
     COND_ID_HOOK(OnActorInit, ACTOR_OBJ_COMB, isConnected, [](void* actor) { OnBreakableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_EN_WOOD02, isConnected, [](void* actor) { OnBreakableInit((Actor*)actor); });
     COND_ID_HOOK(OnActorInit, ACTOR_EN_KANBAN, isConnected, [](void* actor) { OnBreakableInit((Actor*)actor); });
+    COND_ID_HOOK(OnActorInit, ACTOR_BG_HAKA_TUBO, isConnected, [](void* actor) { OnBreakableInit((Actor*)actor); });
 
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_KUSA, isConnected,
                  [](void* actor, bool* should) { OnKusaPreUpdate((Actor*)actor); });
@@ -379,6 +414,8 @@ void RegisterHooks(bool isConnected) {
                  [](void* actor, bool* should) { OnWoodPreUpdate((Actor*)actor); });
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_EN_KANBAN, isConnected,
                  [](void* actor, bool* should) { OnKanbanPreUpdate((Actor*)actor); });
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_BG_HAKA_TUBO, isConnected,
+                 [](void* actor, bool* should) { OnTuboPreUpdate((Actor*)actor); });
     COND_ID_HOOK(OnActorUpdate, ACTOR_EN_KANBAN, isConnected, [](void* actor) { OnKanbanPostUpdate((Actor*)actor); });
 
     COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {

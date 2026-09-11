@@ -53,6 +53,16 @@ static constexpr int32_t MAX_STREAM_LIMBS = 128;
 // 3-5), so a cap of 6 dropped its 7th every frame. 12 leaves headroom; overflow
 // still logs a canary.
 static constexpr size_t MAX_TRACKED_COLLIDERS = 12;
+// Elements inside one collider, for the ragged per-element arrays (touchParams).
+// Only a bound on what is accepted off the wire: a JntSph carries one per sphere,
+// a Tris one per triangle. Counted across the overlays: the largest are 19
+// (z_boss_dodongo.h items[19], z_boss_fd.h elements[19], z_boss_mo.h
+// tentElements[19]); Bongo Bongo's hands carry 11. Do NOT lower this below 19.
+static constexpr size_t MAX_COLLIDER_ELEMENTS = 32;
+// Attack parameters resend cadence when nothing changed, so a peer that joined
+// mid-fight or dropped the packet that armed an enemy still converges within a
+// second. Must stay well under STREAM_STALE_TICKS.
+static constexpr uint64_t TOUCH_KEYFRAME_TICKS = 20;
 // High bit marks host-assigned dynamic-spawn keys (bit 63 is provably free:
 // PackKey's roomNum passes through uint8_t into bits 48-55).
 static constexpr uint64_t DYNAMIC_KEY_BIT = 1ULL << 63;
@@ -102,6 +112,18 @@ struct TrackedState {
     bool needsSpawnBroadcast = false; // authority: announce this dynamic spawn
     bool projectile = false;          // whitelisted enemy projectile: fire-and-forget replica, never streamed/mirrored
     uint8_t phase = 0;                // last adapter phase seen/applied
+    // Authority: last per-element attack parameters, cylinder radii and collider
+    // profile actually put on the wire. These are near-constant for seconds at a
+    // time (an enemy arms for the frames its attack is live), and sending them
+    // every frame cost as much as the whole jointTable on a multi-element actor —
+    // so they go out on change, plus a keyframe (see TOUCH_KEYFRAME_TICKS) for
+    // peers that joined or lost a packet. Same discipline as lastSentScale.
+    std::vector<uint32_t> lastSentTouch;
+    std::vector<int32_t> lastSentRadius;
+    std::vector<uint32_t> lastSentProfile;
+    uint64_t lastTouchSendTick = 0;
+    bool touchSent = false;
+    bool warnedColProfile = false; // mirror: the profile-mismatch canary, once per actor
 };
 
 // Latest streamed state per enemy key (game-thread only; written by the queued
@@ -150,6 +172,30 @@ struct RemoteEnemyState {
     // Only single-element colliders are carried; multi-element ones keep their
     // own per-element masks. Empty = the authority sent none (older build).
     std::vector<uint32_t> colDmgFlags;
+    // Per-ELEMENT attack parameters, two entries each, in the authority's
+    // st.colliders order and ForEachColliderInfo order within each collider:
+    //   [0] toucherFlags | (toucher.damage << 8) | (toucher.effect << 16)
+    //   [1] toucher.dmgFlags
+    // The counterpart of colDmgFlags, for the other direction: colDmgFlags says
+    // what may hurt the enemy, this says what the enemy hurts US with. Neither
+    // the damage nor the touch flags were carried, and plenty of enemies leave
+    // them at TOUCH_NONE / zero in Init and only arm them for the frames the
+    // attack is live (Dead Hand's bite and its burrow wave, z_en_dh.c:326-329 and
+    // :386-389; every Bongo Bongo hand attack, BossSst_HandSetDamage). Frozen on
+    // the mirror at their Init values, those enemies were simply HARMLESS to the
+    // mirroring player -- the collider was submitted, armed and in the right
+    // place, and passed straight through him. Empty = authority sent none.
+    std::vector<uint32_t> touchParams;
+    // Per-collider cylinder dim.radius, same index space as colEnable. AI-resized
+    // cylinders (Dead Hand's burrow wave grows to 300*0.6, Bongo Bongo's shockwave
+    // ring) keep their Init radius on a frozen mirror. Non-cylinders send 0.
+    std::vector<int32_t> colRadius;
+    // The shape and element count of each captured collider, same index space as
+    // colEnable. Guards touchParams and colRadius: both are applied only when this
+    // matches ours entry for entry, because st.colliders is ordered by first
+    // submission and two clients can capture the same colliders in a different
+    // order (see the send side). Empty = authority sent none.
+    std::vector<uint32_t> colProfile;
     uint32_t actorFlags = 0;
     bool hasActorFlags = false;
     // Sound ids the authority's AI played for this actor this frame, replayed
@@ -1067,6 +1113,38 @@ static void SubmitColliders(Actor* actor, TrackedState& st, RemoteEnemyState& r)
     size_t quadCursor = 0;
     size_t colIndex = 0;
     bool customPos = CustomColliderPos(actor);
+    // Cursor into r.touchParams (two entries per element). The array is ragged and
+    // st.colliders is ordered by first submission, not by declaration, so pairing
+    // by position is only safe once OUR profile -- shape and element count, per
+    // collider -- matches the authority's entry for entry. Anything else and the
+    // whole block is dropped rather than applied off by one element. The same
+    // profile gates colRadius, which indexes st.colliders directly.
+    size_t touchCursor = 0;
+    bool profileMatches = false;
+    if (!r.colProfile.empty()) {
+        size_t colCount = 0;
+        bool ok = true;
+        for (Collider* col : st.colliders) {
+            uint32_t profile = 0;
+            if (col != nullptr && col->actor == actor) {
+                uint32_t elems = 0;
+                ForEachColliderInfo(col, [&](ColliderInfo* info) { elems++; });
+                profile = (uint32_t)col->shape | (elems << 8);
+            }
+            if (colCount >= r.colProfile.size() || r.colProfile[colCount] != profile) {
+                ok = false;
+                break;
+            }
+            colCount++;
+        }
+        profileMatches = ok && colCount == r.colProfile.size();
+        if (!profileMatches && !st.warnedColProfile) {
+            st.warnedColProfile = true; // once per tracked actor: this runs every frame
+            SPDLOG_WARN("[EnemySync] collider profile mismatch id={} local={} remote={}", actor->id,
+                        st.colliders.size(), r.colProfile.size());
+        }
+    }
+    bool touchUsable = profileMatches && !r.touchParams.empty();
     for (Collider* col : st.colliders) {
         size_t myIndex = colIndex++;
         if (col == nullptr || col->actor != actor) {
@@ -1092,6 +1170,30 @@ static void SubmitColliders(Actor* actor, TrackedState& st, RemoteEnemyState& r)
             if (n == 1) {
                 ForEachColliderInfo(col, [&](ColliderInfo* info) { info->bumper.dmgFlags = mask; });
             }
+        }
+        // What this collider hurts US with (see RemoteEnemyState::touchParams).
+        // TOUCH_HIT and TOUCH_DREW_HITMARK are this frame's OWN results, written by
+        // the local CollisionCheck: keep ours and take only the configuration bits.
+        if (touchUsable) {
+            ForEachColliderInfo(col, [&](ColliderInfo* info) {
+                uint32_t packed = r.touchParams[touchCursor];
+                uint32_t dmgFlags = r.touchParams[touchCursor + 1];
+                touchCursor += 2;
+                constexpr uint8_t RESULT_BITS = TOUCH_HIT | TOUCH_DREW_HITMARK;
+                info->toucherFlags = (uint8_t)((info->toucherFlags & RESULT_BITS) | ((packed & 0xFF) & ~RESULT_BITS));
+                info->toucher.damage = (uint8_t)((packed >> 8) & 0xFF);
+                info->toucher.effect = (uint8_t)((packed >> 16) & 0xFF);
+                info->toucher.dmgFlags = dmgFlags;
+            });
+        }
+        // AI-resized cylinder (see RemoteEnemyState::colRadius). Gated on the same
+        // profile as touchParams -- it indexes st.colliders directly, so on a
+        // permuted list it would write one cylinder's radius onto another's (a
+        // Freezard carries three, of 30, 35 and 45). 0 means the authority had no
+        // cylinder in that slot, so leave ours alone.
+        if (profileMatches && col->shape == COLSHAPE_CYLINDER && myIndex < r.colRadius.size() &&
+            r.colRadius[myIndex] != 0) {
+            ((ColliderCylinder*)col)->dim.radius = (int16_t)r.colRadius[myIndex];
         }
         if (col->shape == COLSHAPE_CYLINDER) {
             // Repositioned from the streamed world.pos (ApplyPose ran first) — accurate.
@@ -1527,6 +1629,60 @@ static nlohmann::json SnapshotEnemy(Actor* actor, TrackedState& st) {
         if (!bdf.empty()) {
             e["bdf"] = bdf;
         }
+
+        // Per-element attack parameters and cylinder radii (RemoteEnemyState::
+        // touchParams / colRadius). Unlike cf/bdf the element list is ragged, so the
+        // receiver walks st.colliders with the SAME predicate as here and pairs the
+        // nth element with the nth pair. That pairing is only safe if both sides
+        // captured the same colliders in the same ORDER, and they need not have:
+        // st.colliders is filled in the order each collider was first submitted, so
+        // a client whose copy first ran during BossSst_HeadVulnerable captures
+        // [cylinder, jntSph] where one that started elsewhere captures
+        // [jntSph, cylinder] -- same element total, every toucher off by one. So
+        // send a profile alongside: shape and element count per collider. The
+        // receiver applies te AND cr only when its own profile matches entry for
+        // entry. Two colliders of the same shape AND element count are still
+        // interchangeable, exactly as they already are for cf/bdf.
+        std::vector<uint32_t> te;
+        std::vector<int32_t> cr;
+        std::vector<uint32_t> tec;
+        cr.reserve(st.colliders.size());
+        tec.reserve(st.colliders.size());
+        for (Collider* col : st.colliders) {
+            int32_t radius = 0;
+            uint32_t profile = 0;
+            if (col != nullptr && col->actor == actor) {
+                uint32_t elems = 0;
+                ForEachColliderInfo(col, [&](ColliderInfo* info) {
+                    te.push_back((uint32_t)info->toucherFlags | ((uint32_t)info->toucher.damage << 8) |
+                                 ((uint32_t)info->toucher.effect << 16));
+                    te.push_back(info->toucher.dmgFlags);
+                    elems++;
+                });
+                if (col->shape == COLSHAPE_CYLINDER) {
+                    radius = ((ColliderCylinder*)col)->dim.radius;
+                }
+                profile = (uint32_t)col->shape | (elems << 8);
+            }
+            cr.push_back(radius);
+            tec.push_back(profile);
+        }
+        // On change, plus one keyframe a second (see TOUCH_KEYFRAME_TICKS). The three
+        // travel TOGETHER, empty ones included, because the receiver only clears what
+        // a packet actually carries -- an empty array has to be able to say "nothing
+        // here" (st.colliders never shrinks, so that means an arena reused by another
+        // actor; the receiver then falls back to its own local values).
+        if (!st.touchSent || te != st.lastSentTouch || cr != st.lastSentRadius || tec != st.lastSentProfile ||
+            (tickCounter - st.lastTouchSendTick) >= TOUCH_KEYFRAME_TICKS) {
+            e["te"] = te;
+            e["tec"] = tec;
+            e["cr"] = cr;
+            st.lastSentTouch = te;
+            st.lastSentRadius = cr;
+            st.lastSentProfile = tec;
+            st.lastTouchSendTick = tickCounter;
+            st.touchSent = true;
+        }
     }
     SkelAnime* skel = st.skelAnime;
     if (skel != nullptr && skel->jointTable != nullptr && skel->limbCount > 0 && skel->limbCount <= MAX_STREAM_LIMBS) {
@@ -1692,6 +1848,50 @@ void IngestEnemyState(const nlohmann::json& payload) {
                     }
                 } else {
                     SPDLOG_WARN("[EnemySync] Bad bdf size {} for key={:#x}", bdf.size(), key);
+                }
+            }
+            // Per-element attack parameters: two entries per element, so the bound is
+            // the collider cap times the largest element count we ever stream.
+            if (e.contains("te")) {
+                const auto& te = e["te"];
+                r.touchParams.clear();
+                if (te.is_array() && te.size() <= (size_t)MAX_TRACKED_COLLIDERS * MAX_COLLIDER_ELEMENTS * 2) {
+                    r.touchParams.reserve(te.size());
+                    for (const auto& v : te) {
+                        r.touchParams.push_back(v.get<uint32_t>());
+                    }
+                } else {
+                    SPDLOG_WARN("[EnemySync] Bad te size {} for key={:#x}", te.size(), key);
+                }
+            }
+            // The three attack-parameter arrays are NOT cleared when absent: unlike
+            // cf/bdf they are sent on change plus a keyframe a second, so most packets
+            // carry none of them and clearing would blank an armed enemy 19 frames out
+            // of 20. A peer that never sends them (older build) simply leaves them
+            // empty, which is the fall-back-to-local-flags path. An enemy that loses
+            // its colliders sends them empty EXPLICITLY, which does clear them.
+            if (e.contains("tec")) {
+                const auto& tec = e["tec"];
+                r.colProfile.clear();
+                if (tec.is_array() && tec.size() <= (size_t)MAX_TRACKED_COLLIDERS) {
+                    r.colProfile.reserve(tec.size());
+                    for (const auto& v : tec) {
+                        r.colProfile.push_back(v.get<uint32_t>());
+                    }
+                } else {
+                    SPDLOG_WARN("[EnemySync] Bad tec size {} for key={:#x}", tec.size(), key);
+                }
+            }
+            if (e.contains("cr")) {
+                const auto& cr = e["cr"];
+                r.colRadius.clear();
+                if (cr.is_array() && cr.size() <= (size_t)MAX_TRACKED_COLLIDERS) {
+                    r.colRadius.reserve(cr.size());
+                    for (const auto& v : cr) {
+                        r.colRadius.push_back(v.get<int32_t>());
+                    }
+                } else {
+                    SPDLOG_WARN("[EnemySync] Bad cr size {} for key={:#x}", cr.size(), key);
                 }
             }
         }
