@@ -145,7 +145,23 @@ static void ReleaseCull(Actor* actor, CarryState& st) {
 
 // Clearing the parent + applying the streamed kinematics makes the actor's own
 // release logic run: real local physics, real break-on-impact.
-static void ApplyThrow(Actor* actor, CarryState& st, const nlohmann::json& payload) {
+// payload is taken BY VALUE on purpose. Two of the three callers pass st.pendingThrow
+// itself, and the `st.pendingThrow = nullptr` below assigns JSON null into that very
+// object -- through a reference parameter it emptied the payload it was about to read,
+// and value() on a null json throws type_error.306 with no try anywhere on the path:
+// std::terminate. It killed the game every time a peer threw a carried object whose
+// throw had been deferred (CARRY and THROW drained in one batch, or the copy culled
+// off-screen when CARRY arrived), which is the ordinary case.
+static void ApplyThrow(Actor* actor, CarryState& st, const nlohmann::json payload) {
+    // A deferred throw is read back from a HOOK, not from the packet drain, so the
+    // try/catch that guards every packet handler is nowhere on this path: anything
+    // json throws here reaches the top of the frame and ends the process. Never call
+    // value() on something that is not an object.
+    if (!payload.is_object()) {
+        st.hasPendingThrow = false;
+        st.pendingThrow = nullptr;
+        return;
+    }
     st.remoteCarried = false;
     // Keep updating through the flight and the break, then stop: a thrown copy
     // that stayed uncullable forever kept running its AI (a cucco's gravity,
