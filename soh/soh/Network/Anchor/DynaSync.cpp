@@ -204,7 +204,13 @@ static bool IsClaimableDynaActor(const Actor* actor) {
         // die together.
         case ACTOR_BG_HAKA_TUBO:
             return true;
-        case ACTOR_OBJ_OSHIHIKI:       // push blocks (every dungeon)
+        // Push blocks. NOT "every dungeon", as this said until 2026-09-11: counted
+        // in the scene data, 31 instances over 8 scenes (jyasinzou 9, ddan 6,
+        // MIZUsin 5, Bmori1 4, HAKAdan 3, men 2, HIDAN 1, ydan 1) and absent from
+        // Jabu-Jabu, the Well, the Ice Cavern and Ganon's Castle/Tower -- the last
+        // two have BG_GND_ICEBLOCK instead, two lines below. Every placed type is a
+        // plain push block, so claimable is right for the whole id.
+        case ACTOR_OBJ_OSHIHIKI:
         case ACTOR_BG_MORI_KAITENKABE: // Forest Temple: push-rotated basement wall
         case ACTOR_BG_JYA_COBRA:       // Spirit Temple: push-rotated cobra mirror
         case ACTOR_BG_ICE_OBJECTS:     // Ice Cavern: sliding ice blocks
