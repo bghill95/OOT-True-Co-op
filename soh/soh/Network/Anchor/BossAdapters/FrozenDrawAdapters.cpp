@@ -281,9 +281,16 @@ static void EnWf_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     }
 }
 
-// Keese (EN_FIREFLY). onFire and auraType decide whether the mirror sees a plain
-// Keese or a fire/ice one — the difference between walking into it and burning.
-// timer positions the orbiting aura effect.
+// Keese (EN_FIREFLY). onFire and auraType decide what the mirror SEES -- a plain
+// Keese, or a fire/ice one with its aura; both are read only by
+// EnFirefly_PostLimbDraw, which still runs on a suppressed copy. timer positions
+// the orbiting aura effect.
+// NOT the burn itself: that is collider.elements[0].info.toucher.effect, a
+// separate field written beside these two in EnFirefly_Ignite / _Extinguish, and
+// it already travels on the generic per-element collider channel (see
+// RemoteEnemyState::touchParams). This comment claimed the pair was "the
+// difference between walking into it and burning" until 2026-09-11; it is the
+// difference between seeing an aura and not.
 static void EnFirefly_SerializeExtras(Actor* actor, nlohmann::json& x) {
     EnFirefly* ff = (EnFirefly*)actor;
     x["fire"] = ff->onFire;
