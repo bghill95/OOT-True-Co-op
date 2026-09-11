@@ -13,6 +13,17 @@ extern PlayState* gPlayState;
 // MARK: - Overrides
 
 void Anchor::Enable() {
+    // A PERMANENT frame hook, installed before the socket can ever connect: it is what
+    // carries OnConnected / OnDisconnected over to the game thread (see TickConnection).
+    // It cannot live in RegisterHooks, whose own hooks are conditioned on isConnected --
+    // they do not exist yet at the moment a connection has to be reacted to.
+    static bool sConnectionTickInstalled = false;
+    if (!sConnectionTickInstalled) {
+        sConnectionTickInstalled = true;
+        GameInteractor::Instance->RegisterGameHook<GameInteractor::OnGameFrameUpdate>(
+            [this]() { TickConnection(); });
+    }
+
     Network::Enable(CVarGetString(CVAR_REMOTE_ANCHOR("Host"), "anchor.hm64.org"),
                     CVarGetInteger(CVAR_REMOTE_ANCHOR("Port"), 43383));
     ownClientId = CVarGetInteger(CVAR_REMOTE_ANCHOR("LastClientId"), 0);
@@ -22,21 +33,46 @@ void Anchor::Enable() {
 void Anchor::Disable() {
     Network::Disable();
 
+    // Anything still queued belongs to the session that just ended; replaying it
+    // after a reconnect would apply a dead session's state to the new one.
+    {
+        std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+        std::queue<nlohmann::json>().swap(incomingPacketQueue);
+        pendingPlayerUpdates.clear();
+    }
+
     clients.clear();
     RefreshClientActors();
 }
 
+// Both of these are called from ReceiveFromServer -- the WEBSOCKET thread. What they
+// used to do there does not belong to it: RegisterHooks rewrites GameInteractor's
+// static hook maps (an unordered_map of std::function, rehashed in place) while the
+// game thread is iterating those same maps in ExecuteHooks, and SendPacket_Handshake
+// / IsSaveLoaded dereference gPlayState and gSaveContext, which the game thread
+// reassigns across a scene transition. Same class of bug as the one that put a freed
+// actor's arena under the graphics thread. Only a flag is raised here; TickConnection
+// does the work on the frame hook.
 void Anchor::OnConnected() {
-    SendPacket_Handshake();
-    RegisterHooks();
+    pendingConnected = true;
+}
 
-    if (IsSaveLoaded()) {
-        SendPacket_RequestTeamState();
+void Anchor::TickConnection() {
+    if (pendingDisconnected.exchange(false)) {
+        RegisterHooks();
+    }
+    if (pendingConnected.exchange(false)) {
+        SendPacket_Handshake();
+        RegisterHooks();
+
+        if (IsSaveLoaded()) {
+            SendPacket_RequestTeamState();
+        }
     }
 }
 
 void Anchor::OnDisconnected() {
-    RegisterHooks();
+    pendingDisconnected = true;
 }
 
 void Anchor::SendJsonToRemote(nlohmann::json payload) {
@@ -62,35 +98,59 @@ void Anchor::OnIncomingJson(nlohmann::json payload) {
         SPDLOG_DEBUG("[Anchor] Received payload:\n{}", payload.dump());
     }
 
-    std::string packetType = payload["type"].get<std::string>();
+    // The version filter that used to sit here read `clients` -- on the websocket
+    // thread, while the game thread inserts into and erases from that same map. It
+    // moved down into the drain (see ProcessIncomingPacketQueue) so that this
+    // function touches nothing but the queue.
 
-    // Ignore packets from mismatched clients, except for ALL_CLIENT_STATE or UPDATE_CLIENT_STATE
-    if (packetType != ALL_CLIENT_STATE && packetType != UPDATE_CLIENT_STATE) {
-        if (payload.contains("clientId")) {
-            uint32_t clientId = payload["clientId"].get<uint32_t>();
-            if (clients.contains(clientId) && clients[clientId].clientVersion != clientVersion) {
-                return;
-            }
-        }
-    }
-
-    // Handle PLAYER_UPDATE packets immediately, no need to queue
-    if (packetType == PLAYER_UPDATE) {
-        HandlePacket_PlayerUpdate(payload);
-        return;
-    }
-
+    // PLAYER_UPDATE used to be handled right here, on the WEBSOCKET thread, with the
+    // note "no need to queue". There was: HandlePacket_PlayerUpdate writes clients[id]
+    // (inserting a new entry when a peer appears), calls FxSync::IngestPlayerProjectiles
+    // -- which writes sProj's per-client arrow vectors -- and can call
+    // RefreshClientActors(), which spawns, kills and destroys puppet actors. Every one of
+    // those is read or walked by the GAME thread in the same instant: DummyPlayer_Update
+    // ticks the replicas, Anchor_GetPuppetActors iterates clients, Actor_UpdateAll walks
+    // the actor list. Two crashes came out of that race -- W: died in
+    // TickPuppetProjectiles reading an arrowReplicas whose begin pointer was 0 (the
+    // vector was being reallocated under it), and G: died on an En_Ishi whose `update`
+    // field alone had been overwritten.
+    // A pose packet is absolute state, last-writer-wins, so deferring it to the drain at
+    // the top of the next frame costs at most one frame of staleness and nothing else.
     // Queue all packets to be processed on the game thread
     std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+    // Coalesce poses per client rather than queueing every one: see
+    // pendingPlayerUpdates. is_string/is_number_unsigned rather than get<>, because
+    // nothing here is inside a try and this is the websocket thread -- an exception
+    // escaping would take the process with it.
+    if (payload["type"].is_string() && payload["type"].get<std::string>() == PLAYER_UPDATE &&
+        payload.contains("clientId") && payload["clientId"].is_number_unsigned()) {
+        pendingPlayerUpdates[payload["clientId"].get<uint32_t>()] = std::move(payload);
+        return;
+    }
     incomingPacketQueue.push(payload);
 }
 
 void Anchor::ProcessIncomingPacketQueue() {
-    std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+    // Take the queue and release the lock BEFORE handling anything. Holding it for
+    // the whole drain deadlocks: HandlePacket_DisableAnchor -> Disable() ->
+    // Network::Disable() joins the receive thread, which may itself be blocked on
+    // this very mutex trying to enqueue. It also meant every blocking send a handler
+    // makes froze the receive thread along with it.
+    std::queue<nlohmann::json> batch;
+    {
+        std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+        batch.swap(incomingPacketQueue);
+        // Poses go last, so a coalesced (newest) pose always wins over a scene change
+        // that arrived in the same batch rather than the other way round.
+        for (auto& [cid, pose] : pendingPlayerUpdates) {
+            batch.push(std::move(pose));
+        }
+        pendingPlayerUpdates.clear();
+    }
 
-    while (!incomingPacketQueue.empty()) {
-        nlohmann::json payload = incomingPacketQueue.front();
-        incomingPacketQueue.pop();
+    while (!batch.empty()) {
+        nlohmann::json payload = batch.front();
+        batch.pop();
 
         std::string packetType;
         try {
@@ -98,6 +158,23 @@ void Anchor::ProcessIncomingPacketQueue() {
         } catch (const std::exception& ex) {
             SPDLOG_WARN("[Anchor] dropping packet with no usable type: {}", ex.what());
             continue;
+        }
+
+        // Ignore packets from mismatched clients, except for ALL_CLIENT_STATE or
+        // UPDATE_CLIENT_STATE. This ran on the websocket thread until it was found
+        // reading `clients` while this thread was rehashing it.
+        // contains() first: payload is non-const here, so a bare operator[] would
+        // INSERT "clientId": null and defeat the contains("clientId") guards the
+        // handlers below rely on. And is_number_unsigned rather than a bare get<>:
+        // this runs outside the try below, so a malformed clientId must not throw
+        // its way out of the game frame.
+        if (packetType != ALL_CLIENT_STATE && packetType != UPDATE_CLIENT_STATE &&
+            payload.contains("clientId") && payload["clientId"].is_number_unsigned()) {
+            uint32_t clientId = payload["clientId"].get<uint32_t>();
+            auto it = clients.find(clientId);
+            if (it != clients.end() && it->second.clientVersion != clientVersion) {
+                continue;
+            }
         }
 
         isProcessingIncomingPacket = true;
@@ -166,6 +243,8 @@ void Anchor::ProcessIncomingPacketQueue() {
             HandlePacket_PlayerLifeState(payload);
         else if (packetType == PLAYER_SFX)
             HandlePacket_PlayerSfx(payload);
+        else if (packetType == PLAYER_UPDATE)
+            HandlePacket_PlayerUpdate(payload);
         else if (packetType == UPDATE_TEAM_STATE)
             HandlePacket_UpdateTeamState(payload);
         else if (packetType == REQUEST_TEAM_STATE)

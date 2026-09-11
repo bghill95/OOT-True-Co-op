@@ -1,5 +1,6 @@
 #include "soh/Network/Anchor/BossAdapters/ActorSyncAdapter.h"
 #include "soh/Network/Anchor/EnemySync.h"
+#include "soh/Network/Anchor/JsonConversions.hpp"
 #include "soh/OTRGlobals.h"
 
 extern "C" {
@@ -233,7 +234,7 @@ static void PhantomHorse_DeserializeExtras(Actor* actor, const nlohmann::json& x
         if (x.contains("turn")) horse->turnRot = x["turn"].get<int16_t>();
         if (x.contains("kw")) horse->fhgFireKillWarp = x["kw"].get<uint8_t>();
         if (x.contains("inp")) horse->bossGndInPainting = x["inp"].get<uint8_t>();
-        if (x.contains("hid") && x["hid"].get<bool>() && actor->draw != NULL) {
+        if (JsonBool(x, "hid") && actor->draw != NULL) {
             // Vanilla EnfHG_Retreat: once the fight leaves the paintings the horse
             // is done for good (draw = NULL, EnfHG_Done). The mirror step lets a
             // draw-less actor run locally, so park the action too.

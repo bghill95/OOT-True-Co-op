@@ -3,6 +3,7 @@
 #ifdef __cplusplus
 
 #include <thread>
+#include <atomic>
 #ifdef ENABLE_REMOTE_CONTROL
 #include <SDL2/SDL_net.h>
 #endif
@@ -22,8 +23,11 @@ class Network {
     void HandleRemoteJson(std::string payload);
 
   public:
-    bool isEnabled;
-    bool isConnected;
+    // Written by the receive thread (ReceiveFromServer) and read by the game thread
+    // on every frame that registers hooks or sends a packet: plain bools here were a
+    // data race with no happens-before edge at all.
+    std::atomic<bool> isEnabled;
+    std::atomic<bool> isConnected;
 
     void Enable(const char* host, uint16_t port);
     void Disable();

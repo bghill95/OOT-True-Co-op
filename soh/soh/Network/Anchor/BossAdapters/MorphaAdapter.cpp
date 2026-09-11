@@ -138,7 +138,7 @@ static void Morpha_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             mo->coopSfxSeq = x["sfx"][0].get<uint8_t>();
             mo->coopSfxId = x["sfx"][1].get<uint16_t>();
         }
-        if (x.contains("draw")) mo->drawActor = x["draw"].get<bool>() ? 1 : 0;
+        if (x.contains("draw")) mo->drawActor = JsonBool(x["draw"]) ? 1 : 0;
 
         if (Morpha_IsTentacle(actor)) {
             if (x.contains("rot") && x["rot"].size() == 82 && x.contains("str") && x["str"].size() == 41) {
@@ -179,7 +179,10 @@ static void Morpha_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
                 BossMo_CoopMirrorTentTick(mo, gPlayState);
             }
         } else {
-            if (x.contains("wl")) mo->coopWaterLevel = (int16_t)x["wl"].get<int>();
+            if (x.contains("wl")) {
+                mo->coopWaterLevel = (int16_t)x["wl"].get<int>();
+                mo->coopHasWaterLevel = 1;
+            }
             if (x.contains("wlv")) mo->waterLevel = x["wlv"].get<float>();
             if (x.contains("cf") && x["cf"].size() == 4) {
                 mo->baseAlpha = x["cf"][0].get<float>();

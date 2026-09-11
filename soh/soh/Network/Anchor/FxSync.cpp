@@ -256,7 +256,7 @@ void IngestPlayerProjectiles(uint32_t clientId, const nlohmann::json& payload) {
             s.rot = e["rot"].get<Vec3s>();
             s.timer = e.contains("t") ? e["t"].get<uint8_t>() : 0;
             s.hitFlags = e.contains("hf") ? e["hf"].get<uint8_t>() : 0;
-            s.nocked = e.contains("n") && e["n"].get<bool>();
+            s.nocked = JsonBool(e, "n");
             pp.arrows.push_back(s);
         }
     }

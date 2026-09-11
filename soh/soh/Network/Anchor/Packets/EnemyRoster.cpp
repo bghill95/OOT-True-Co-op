@@ -52,7 +52,7 @@ void Anchor::HandlePacket_EnemyRoster(nlohmann::json payload) {
     }
     int16_t roomNum = payload["roomNum"].get<int16_t>();
 
-    if (payload.contains("request") && payload["request"].get<bool>()) {
+    if (JsonBool(payload, "request")) {
         // Only answer for a room we actually have loaded, as its authority.
         if (!EnemySync::IsLocalAuthority() || gPlayState->roomCtx.curRoom.num != roomNum) {
             return;

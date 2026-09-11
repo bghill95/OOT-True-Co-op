@@ -119,7 +119,7 @@ static void Volvagia_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         if (x.contains("wr")) actor->world.rot = x["wr"].get<Vec3s>();
         if (x.contains("spd")) actor->speedXZ = x["spd"].get<float>();
         if (x.contains("pul")) fd->fwork[BFD_BODY_PULSE] = x["pul"].get<float>();
-        if (x.contains("vis")) fd->coopVisible = x["vis"].get<bool>() ? 1 : 0;
+        if (x.contains("vis")) fd->coopVisible = JsonBool(x["vis"]) ? 1 : 0;
         if (x.contains("sfx") && x["sfx"].size() == 2) {
             fd->coopSfxSeq = x["sfx"][0].get<uint8_t>();
             fd->coopSfxId = x["sfx"][1].get<uint16_t>();
@@ -212,15 +212,15 @@ static void VolvagiaHead_DeserializeExtras(Actor* actor, const nlohmann::json& x
         }
         if (x.contains("hr")) fd2->headRot = x["hr"].get<Vec3s>();
         if (x.contains("cf")) fd2->skelAnime.curFrame = x["cf"].get<float>();
-        if (x.contains("vis")) fd2->coopVisible = x["vis"].get<bool>() ? 1 : 0;
+        if (x.contains("vis")) fd2->coopVisible = JsonBool(x["vis"]) ? 1 : 0;
         if (x.contains("sfx") && x["sfx"].size() == 2) {
             fd2->coopSfxSeq = x["sfx"][0].get<uint8_t>();
             fd2->coopSfxId = x["sfx"][1].get<uint16_t>();
         }
         if (gPlayState != NULL && fd2->coopMirrorVar != fd2->work[FD2_VAR_TIMER]) {
             fd2->coopMirrorVar = fd2->work[FD2_VAR_TIMER];
-            uint8_t hurt = x.contains("hurt") && x["hurt"].get<bool>();
-            uint8_t breathing = x.contains("br") && x["br"].get<bool>();
+            uint8_t hurt = JsonBool(x, "hurt");
+            uint8_t breathing = JsonBool(x, "br");
             BossFd2_CoopMirrorTick(fd2, gPlayState, hurt, breathing);
             // UpdateCosmetics re-derives the attention flag from focus.pos; the
             // streamed hookshot bit (stunned head) survives it.

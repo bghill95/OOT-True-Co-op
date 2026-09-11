@@ -5,6 +5,7 @@
 #include "soh/Network/Network.h"
 #include <libultraship/libultraship.h>
 #include <queue>
+#include <atomic>
 #include <mutex>
 
 extern "C" {
@@ -116,7 +117,16 @@ class Anchor : public Network {
     // Same role as the rupee one, for the small-key drift snap. One counter is
     // enough: only the dungeon we are standing in can change.
     uint32_t lastLocalDungeonKeySendFrame = 0;
+    // Raised by OnConnected / OnDisconnected on the websocket thread, consumed by
+    // TickConnection on the game thread. See the comment above OnConnected.
+    std::atomic<bool> pendingConnected{ false };
+    std::atomic<bool> pendingDisconnected{ false };
     std::queue<nlohmann::json> incomingPacketQueue;
+    // Poses are absolute state, so only the newest one per client is worth keeping.
+    // Held apart from the queue so a scene load -- during which the game thread stops
+    // draining -- cannot build an unbounded backlog and then replay it all in one
+    // frame, which would mean N kill+respawn of every puppet at once.
+    std::unordered_map<uint32_t, nlohmann::json> pendingPlayerUpdates;
     std::mutex incomingPacketQueueMutex;
 
     nlohmann::json PrepClientState();
@@ -231,6 +241,8 @@ class Anchor : public Network {
     void OnDisconnected();
     void DrawMenu();
     void ProcessIncomingPacketQueue();
+    // Game-thread half of OnConnected / OnDisconnected.
+    void TickConnection();
     void SendJsonToRemote(nlohmann::json packet);
     bool IsSaveLoaded();
     bool CanTeleportTo(uint32_t clientId);

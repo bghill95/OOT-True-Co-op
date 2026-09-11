@@ -2324,7 +2324,7 @@ void ReconcileRoster(int16_t roomNum, const nlohmann::json& entries) {
     try {
         std::unordered_map<uint64_t, std::pair<bool, uint8_t>> authority; // key -> {alive, hp}
         for (const auto& e : entries) {
-            authority[e["key"].get<uint64_t>()] = { e["alive"].get<bool>(), e["hp"].get<uint8_t>() };
+            authority[e["key"].get<uint64_t>()] = { JsonBool(e, "alive"), e["hp"].get<uint8_t>() };
         }
         for (auto& [actor, st] : tracked) {
             // Projectiles never appear in a roster (BuildRoster skips them), so an

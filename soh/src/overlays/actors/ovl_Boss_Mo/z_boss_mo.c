@@ -2413,7 +2413,9 @@ void BossMo_CoopMirrorCoreTick(BossMo* this, PlayState* play) {
     s16 state = this->work[MO_TENT_ACTION_STATE];
     f32 waterLevel;
 
-    MO_WATER_LEVEL(play) = this->coopWaterLevel;
+    if (this->coopHasWaterLevel) {
+        MO_WATER_LEVEL(play) = this->coopWaterLevel;
+    }
     waterLevel = MO_WATER_LEVEL(play);
     this->actor.focus.pos = this->actor.world.pos;
     this->work[MO_CORE_DRAW_SHADOW] = BossMo_NearLand(&this->actor.world.pos, 15.0f);
@@ -2645,6 +2647,14 @@ void BossMo_TentWidthAndScale(BossMo* this) {
     s16 index;
     f32 phi_f0;
 
+    // widthIndex is vanilla-bounded by the wrap in BossMo_UpdateTent, but a mirror's
+    // update is suppressed, so its copy arrives off the wire instead and nothing
+    // local keeps it in range. tentWidth is f32[300]; an out-of-range index writes a
+    // float past the end of BossMo, and the readers below ((widthIndex - i * 2) + 300)
+    // % 300 go negative from -81 down. Clamp once, here, where every path meets.
+    if ((this->widthIndex < 0) || (this->widthIndex >= 300)) {
+        this->widthIndex = 0;
+    }
     index = this->widthIndex;
     this->tentWidth[index] = (Math_SinS(this->pulsePhase) * this->tentPulse) + (1.0f + this->tentPulse);
     for (i = 0; i < 41; i++) {

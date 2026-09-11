@@ -1,4 +1,5 @@
 #include "soh/Network/Anchor/Anchor.h"
+#include "soh/Network/Anchor/JsonConversions.hpp"
 #include <nlohmann/json.hpp>
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
@@ -38,7 +39,7 @@ void Anchor::HandlePacket_SetCheckStatus(nlohmann::json payload) {
 
     RandomizerCheck rc = payload["rc"].get<RandomizerCheck>();
     RandomizerCheckStatus status = payload["status"].get<RandomizerCheckStatus>();
-    bool skipped = payload["skipped"].get<bool>();
+    bool skipped = JsonBool(payload, "skipped");
 
     if (randoContext->GetItemLocation(rc)->GetCheckStatus() != status) {
         randoContext->GetItemLocation(rc)->SetCheckStatus(status);

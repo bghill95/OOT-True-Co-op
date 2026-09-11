@@ -88,7 +88,7 @@ void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
 
     // Death handoff: ApplyRemoteDeath releases suppression for good (after its
     // echo/duplicate guards) so the local simulation plays the death naturally.
-    bool permanent = !payload.contains("permanent") || payload["permanent"].get<bool>();
+    bool permanent = JsonBool(payload, "permanent", true);
     uint32_t dmgFlags = payload.value("dmgFlags", (uint32_t)0);
     EnemySync::ApplyRemoteDeath(actor, attacker, permanent, dmgFlags);
 }
