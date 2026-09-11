@@ -1734,6 +1734,14 @@ void BossTw_SetupDeathCS(BossTw* this, PlayState* play) {
     this->work[CS_TIMER_2] = Rand_ZeroFloat(20.0f);
 }
 
+// Co-op: see coopInDeathCS in z_boss_tw.h. Both death cutscenes count -- the sisters
+// run BossTw_DeathCS, merged Twinrova runs BossTw_TwinrovaDeathCS.
+u8 BossTw_CoopInDeathCS(Actor* thisx) {
+    BossTw* this = (BossTw*)thisx;
+
+    return ((this->actionFunc == BossTw_DeathCS) || (this->actionFunc == BossTw_TwinrovaDeathCS)) ? 1 : 0;
+}
+
 void BossTw_DeathCS(BossTw* this, PlayState* play) {
     if (this->timers[0] == 0) {
         SkelAnime_Update(&this->skelAnime);
@@ -3207,7 +3215,7 @@ s32 BossTw_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList, Vec3f* 
     }
 
     if (limbIndex == 14) {
-        if (this->actionFunc == BossTw_DeathCS) {
+        if ((this->actionFunc == BossTw_DeathCS) || this->coopInDeathCS) {
             *dList = NULL;
         } else if (this->scepterAlpha == 0.0f) {
             if (this->actor.params == 0) {
@@ -3560,7 +3568,7 @@ void BossTw_Draw(Actor* thisx, PlayState* play2) {
     }
 
     if (this->visible) {
-        if (this->actionFunc == BossTw_DeathCS) {
+        if ((this->actionFunc == BossTw_DeathCS) || this->coopInDeathCS) {
             func_80943028(&this->actor, play);
         } else {
             func_809426F0(this, play);

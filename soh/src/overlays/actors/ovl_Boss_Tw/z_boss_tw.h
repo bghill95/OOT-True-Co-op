@@ -198,6 +198,15 @@ typedef struct BossTw {
     /* 0x06A8 */ char unused_6A8[4];
     /* 0x06AC */ f32 subCamYaw;
     /* 0x06B0 */ f32 subCamYawStep;
+    // Co-op: the two draw paths below branch on `actionFunc == BossTw_DeathCS`, and a
+    // mirror's actionFunc is its own -- a function pointer is the one thing that must
+    // never travel. The authority sends this flag instead and the draws test it
+    // alongside the pointer. Appended after the vanilla fields so no offset moves.
+    u8 coopInDeathCS;
 } BossTw; // size = 0x06B4
+
+// Co-op: 1 while this actor is running either death cutscene. Lives here because
+// BossTw_DeathCS / BossTw_TwinrovaDeathCS are file-local to z_boss_tw.c.
+u8 BossTw_CoopInDeathCS(Actor* thisx);
 
 #endif
