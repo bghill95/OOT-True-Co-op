@@ -130,15 +130,15 @@ class Anchor : public Network {
     // ended, and replaying it into the next one applies a dead session's state.
     void DropQueuedPackets();
 
-  public:
-    // The ONE way to add to the queue, from either thread. Handlers run on the game
-    // thread without the drain holding the mutex, so a handler pushing packets of its
-    // own (UpdateTeamState replays the server's catch-up queue) races the receive
-    // thread unless it goes through here. Such packets are picked up by the next
-    // frame's drain rather than the current batch.
+    // How a GAME-THREAD caller adds to the queue. Handlers run with the drain no
+    // longer holding the mutex, so a handler pushing packets of its own
+    // (UpdateTeamState replays the server's catch-up queue) races the receive thread
+    // unless it takes the lock here. Such packets are picked up by the next frame's
+    // drain, not the current batch.
+    // NOT for OnIncomingJson: it already holds incomingPacketQueueMutex and pushes
+    // directly. Calling this from there would lock a non-recursive mutex twice and
+    // hang the receive thread.
     void EnqueuePacket(nlohmann::json payload);
-
-  private:
 
     nlohmann::json PrepClientState();
     nlohmann::json PrepRoomState();

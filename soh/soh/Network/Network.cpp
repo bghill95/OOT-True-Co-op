@@ -17,13 +17,8 @@
 // why it read as three unrelated gameplay bugs.
 //
 // Fetch the pointer once and check it: a dropped log line instead of a crash.
-#define NET_LOG(MACRO, ...)                            \
-    do {                                               \
-        auto* netLogger_ = spdlog::default_logger_raw();\
-        if (netLogger_ != nullptr) {                    \
-            MACRO(netLogger_, __VA_ARGS__);             \
-        }                                              \
-    } while (0)
+// The macro itself lives in Network.h: Anchor::OnIncomingJson is called from this
+// very thread, so it needs it too.
 
 // MARK: - Public
 

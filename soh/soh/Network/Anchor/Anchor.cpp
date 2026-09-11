@@ -109,9 +109,13 @@ void Anchor::OnIncomingJson(nlohmann::json payload) {
         return;
     }
 
-    // If it's not a quiet payload, log it
+    // NET_LOG, not SPDLOG_DEBUG: this runs on the receive thread, where the plain
+    // macro crashes on a null default logger even for a line it would have filtered
+    // out. Network.cpp learned that the hard way; this call site is on the same
+    // thread and had been left behind -- the G: minidump of 2026-09-11 23:42 caught
+    // it here, in should_log, with the logger at null.
     if (!payload.contains("quiet")) {
-        SPDLOG_DEBUG("[Anchor] Received payload:\n{}", payload.dump());
+        NET_LOG(SPDLOG_LOGGER_DEBUG, "[Anchor] Received payload:\n{}", payload.dump());
     }
 
     // The version filter that used to sit here read `clients` -- on the websocket
@@ -135,28 +139,31 @@ void Anchor::OnIncomingJson(nlohmann::json payload) {
     // Queue all packets to be processed on the game thread
     std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
 
-    // Poses coalesce: a client's queued pose is REPLACED IN PLACE by its newer one
-    // rather than queued behind it. Without that, a scene load -- during which the
-    // game thread stops draining -- builds an unbounded backlog and then replays it
-    // in a single frame, which means N kill+respawn of every puppet at once. Replacing
-    // in place rather than holding poses aside keeps them in TCP order with the rest,
-    // so a stale pose can never be applied after the scene change that followed it.
+    // Poses coalesce: a client's stale queued pose is DROPPED and the new one appended
+    // at the back. Without that, a scene load -- during which the game thread stops
+    // draining -- builds an unbounded backlog and replays it in a single frame, which
+    // means N kill+respawn of every puppet at once.
+    // Dropping and appending, rather than overwriting the old entry where it sits,
+    // is what keeps the queue in TCP order: the newest pose must be applied at the
+    // position it ARRIVED, not at the position of the oldest one it replaces.
+    // Otherwise [POSE(sceneX), UPDATE_CLIENT_STATE(sceneX)] plus a later POSE(sceneY)
+    // applies Y then X, and the puppet goes back to the scene its owner just left.
     // is_string / is_number_unsigned rather than get<>, because nothing here is inside
     // a try and this is the websocket thread: an exception escaping ends the process.
     if (payload["type"].is_string() && payload["type"].get<std::string>() == PLAYER_UPDATE &&
         payload.contains("clientId") && payload["clientId"].is_number_unsigned()) {
         uint32_t poseClientId = payload["clientId"].get<uint32_t>();
-        for (nlohmann::json& queued : incomingPacketQueue) {
-            // find(), not operator[]: queued is non-const, so a subscript would INSERT
-            // a null "clientId" into a packet that has none and defeat the
+        for (auto it = incomingPacketQueue.begin(); it != incomingPacketQueue.end(); ++it) {
+            // find(), not operator[]: the entry is non-const, so a subscript would
+            // INSERT a null "clientId" into a packet that has none and defeat the
             // contains("clientId") guards its handler relies on.
-            const nlohmann::json& q = queued;
+            const nlohmann::json& q = *it;
             auto queuedType = q.find("type");
             auto queuedId = q.find("clientId");
             if (queuedType != q.end() && *queuedType == PLAYER_UPDATE && queuedId != q.end() &&
                 *queuedId == poseClientId) {
-                queued = std::move(payload);
-                return;
+                incomingPacketQueue.erase(it);
+                break; // at most one pose per client is ever queued
             }
         }
     }
