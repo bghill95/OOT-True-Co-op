@@ -33,6 +33,7 @@ void EnFd_SpinAndGrow(EnFd* self, PlayState* play);
 void EnFd_JumpToGround(EnFd* self, PlayState* play);
 void EnFd_WaitForCore(EnFd* self, PlayState* play);
 void EnFd_Land(EnFd* self, PlayState* play);
+void EnFd_CoopEnsureAnimation(EnFd* self);
 // Baby Dodongo action functions: non-static in z_en_dodojr.c. Its draw switch
 // compares actionFunc against these two, so they need a portable index too.
 void func_809F73AC(EnDodojr* self, PlayState* play);
@@ -648,6 +649,13 @@ static void EnFd_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             // 0 means the authority held an actionFunc we do not know: keep ours
             // rather than nulling a pointer an authority handoff would then call.
             if (idx > 0 && idx < ARRAY_COUNT(sFdActions)) {
+                // EnFd_Init leaves skelAnime.update NULL -- it passes NULL as the
+                // animation -- and only EnFd_Reappear arms it. EnFd_Update's guard
+                // (actionFunc != EnFd_Reappear) is what stands in for that until
+                // then, so moving actionFunc off Reappear from here would let
+                // SkelAnime_Update call through a null pointer on the next update
+                // this copy runs. It crashed exactly there on a handoff.
+                EnFd_CoopEnsureAnimation(fd);
                 fd->actionFunc = sFdActions[idx];
             }
         }

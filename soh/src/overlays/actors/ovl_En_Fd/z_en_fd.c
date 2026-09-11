@@ -515,6 +515,33 @@ void EnFd_Destroy(Actor* thisx, PlayState* play) {
     ResourceMgr_UnregisterSkeleton(&this->skelAnime);
 }
 
+// Co-op (Anchor/BossAdapters/FrozenDrawAdapters.cpp): arm the skeleton before an
+// actionFunc restored from the network is allowed to run.
+//
+// EnFd_Init passes NULL as the animation to SkelAnime_InitFlex, so skelAnime.update
+// stays NULL and every field below limbCount/skeleton reads zero. Vanilla is safe
+// because EnFd_Update guards the call --
+//     if (this->actionFunc != EnFd_Reappear) { SkelAnime_Update(...); }
+// -- and EnFd_Reappear, the only function that calls Animation_ChangeByInfo for the
+// first time, is where Init leaves actionFunc. The pointer and the armed skeleton
+// are set in the same breath, so the guard never sees one without the other.
+//
+// The adapter breaks that pairing: it writes actionFunc from a packet, and a copy
+// that has not yet run its own EnFd_Reappear then leaves the guard with a NULL
+// skelAnime.update. The next update dereferences it -- SkelAnime_Update reads
+// skelAnime->update and calls it, so the crash is a jump to address 0 inside
+// EnFd_Update, not a readable null-pointer read. Observed in the Fire Temple on an
+// authority handoff.
+//
+// Posting the animation here rather than refusing the actionFunc keeps what the
+// adapter was written for: the body draw is gated on actionFunc != EnFd_Reappear,
+// so holding the mirror on Reappear would make the mini-boss invisible again.
+void EnFd_CoopEnsureAnimation(EnFd* self) {
+    if (self->skelAnime.update.normal == NULL) {
+        Animation_ChangeByInfo(&self->skelAnime, sAnimationInfo, ENFD_ANIM_0);
+    }
+}
+
 void EnFd_Reappear(EnFd* this, PlayState* play) {
     this->actor.world.pos = this->actor.home.pos;
     this->actor.params = 0;
