@@ -57,7 +57,6 @@ static bool IsSyncedDynaActor(const Actor* actor) {
         case ACTOR_BG_YDAN_HASI:      // Deku Tree: water plank + seesaw
         case ACTOR_BG_DDAN_JD:        // Dodongo's Cavern: cycling pillars/platform
         case ACTOR_BG_HAKA_TRAP:      // Shadow Temple: guillotines / spike traps (cyclic)
-        case ACTOR_BG_HAKA_TUBO:      // Shadow Temple: spinning pot
         case ACTOR_BG_HAKA_MEGANEBG:  // Shadow Temple: moving invisible platforms
         case ACTOR_BG_HIDAN_RSEKIZOU: // Fire Temple: rotating spiked statues
         case ACTOR_BG_JYA_1FLIFT:     // Spirit Temple: 1F elevator (see the ride note below)
@@ -173,6 +172,27 @@ static bool IsClaimableDynaActor(const Actor* actor) {
         // of fire on the mirror, for anyone who had stepped on it once.
         case ACTOR_BG_HIDAN_ROCK:
             return ((const BgHidanRock*)actor)->type == 0 ? true : IsRideClaimable(actor);
+        // Shadow Temple skull jars. NOT a push block -- it is here for the one thing
+        // `claimable` grants that `synced` does not: the update KEEPS RUNNING on the
+        // mirror. It was synced, and the whole of BgHakaTubo_Idle sat in the
+        // suppressed update: the three CollisionCheck_Set{AC,AT,OC} calls
+        // (z_bg_haka_tubo.c:141-143), the break test, the ITEM00_SMALL_KEY drop
+        // (:206) and the Actor_Kill (:216). On the mirror the jar submitted NO
+        // collider at all -- sword, boomerang and bombs went through it -- so the
+        // jar that holds a small key was unbreakable for anyone who was not the
+        // scene authority, and the flame circle it draws was harmless while the
+        // authority's copy burned. (The key is the `else` branch, i.e. any room but
+        // 12; the three spinning jars of room 12 drop rupees, ammo or a Keese.)
+        // Spinning stays streamed: the room-12 jars rewrite
+        // world.pos/shape.rot from their own rot every frame, and the pin is applied
+        // BEFORE the update, so the mirror runs at most one frame of its own spin
+        // from the authority's value -- it cannot drift. The push claim is harmless
+        // here (nobody rotates a jar by walking into it, and a claim only moves who
+        // streams the same circle). Breaking is replicated on its own channel, in
+        // BreakSync: the pin makes the jar hittable, BreakSync makes the two copies
+        // die together.
+        case ACTOR_BG_HAKA_TUBO:
+            return true;
         case ACTOR_OBJ_OSHIHIKI:       // push blocks (every dungeon)
         case ACTOR_BG_MORI_KAITENKABE: // Forest Temple: push-rotated basement wall
         case ACTOR_BG_JYA_COBRA:       // Spirit Temple: push-rotated cobra mirror
