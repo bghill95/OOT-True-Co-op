@@ -334,5 +334,8 @@ void RegisterBossVaAdapter() {
     adapter.GetPhase = BossVaSync_GetPhase;
     adapter.OnPhaseChange = BossVaSync_OnPhaseChange;
     adapter.ShouldMirror = BossVaSync_ShouldMirror;
+    // Defeat handed back by OnPhaseChange; z_boss_va.c has no Item_Drop at all,
+    // body and supports alike.
+    adapter.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_BOSS_VA, adapter);
 }

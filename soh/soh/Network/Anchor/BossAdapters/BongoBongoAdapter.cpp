@@ -163,5 +163,9 @@ void RegisterBongoBongoAdapter() {
     // draw-less bail must not be the one deciding when the mirror runs locally --
     // ShouldMirror is.
     adapter.mirrorWhileDrawless = true;
+    // Defeat handed back by OnPhaseChange. The arrows and magic this fight gives
+    // are dropped per HIT during the fight (z_boss_sst.c:1776, :1890, :2610), not
+    // at death, so there is nothing for a death roll to stand in for.
+    adapter.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_BOSS_SST, adapter);
 }

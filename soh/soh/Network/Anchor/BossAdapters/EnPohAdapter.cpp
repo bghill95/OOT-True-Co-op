@@ -51,5 +51,11 @@ void RegisterEnPohAdapter() {
     ActorSyncAdapter adapter;
     adapter.SerializeExtras = EnPoh_SerializeExtras;
     adapter.DeserializeExtras = EnPoh_DeserializeExtras;
+    // EnPoh_Death drops nothing. The overlay's only drop is in EnPoh_Init, for
+    // the EN_POH_RUPEE variant (z_en_poh.c:218) -- and all three Poes placed in
+    // the game (spot02, params 0x0000) are EN_POH_NORMAL, so no instance can
+    // reach it. A generic roll here would hand the mirrored player a rupee the
+    // authority's screen never showed.
+    adapter.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_EN_POH, adapter);
 }
