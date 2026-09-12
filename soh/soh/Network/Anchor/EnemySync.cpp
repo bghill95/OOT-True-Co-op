@@ -804,6 +804,51 @@ Actor* FakeAttacker(int16_t actorId, Vec3s hitPos) {
     return fake;
 }
 
+// What vanilla would have written into colChkInfo.damageEffect for this blow.
+//
+// A real hit gets it from CollisionCheck_ApplyDamage (z_collision_check.c:3011,
+// the write itself at :3041): walk the toucher's dmgFlags down to its top set
+// bit, index the actor's own damage table with that position, and the high
+// nibble of the entry is the effect.
+// A remote hit never goes through that function -- ApplyRemoteHit stamps AC_HIT,
+// BUMP_HIT and acHitInfo onto the collider by hand -- so damageEffect stayed at
+// the 0 that CollisionCheck_ResetDamage leaves behind every frame.
+//
+// That is invisible for an enemy that reads colChkInfo.damage, and fatal for one
+// that switches on damageEffect instead. Four are known to: En_Ny (z_en_ny.c:316),
+// En_Ik -- Nabooru (z_en_ik.c:716), and both halves of Dead Hand (z_en_dh.c:489,
+// z_en_dha.c:387). None of them ever consumed a remote blow: health never fell,
+// the mirror's copy was force-killed 30 frames later with no death animation and
+// no drop, and for Nabooru that wrote FINISHED_NABOORU_BATTLE into the save with
+// the room still sealed.
+//
+// Nothing needs to travel for this. The damage table is a constant of the actor,
+// identical on every client, and dmgFlags is already on the wire -- so recompute
+// it exactly as vanilla does. The packet format is untouched.
+static uint8_t ResolveDamageEffect(Actor* actor, uint32_t dmgFlags) {
+    DamageTable* tbl = actor->colChkInfo.damageTable;
+    if (tbl == NULL || dmgFlags == 0) {
+        // Not quite what vanilla does: with no table it leaves damageEffect
+        // untouched rather than clearing it. Same result here, because
+        // CollisionCheck_ResetDamage has just zeroed it for this frame.
+        return 0;
+    }
+    int32_t i = 0;
+    uint32_t flags = dmgFlags;
+    for (; i < 0x20; i++, flags >>= 1) {
+        if (flags == 1) {
+            break;
+        }
+    }
+    if (i >= 0x20) {
+        // Vanilla would index table[0x20], one past the end of u8 table[32]. It
+        // cannot happen from here (callers substitute DMG_SLASH for 0) but the
+        // bound is free.
+        return 0;
+    }
+    return (uint8_t)((tbl->table[i] >> 4) & 0xF);
+}
+
 void ApplyRemoteHit(Actor* actor, uint8_t damage, uint32_t dmgFlags, Vec3s hitPos, uint8_t remoteHealth,
                     Actor* attacker) {
     auto it = tracked.find(actor);
@@ -822,10 +867,14 @@ void ApplyRemoteHit(Actor* actor, uint8_t damage, uint32_t dmgFlags, Vec3s hitPo
         state.prevHealth = remotePreHit;
     }
 
+    // One local for the fallback: the synthetic toucher and the resolved effect must
+    // always describe the SAME blow, or a later change to one desynchronises them.
+    uint32_t effectiveFlags = dmgFlags != 0 ? dmgFlags : DMG_SLASH;
+
     ColliderInfo* synthetic = &syntheticToucherPool[syntheticToucherIndex];
     syntheticToucherIndex = (syntheticToucherIndex + 1) % 8;
     memset(synthetic, 0, sizeof(ColliderInfo));
-    synthetic->toucher.dmgFlags = dmgFlags != 0 ? dmgFlags : DMG_SLASH;
+    synthetic->toucher.dmgFlags = effectiveFlags;
     synthetic->toucher.damage = damage;
     synthetic->toucherFlags = TOUCH_ON | TOUCH_HIT;
 
@@ -835,6 +884,25 @@ void ApplyRemoteHit(Actor* actor, uint8_t damage, uint32_t dmgFlags, Vec3s hitPo
     actor->colChkInfo.damage = damage;
 
     if (state.acCollider != nullptr) {
+        // ...including the effect nibble, which is the half enemies branch on.
+        //
+        // Written INSIDE this branch, not before it: on the no-collider path below
+        // no collision is simulated at all, so an effect left on the actor with no
+        // matching AC_HIT is read by the nine enemies that gate their whole update
+        // on damageEffect alone (EnTest_Update, EnZf_Update, EnTite_Update,
+        // EnMb_Update, EnGeldB_Update, EnAm_Update, EnBw_Update, EnDodongo_Update,
+        // EnPeehat_Update) -- they would stall for a frame on a blow that never
+        // happened locally.
+        //
+        // Lifetime: on the normal path the reset runs AFTER the actor's update
+        // (z_actor.c:2710) and the packet drain runs after that (game.c:356, past
+        // gameState->main), so this survives into the update that reads it. Three
+        // holes, all pre-existing and all shared with colChkInfo.damage -- an actor
+        // that reaches a reset without having run its update drops the remote blow:
+        // outside the culling volume, or with freezeTimer still running (the guard
+        // is z_actor.c:2687, reset at :2710), or skipped entirely while the player
+        // is in a cutscene or an ocarina/dialogue state (reset at z_actor.c:2669).
+        actor->colChkInfo.damageEffect = ResolveDamageEffect(actor, effectiveFlags);
         Collider* col = state.acCollider;
         col->acFlags |= AC_HIT;
         col->ac = attacker;
@@ -891,10 +959,31 @@ static void PrimeLethalHit(Actor* actor, TrackedState& st) {
     if (st.acCollider == nullptr) {
         return;
     }
+    // An enemy that branches on damageEffect reads 0 without this and treats the
+    // lethal blow as nothing at all -- that is the whole reason a mirrored En_Ny,
+    // Nabooru or Dead Hand never died and had to be force-killed 30 frames later.
+    //
+    // Resolved from the REAL lethal flags, the same ones the synthetic toucher
+    // below carries, so the two always describe one blow. Substituting a fixed
+    // DMG_SLASH here was tried and reverted: entry 0x0A is the Giant's Knife, and
+    // on En_Po_Sisters it yields effect 0xE, which z_en_po_sisters.c:1167 swallows
+    // without applying any damage -- a sister that died correctly before would
+    // hang until the force-kill. On En_Tp it yields SHOCKING where a boomerang
+    // kill yields INSULATING, so the dying mirror could electrocute the local
+    // player for a kill he never made.
+    //
+    // What this does NOT fix, deliberately: En_Test on a light arrow, and
+    // En_GeldB / En_Zf / En_Tite on ice, branch to a stun path that never reaches
+    // their death code, and health is re-armed to 1 every frame so the
+    // `health == 0` exit from stun cannot fire either. Those four still fall
+    // through to the force-kill net -- exactly as they did before this change.
+    // Making them die properly needs a per-actor answer, not a global one.
+    uint32_t lethalFlags = st.lethalDmgFlags != 0 ? st.lethalDmgFlags : DMG_SLASH;
+    actor->colChkInfo.damageEffect = ResolveDamageEffect(actor, lethalFlags);
     ColliderInfo* synthetic = &syntheticToucherPool[syntheticToucherIndex];
     syntheticToucherIndex = (syntheticToucherIndex + 1) % 8;
     memset(synthetic, 0, sizeof(ColliderInfo));
-    synthetic->toucher.dmgFlags = st.lethalDmgFlags != 0 ? st.lethalDmgFlags : DMG_SLASH;
+    synthetic->toucher.dmgFlags = lethalFlags;
     synthetic->toucher.damage = 1;
     synthetic->toucherFlags = TOUCH_ON | TOUCH_HIT;
     Collider* col = st.acCollider;
