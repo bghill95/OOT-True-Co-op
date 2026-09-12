@@ -251,5 +251,7 @@ void RegisterMorphaAdapter() {
     adapter.IsHealthless = Morpha_IsTentacle; // the core's health is the fight's health
     adapter.ReplicateKill = Morpha_ReplicateKill;
     adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
+    // Defeat handed back by OnPhaseChange; no Item_Drop in the overlay.
+    adapter.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_BOSS_MO, adapter);
 }

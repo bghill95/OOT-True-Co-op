@@ -44,6 +44,39 @@ struct ActorSyncAdapter {
     // CoopMirrorTick path), so the generic per-actor sfx stream must skip it or
     // the mirror hears everything twice.
     bool ownsSfx = false;
+    // The force-kill net rolls a generic collectible for a copy it kills without
+    // a death animation, because drops are per-client in this project and the
+    // alternative is leaving that player with nothing (CarrySync.h states the
+    // discipline). Set this when rolling one would be WRONG for this actor:
+    // either its death is handed back to its own code, which drops what vanilla
+    // drops, or it drops nothing in vanilla and a generic roll would invent
+    // treasure. Measured, not assumed: of the 34 registered ids, 17 want it and
+    // 17 do not. The 17 are the eight BOSS_* ids whose OnPhaseChange hands the
+    // defeat back to the actor, plus En_Dekubaba which does the same; the two
+    // healthless Phantom Ganon pieces; En_Poh and En_Fd, which have no death
+    // drop at all (z_en_poh.c's only drop is in its Init, for the EN_POH_RUPEE
+    // variant, and all three placed Poes are EN_POH_NORMAL); En_Po_Field, whose
+    // reward is a soul rather than a collectible; En_GeldB, whose key the roll
+    // cannot produce; and En_Dha and En_Fz, which drop without ever reaching
+    // the defeat hook and so would be rolled a second time. The other 17 are ordinary
+    // enemies with an ordinary random drop that the old "has an adapter" test
+    // was silently swallowing.
+    bool ownsDeathDrop = false;
+    // Last resort before the force-kill's Actor_Kill: replay what this actor's
+    // own death would have produced and the generic roll cannot. Only En_GeldB
+    // uses it today, for the small key -- sItemDropIds carries no
+    // ITEM00_SMALL_KEY at any index, so no roll can ever produce one.
+    //
+    // Two others have the same shape and are deliberately left alone.
+    // En_Po_Field's reward is a soul, a state rather than a drop, and this
+    // callback cannot produce it: Actor_Kill follows unconditionally. En_Rr
+    // hands back the shield or tunic it swallowed (z_en_rr.c:676-687, ids the
+    // random table cannot reach either), but it only misses them when the copy
+    // never reaches EnRr_Death at all, which needs it to still have the player
+    // in its mouth -- narrow enough to leave for a per-actor pass.
+    // Runs only from the force-kill block, so never on a copy that played its
+    // own death -- OnEnemyDefeated clears pendingKillFrames before we get here.
+    void (*OnForcedKill)(Actor* actor) = nullptr;
     // The generic mirror step bails on `actor->draw == NULL` and hands the copy
     // back to its local AI, because a deferred-init enemy has no draw until its
     // object bank arrives and suppressing it there leaves an invisible ghost.

@@ -680,10 +680,11 @@ static void EnFz_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
 }
 
 static void Register(int16_t id, void (*ser)(Actor*, nlohmann::json&),
-                     void (*deser)(Actor*, const nlohmann::json&)) {
+                     void (*deser)(Actor*, const nlohmann::json&), bool ownsDeathDrop = false) {
     ActorSyncAdapter adapter;
     adapter.SerializeExtras = ser;
     adapter.DeserializeExtras = deser;
+    adapter.ownsDeathDrop = ownsDeathDrop;
     EnemySync::RegisterAdapter(id, adapter);
 }
 
@@ -778,7 +779,11 @@ static void EnDodongo_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
 }
 
 void RegisterFrozenDrawAdapters() {
-    Register(ACTOR_EN_FD, EnFd_SerializeExtras, EnFd_DeserializeExtras);
+    // The Flare Dancer is the one enemy here with no Item_Drop at all in its
+    // overlay: a generic roll would invent a drop the fight never gives.
+    // Everything below it drops normally and must keep the generic roll when the
+    // force-kill net takes it.
+    Register(ACTOR_EN_FD, EnFd_SerializeExtras, EnFd_DeserializeExtras, /*ownsDeathDrop=*/true);
     Register(ACTOR_EN_DODONGO, EnDodongo_SerializeExtras, EnDodongo_DeserializeExtras);
     Register(ACTOR_EN_BB, EnBb_SerializeExtras, EnBb_DeserializeExtras);
     Register(ACTOR_EN_BW, EnBw_SerializeExtras, EnBw_DeserializeExtras);
@@ -793,12 +798,29 @@ void RegisterFrozenDrawAdapters() {
     Register(ACTOR_EN_NY, EnNy_SerializeExtras, EnNy_DeserializeExtras);
     Register(ACTOR_EN_OKUTA, EnOkuta_SerializeExtras, EnOkuta_DeserializeExtras);
     Register(ACTOR_EN_DH, EnDh_SerializeExtras, EnDh_DeserializeExtras);
-    Register(ACTOR_EN_DHA, EnDha_SerializeExtras, EnDha_DeserializeExtras);
+    // Dead Hand's hand is the one enemy here that drops WITHOUT ever reaching
+    // the defeat hook -- z_en_dha.c contains no GameInteractor_ExecuteOnEnemyDefeat
+    // at all -- so nothing clears pendingKillFrames for it. Worse, it sets
+    // health back to 8 the moment it drops (z_en_dha.c:392-394, the hand regrows
+    // unless the parent is dying), so it does not even qualify for the death
+    // stall. It therefore reaches the force-kill with its drop already made, and
+    // a generic roll there would be a SECOND one, on all ten hands of the well
+    // and the Shadow Temple.
+    Register(ACTOR_EN_DHA, EnDha_SerializeExtras, EnDha_DeserializeExtras, /*ownsDeathDrop=*/true);
 
     // Freezard owns its cylinder placement — see the note above EnFz_SerializeExtras.
     ActorSyncAdapter fz;
     fz.SerializeExtras = EnFz_SerializeExtras;
     fz.DeserializeExtras = EnFz_DeserializeExtras;
     fz.customColliderPos = true;
+    // Second of the two enemies here that can drop without the defeat hook, and
+    // the only one where it depends on HOW it died: the ice branch calls the
+    // hook (z_en_fz.c:370-371), the fire branch -- the usual way to kill a
+    // Freezard -- goes to EnFz_SetupMelt (:379) and never does. Melting then
+    // drops from EnFz_SetupDespawn (:565) around tick 54 (scale steps down for
+    // 20, then envAlpha -= 8 from 255 for 32), which now falls INSIDE the death
+    // window rather than after it. A generic roll at the end of that window
+    // would be a second drop. The melt does the dropping; leave it to it.
+    fz.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_EN_FZ, fz);
 }

@@ -114,5 +114,8 @@ void RegisterGohmaAdapter() {
     adapter.GetPhase = Gohma_GetPhase;
     adapter.OnPhaseChange = Gohma_OnPhaseChange;
     adapter.ShouldMirror = Gohma_ShouldMirror;
+    // OnPhaseChange hands the defeat back to BossGoma_SetupDefeated, and the
+    // heart comes from the cutscene: a generic roll here would invent treasure.
+    adapter.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_BOSS_GOMA, adapter);
 }

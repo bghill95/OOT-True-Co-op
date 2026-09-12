@@ -74,5 +74,9 @@ void RegisterEnDekubabaAdapter() {
     adapter.DeserializeExtras = EnDekubaba_DeserializeExtras;
     adapter.GetPhase = EnDekubaba_GetPhase;
     adapter.OnPhaseChange = EnDekubaba_OnPhaseChange;
+    // OnPhaseChange hands the defeat back to EnDekubaba_ShrinkDie, which drops
+    // its own nuts (z_en_dekubaba.c:1004-1011; the stick is handled elsewhere).
+    // Rolling here too would double them.
+    adapter.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_EN_DEKUBABA, adapter);
 }

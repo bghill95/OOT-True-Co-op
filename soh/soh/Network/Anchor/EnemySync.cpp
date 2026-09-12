@@ -30,6 +30,22 @@ static constexpr uint8_t REMOTE_DEATH_GRACE = 30;
 // still sit in its spawn/intro state (see ApplyRemoteDeath): its death is applied
 // directly instead of handed to a state machine that never left the ground.
 static constexpr uint16_t REMOTE_DEATH_MIN_LOCAL_UPDATES = 12;
+// Extra frames a copy that HAS taken the lethal hit may borrow past the grace
+// while it is still playing something out. One instalment, no more.
+//
+// It does NOT have to cover the freeze itself -- ReleaseDeathStall clears that
+// timer. What is left is the guards those exits carry on top of it: En_Tite
+// waits for speedXZ to reach 0 (about a dozen frames from -6.0f), and En_GeldB,
+// En_Zf, En_Skb and En_Wf want `bgCheckFlags & 1`, so a blow landed mid-jump
+// has to fall first. Thirty frames covers that.
+//
+// Frames here are game update ticks, and the game updates at 20 Hz
+// (R_UPDATE_RATE = 3, game.c:437), NOT 60 -- an earlier draft of this constant
+// sized itself as if a frame were 1/60 s and would have left corpses standing
+// for seven seconds. Grace plus stall is 60 ticks, three seconds, and that is
+// the ceiling: an enemy standing dead longer than that is worse on screen than
+// one that vanishes.
+static constexpr uint8_t DEATH_STALL_MAX = 30;
 // ...and the window such a copy gets to die on its own before the force-kill.
 // Short: past this the enemy is visibly replaying its spawn animation instead of
 // dying. Long enough for one damage-consuming update on any enemy that can.
@@ -86,6 +102,7 @@ struct TrackedState {
     uint8_t expectedRemoteDamage = 0;
     uint8_t expectedRemoteDamageTimer = 0;
     uint8_t pendingKillFrames = 0; // >0: counting down to a force-kill
+    uint8_t deathStallFrames = 0;  // frames already granted on top of the grace
     uint32_t lethalDmgFlags = 0;   // dying: re-armed each frame until the enemy takes its death branch
     Actor* lethalAttacker = nullptr;
     uint8_t deathCooldown = 0;     // >0: a death was just sent/received; don't re-broadcast or re-apply
@@ -972,12 +989,11 @@ static void PrimeLethalHit(Actor* actor, TrackedState& st) {
     // kill yields INSULATING, so the dying mirror could electrocute the local
     // player for a kill he never made.
     //
-    // What this does NOT fix, deliberately: En_Test on a light arrow, and
-    // En_GeldB / En_Zf / En_Tite on ice, branch to a stun path that never reaches
-    // their death code, and health is re-armed to 1 every frame so the
-    // `health == 0` exit from stun cannot fire either. Those four still fall
-    // through to the force-kill net -- exactly as they did before this change.
-    // Making them die properly needs a per-actor answer, not a global one.
+    // What this does NOT fix: the stun branches. En_Test on a light arrow, and
+    // En_GeldB / En_Zf / En_Tite on ice, land in a stun state instead of their
+    // death code. That part is handled by ReleaseDeathStall below, which waits
+    // until the copy has actually taken the hit; the correction to the earlier
+    // account of it is recorded there.
     uint32_t lethalFlags = st.lethalDmgFlags != 0 ? st.lethalDmgFlags : DMG_SLASH;
     actor->colChkInfo.damageEffect = ResolveDamageEffect(actor, lethalFlags);
     ColliderInfo* synthetic = &syntheticToucherPool[syntheticToucherIndex];
@@ -995,6 +1011,61 @@ static void PrimeLethalHit(Actor* actor, TrackedState& st) {
         info->acHitInfo = synthetic;
         info->bumper.hitPos = hitPos;
     });
+}
+
+// The mirror took the lethal hit -- health is 0 and PrimeLethalHit has stopped
+// re-arming it (the caller gates on health > 0). It is not dead yet: a stun or
+// freeze branch parked it in a state whose only way out is
+// `colorFilterTimer == 0 && health == 0`, and the timer outlasts the force-kill
+// net several times over. Measured from the Actor_SetColorFilter calls of the
+// thirteen enemies that share this exit: the stun filter is 0x50 = 80 frames in
+// all of them but En_Am, which passes 100. (The 4, 8 and 0xC values in those
+// same files are the ordinary damage flash, not this. En_Rd's 0xFF is neither:
+// that is its Sun's Song freeze, z_en_rd.c:721 and :735, where the action func
+// re-writes the filter every frame from a 600-frame counter -- clearing it here
+// is overwritten immediately, so a ReDead frozen by the Sun's Song is NOT
+// covered and still falls to the force-kill, as before. Its ordinary stun is
+// 0x50 like the rest, :723 and :726.) The ice branches stretch it further
+// still, because the Draw increments colorFilterTimer while the actor's own ice
+// timer runs and the Draw runs on every client: ~116 frames on En_GeldB and
+// En_Zf, ~128 on En_Tite. The enemy was going to die on its own; we killed it
+// first, with a generic flame and no drop.
+//
+// Zeroing the timer here lets that exit fire on the next frame, so the copy
+// plays its OWN death: the real animation, and its own collectibles, which is
+// the per-client discipline CarrySync.h states. 11 of the 13 enemies sharing
+// this exit drop from their death function and are made whole by this alone
+// (EnRr_Death, EnTite_FallApart, EnBb_Death, EnWf_Die, EnMb_ClubDead and
+// SpearDead, EnDodongo_Death, plus the unnamed death paths of En_Test, En_Skb,
+// En_Bw, En_Rd and En_Am). The two that do not drop from their death function are
+// En_GeldB, whose small key comes from EnGeldB_CollisionCheck
+// (z_en_geldb.c:1397), and En_Zf, whose drop is in EnZf_UpdateDamage
+// (z_en_zf.c:2015) -- both on a non-stun branch a frozen death never reaches,
+// in vanilla too, and the adapter's OnForcedKill does not reach them either: a
+// copy that dies natively clears pendingKillFrames through its defeat hook and
+// so never reaches the force-kill at all. Freezing a Gerudo to death costs her
+// key in single player too. What is restored here is the far commoner case --
+// she dies to a sword, and her copy plays that death out instead of being
+// destroyed mid-flinch.
+//
+// Outside a stun state colorFilterTimer only drives the damage flash, and this
+// only ever runs on a copy already at zero health with its death latched, so
+// there is nothing left for the flash to tell that player.
+//
+// Correcting the earlier account of this bug, which said health was re-armed to
+// 1 every frame so `health == 0` could never fire: the re-arming stops as soon
+// as the copy consumes the hit, because the PrimeLethalHit call site gates on
+// health > 0. Perpetual re-arming only happens in the sub-case where the copy
+// is ALREADY stunned when the death arrives -- every one of these enemies wraps
+// its stun branch in "if I am not already stunned, do nothing", so the
+// synthetic hit applies no damage at all. That sub-case is not fixed here, and
+// neither are En_Wallmas and En_Floormas, which park on their own private
+// counters rather than on colorFilterTimer; En_Po_Sisters and En_Bigokuta,
+// whose branch applies no damage so they never reach zero health to begin with;
+// or En_Rr while it still has the player in its mouth, since its exit then goes
+// to EnRr_SetupReleasePlayer rather than to its death (z_en_rr.c:751-754).
+static void ReleaseDeathStall(Actor* actor) {
+    actor->colorFilterTimer = 0;
 }
 
 void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent, uint32_t dmgFlags) {
@@ -1059,6 +1130,11 @@ void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent, uint32_t dm
         state.pendingKillFrames = (state.remoteSpawned && state.localUpdates < REMOTE_DEATH_MIN_LOCAL_UPDATES)
                                       ? REMOTE_DEATH_QUICK_GRACE
                                       : REMOTE_DEATH_GRACE;
+        // A fresh death gets a fresh stall budget. TrackedState outlives one
+        // death: the same Actor* is reused by enemies that regrow, and a second
+        // death packet on the same actor would otherwise start with the budget
+        // the first one spent.
+        state.deathStallFrames = 0;
     }
 }
 
@@ -1529,6 +1605,17 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
         if (st.suppressed) {
             EndSuppression(actor, st, "became-authority");
         }
+        // The stall release belongs here too. A death can arrive from the peer
+        // for an enemy WE have authority over -- they landed the killing blow --
+        // and the copy then sits in the same freeze, with the same force-kill
+        // net counting down against it. Skipping this side would have made the
+        // stall above pure regression there: the corpse would stand for the
+        // whole extended window and still be destroyed generically at the end
+        // of it. (The lethal re-priming below stays mirror-only: on this side
+        // our own AI is running and applied the blow itself.)
+        if (st.dying && st.pendingKillFrames > 0 && actor->update != NULL && actor->colChkInfo.health == 0) {
+            ReleaseDeathStall(actor);
+        }
         return; // we own the AI (or nothing is elected): run it
     }
     if (st.dying || IsMirrorBlocked(actor)) {
@@ -1536,8 +1623,12 @@ static void OnShouldEnemyUpdate(Actor* actor, bool* should) {
         // actually takes its death branch, keep the pending hit lethal (see
         // PrimeLethalHit) — this runs right before the enemy's update, after
         // anything else that could have touched health/damage this frame.
-        if (st.dying && st.pendingKillFrames > 0 && actor->update != NULL && actor->colChkInfo.health > 0) {
-            PrimeLethalHit(actor, st);
+        if (st.dying && st.pendingKillFrames > 0 && actor->update != NULL) {
+            if (actor->colChkInfo.health > 0) {
+                PrimeLethalHit(actor, st);
+            } else {
+                ReleaseDeathStall(actor);
+            }
         }
         return; // death handoff / blocklisted: local simulation runs
     }
@@ -2488,6 +2579,35 @@ static void OnEnemyActorUpdate(Actor* actor) {
     if (state.pendingKillFrames > 0) {
         state.pendingKillFrames--;
         if (state.pendingKillFrames == 0 && actor->update != NULL) {
+            // Before giving up: a copy sitting at zero health HAS consumed the
+            // lethal hit and is playing something out — its own death, or the
+            // stun state that leads to it. ReleaseDeathStall clears the colour
+            // filter that state waits on, but several of these exits want more
+            // than that (En_GeldB and En_Zf must be on the ground, En_Tite must
+            // also have decelerated to a standstill, roughly a dozen frames), and
+            // the grace is only 30. Lend it more time in instalments rather than
+            // destroy an enemy that is one frame from dying properly, since that
+            // native death is what plays the real animation and rolls this
+            // client's own drop. Capped by DEATH_STALL_MAX so a copy that is
+            // genuinely stuck still gets cleaned up.
+            if (actor->colChkInfo.health == 0 && state.deathStallFrames < DEATH_STALL_MAX) {
+                uint8_t grant = (uint8_t)std::min<int>(REMOTE_DEATH_GRACE, DEATH_STALL_MAX - state.deathStallFrames);
+                state.deathStallFrames += grant;
+                state.pendingKillFrames = grant;
+                // The echo guard has to outlive the stall. deathCooldown counts
+                // down above this block, so with the old 30-frame ceiling it
+                // could not expire first; lending more time lets it reach 0
+                // while the copy is still dying, and then two doors open that
+                // were shut before. OnEnemyActorKill and OnEnemyDefeated only
+                // check `deathCooldown == 0`, not `dying` or authority, so the
+                // copy's eventual native death would be BROADCAST as a kill we
+                // never made; and ApplyRemoteDeath rejects a duplicate death on
+                // the same test, so a second death packet would re-arm health
+                // to 1 on a copy already at 0 and put it right back in the hole
+                // this function exists to get it out of. Re-arm it instead.
+                state.deathCooldown = DEATH_COOLDOWN_FRAMES;
+                return;
+            }
             // The lethal synthetic hit didn't take (custom damage path) — force it
             ESYNC_LOG("[EnemySync] FORCE-KILL id={} key={:#x} hp={} (death never consumed)", actor->id, state.key,
                       actor->colChkInfo.health);
@@ -2506,9 +2626,26 @@ static void OnEnemyActorUpdate(Actor* actor) {
             // copy's death (CarrySync.h states the discipline), which is why the
             // two screens can already show a different rupee. Rolling it here keeps
             // that model instead of leaving this player with nothing at all.
-            // Skipped for bosses (adapter-driven, they drop through their cutscene)
-            // and for projectiles, which never drop.
-            if (GetAdapter(actor->id) == nullptr && !state.projectile) {
+            //
+            // This used to test `GetAdapter(id) == nullptr`, on the premise that
+            // an adapter means a boss that drops through its own cutscene. That
+            // premise was wrong: of the 34 registered ids, 17 are ordinary
+            // enemies (En_Test, En_Zf, En_Wf, En_Firefly, En_Okuta, En_Dh, En_Rr,
+            // En_Bb, En_Bw, En_Dodongo, En_Dodojr, En_Ik, En_Wallmas,
+            // En_Sb, En_Ny, En_Vm, En_Goma) whose plain random drop was being
+            // swallowed for no reason. The adapters now say so themselves.
+            // Projectiles returned at the top of this function, so they cannot
+            // reach here.
+            const ActorSyncAdapter* adapter = GetAdapter(actor->id);
+            // A drop the generic roll cannot produce, replayed before we destroy
+            // the actor: En_GeldB's small key, En_Po_Field's soul. Never fires on
+            // a copy that played its own death -- OnEnemyDefeated zeroes
+            // pendingKillFrames, so that copy never enters this block, and the
+            // key cannot be dropped twice.
+            if (adapter != nullptr && adapter->OnForcedKill != nullptr) {
+                adapter->OnForcedKill(actor);
+            }
+            if (adapter == nullptr || !adapter->ownsDeathDrop) {
                 Item_DropCollectibleRandom(gPlayState, actor, &actor->world.pos, 0x10);
             }
             Actor_Kill(actor);

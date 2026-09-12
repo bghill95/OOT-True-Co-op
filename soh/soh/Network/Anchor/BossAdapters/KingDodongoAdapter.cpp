@@ -142,5 +142,7 @@ void RegisterKingDodongoAdapter() {
     adapter.GetPhase = KingDodongo_GetPhase;
     adapter.OnPhaseChange = KingDodongo_OnPhaseChange;
     adapter.ShouldMirror = KingDodongo_ShouldMirror;
+    // Defeat handed back by OnPhaseChange; no Item_Drop anywhere in the overlay.
+    adapter.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_BOSS_DODONGO, adapter);
 }

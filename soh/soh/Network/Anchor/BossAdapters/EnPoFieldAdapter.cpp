@@ -37,5 +37,17 @@ void RegisterEnPoFieldAdapter() {
     ActorSyncAdapter adapter;
     adapter.SerializeExtras = EnPoField_SerializeExtras;
     adapter.DeserializeExtras = EnPoField_DeserializeExtras;
+    // This Poe's reward is not a drop at all: its death runs EnPoField_Death and
+    // then SetupSoulIdle (z_en_po_field.c:543 -> :586), leaving the soul that
+    // EnPoField_SoulInteract turns into ITEM_BIG_POE (:717). There is no
+    // Item_Drop anywhere in the overlay, so a generic roll would both invent a
+    // rupee and say nothing about the soul. What the mirror needs is the time to
+    // reach that death itself, which the death stall now grants -- and no
+    // callback could stand in if it failed to: OnForcedKill returns void and
+    // Actor_Kill follows it unconditionally, so a copy that still gets
+    // force-killed loses the soul, exactly as it did before. Recovering that
+    // case would need a hook able to CANCEL the destruction, which is a larger
+    // change than this one.
+    adapter.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_EN_PO_FIELD, adapter);
 }

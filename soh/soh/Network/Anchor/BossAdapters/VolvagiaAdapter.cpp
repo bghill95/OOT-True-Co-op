@@ -267,6 +267,8 @@ void RegisterVolvagiaAdapters() {
         adapter.OnPhaseChange = Volvagia_OnPhaseChange;
         adapter.ShouldMirror = Volvagia_ShouldMirror;
         adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
+        // Defeat handed back by OnPhaseChange; no Item_Drop in the overlay.
+        adapter.ownsDeathDrop = true;
         EnemySync::RegisterAdapter(ACTOR_BOSS_FD, adapter);
     }
     {
@@ -278,6 +280,8 @@ void RegisterVolvagiaAdapters() {
         adapter.ShouldMirror = VolvagiaHead_ShouldMirror;
         adapter.IsHealthless = VolvagiaHead_Always; // the parent's health is the fight's health
         adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
+        // Same fight, same handback; the head has no drop of its own either.
+        adapter.ownsDeathDrop = true;
         EnemySync::RegisterAdapter(ACTOR_BOSS_FD2, adapter);
     }
 }

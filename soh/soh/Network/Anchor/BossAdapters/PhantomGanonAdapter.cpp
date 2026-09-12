@@ -317,6 +317,8 @@ void RegisterPhantomGanonAdapters() {
         // the generic draw-less bail hands the mirror back to its local AI right
         // then, and that copy runs the fight a second time.
         adapter.mirrorWhileDrawless = true;
+        // Defeat handed back by OnPhaseChange; no Item_Drop in the overlay.
+        adapter.ownsDeathDrop = true;
         EnemySync::RegisterAdapter(ACTOR_BOSS_GANONDROF, adapter);
     }
     {
@@ -331,6 +333,9 @@ void RegisterPhantomGanonAdapters() {
         // Same for the horse -- and it is the horse AI that spawns the decoy
         // rider/horse pairs, so a released mirror doubled every one of them.
         adapter.mirrorWhileDrawless = true;
+        // Healthless, so OnEnemyActorKill returns before the force-kill net can
+        // ever arm for it. Marked anyway: a mount drops nothing.
+        adapter.ownsDeathDrop = true;
         EnemySync::RegisterAdapter(ACTOR_EN_FHG, adapter);
     }
     {
@@ -341,6 +346,8 @@ void RegisterPhantomGanonAdapters() {
         adapter.IsHealthless = PhantomFire_Always;
         adapter.ReplicateKill = PhantomFire_Always;
         adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
+        // An FX actor: healthless, and nothing to drop.
+        adapter.ownsDeathDrop = true;
         EnemySync::RegisterAdapter(ACTOR_EN_FHG_FIRE, adapter);
     }
 }
