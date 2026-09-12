@@ -1122,6 +1122,14 @@ void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent, uint32_t dm
     // The real dmgFlags travel with the packet so flag-gated enemies (boomerang
     // only, fire only…) accept the hit.
     actor->colChkInfo.health = 1;
+    // The receiving half of the dmgFlags question, logged once per death rather
+    // than in PrimeLethalHit, which re-runs every frame and would drown the log.
+    // Read it together with the sender's "DIED tx" line: flags=0 here means the
+    // authority's collider had already been resubmitted and cleared, so this
+    // resolution ran on the DMG_SLASH fallback rather than on the real blow.
+    // effect is what the enemy's own damage code will branch on.
+    ESYNC_LOG("[EnemySync] DEATH dmg id={} key={:#x} rxFlags={:#x} effect={:#x} fallback={}", actor->id, state.key,
+              dmgFlags, ResolveDamageEffect(actor, dmgFlags != 0 ? dmgFlags : DMG_SLASH), dmgFlags == 0);
     Vec3s hitPos = { (int16_t)actor->world.pos.x, (int16_t)actor->world.pos.y, (int16_t)actor->world.pos.z };
     ApplyRemoteHit(actor, 1, dmgFlags, hitPos, 0, attacker);
     // Only Actor_Kill deaths force-kill as a last resort. Defeat-hook enemies
@@ -2773,7 +2781,16 @@ static void OnEnemyActorKill(Actor* actor) {
     // Only broadcast real deaths (health exhausted), not despawns/cleanup kills
     if (state.deathCooldown == 0 && actor->colChkInfo.health == 0) {
         state.deathCooldown = DEATH_COOLDOWN_FRAMES;
-        Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/true, CurrentHitDmgFlags(state));
+        // dmgFlags is logged because the receiver's whole damageEffect resolution
+        // hangs on it, and two audits reasoned in opposite directions about what
+        // actually travels: CurrentHitDmgFlags only sees what is still stamped on
+        // the AC collider, and CollisionCheck_SetAC clears that on every
+        // resubmission. An actor that keeps submitting while it dies sends 0 here
+        // and the receiver falls back to DMG_SLASH. A zero in this line is the
+        // symptom, and it cannot be deduced from the source.
+        uint32_t txFlags = CurrentHitDmgFlags(state);
+        ESYNC_LOG("[EnemySync] DIED tx id={} key={:#x} permanent=1 dmgFlags={:#x}", actor->id, state.key, txFlags);
+        Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/true, txFlags);
     } else if (state.deathCooldown == 0 && state.dynamicKey && MirroringEnabled() && IsLocalAuthority()) {
         // Non-death removal of a replicated dynamic spawn: mirrors must remove their
         // copy too. (Projectiles are handled by the early return above.)
@@ -2799,10 +2816,12 @@ static void OnEnemyDefeated(Actor* actor) {
         return; // defeat caused by a remote death we already applied — don't echo
     }
     state.deathCooldown = DEATH_COOLDOWN_FRAMES;
-    ESYNC_LOG("[EnemySync] DEFEAT id={} key={:#x} -> broadcasting death", actor->id, state.key);
+    uint32_t txFlags = CurrentHitDmgFlags(state);
+    ESYNC_LOG("[EnemySync] DEFEAT id={} key={:#x} dmgFlags={:#x} -> broadcasting death", actor->id, state.key,
+              txFlags);
     // Defeat-hook deaths (regrowers like En_Karebaba never Actor_Kill): the
     // receiver must not force-kill if its copy can't consume the lethal hit.
-    Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/false, CurrentHitDmgFlags(state));
+    Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/false, txFlags);
 }
 
 static void OnEnemyActorDestroy(Actor* actor) {
