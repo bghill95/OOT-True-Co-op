@@ -22,6 +22,8 @@ extern "C" {
 #include "src/overlays/actors/ovl_En_Fd/z_en_fd.h"
 #include "src/overlays/actors/ovl_En_Dodongo/z_en_dodongo.h"
 #include "src/overlays/actors/ovl_En_Ny/z_en_ny.h"
+#include "src/overlays/actors/ovl_En_Dh/z_en_dh.h"
+#include "src/overlays/actors/ovl_En_Dha/z_en_dha.h"
 #include "src/overlays/actors/ovl_En_Fz/z_en_fz.h"
 #include "src/overlays/actors/ovl_En_Okuta/z_en_okuta.h"
 // Flare Dancer action functions: non-static in z_en_fd.c. Its draw gate compares
@@ -500,6 +502,81 @@ static void EnNy_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     }
 }
 
+// Dead Hand (EN_DH) and its hands (EN_DHA), the pair in the Bottom of the Well and
+// the Shadow Temple. Reported as "very badly synced"; the logs showed both halves
+// of it.
+//
+// The hands are the visible half. EnDha_OverrideLimbDraw (z_en_dha.c:426-433) builds
+// every limb rotation out of limbAngleX[0], limbAngleX[1], limbAngleY and
+// handAngle.x/.y -- and all four are written only by EnDha_Wait, which tracks the
+// player. Frozen on a mirror the arms keep the pose Init left them in
+// (limbAngleX[0] = -0x4000, everything else zero) while the actor slides around
+// underneath: hands that do not reach for you.
+//
+// Dead Hand itself needs its alpha, which its draw compares to 255 to pick the
+// opaque or the translucent path (z_en_dh.c:562) and then feeds to the env colour
+// on both, plus the dirt wave it throws up while burrowing: drawDirtWave gates it,
+// dirtWaveAlpha/Spread/Height shape it (:582-585). dirtWavePhase drives those three
+// but is never read by the draw, so it stays off the wire.
+//
+// Both actors already carry non-zero health (14 and 8), so they are streamed and
+// mirrored today -- registering an adapter does not change their regime, unlike
+// BOSS_TW where the sisters sit at health 0. This only fills in what the draws read.
+//
+// Not fixed here, and the other half of the report: both branch on
+// colChkInfo.damageEffect (z_en_dh.c:489, z_en_dha.c:387), which no remote hit
+// carries, so P2's blows are never consumed and arrive late in batches as
+// "expired debt force-applied" -- ten of them in one fight. That is the generic
+// damageEffect gap, tracked in the backlog.
+static void EnDh_SerializeExtras(Actor* actor, nlohmann::json& x) {
+    EnDh* dh = (EnDh*)actor;
+
+    x["a"] = dh->alpha;
+    x["dw"] = dh->drawDirtWave;
+    x["wave"] = { dh->dirtWaveAlpha, dh->dirtWaveSpread, dh->dirtWaveHeight };
+}
+
+static void EnDh_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
+    try {
+        EnDh* dh = (EnDh*)actor;
+        ReadField(x, "a", dh->alpha);
+        ReadField(x, "dw", dh->drawDirtWave);
+        if (x.contains("wave") && x["wave"].size() == 3) {
+            dh->dirtWaveAlpha = x["wave"][0].get<float>();
+            dh->dirtWaveSpread = x["wave"][1].get<float>();
+            dh->dirtWaveHeight = x["wave"][2].get<float>();
+        }
+    } catch (const std::exception& ex) {
+        SPDLOG_WARN("[EnemySync] EnDh extras parse error: {}", ex.what());
+    }
+}
+
+static void EnDha_SerializeExtras(Actor* actor, nlohmann::json& x) {
+    EnDha* dha = (EnDha*)actor;
+
+    x["lx"] = { dha->limbAngleX[0], dha->limbAngleX[1] };
+    x["ly"] = dha->limbAngleY;
+    x["ha"] = { dha->handAngle.x, dha->handAngle.y, dha->handAngle.z };
+}
+
+static void EnDha_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
+    try {
+        EnDha* dha = (EnDha*)actor;
+        if (x.contains("lx") && x["lx"].size() == 2) {
+            dha->limbAngleX[0] = x["lx"][0].get<int16_t>();
+            dha->limbAngleX[1] = x["lx"][1].get<int16_t>();
+        }
+        ReadField(x, "ly", dha->limbAngleY);
+        if (x.contains("ha") && x["ha"].size() == 3) {
+            dha->handAngle.x = x["ha"][0].get<int16_t>();
+            dha->handAngle.y = x["ha"][1].get<int16_t>();
+            dha->handAngle.z = x["ha"][2].get<int16_t>();
+        }
+    } catch (const std::exception& ex) {
+        SPDLOG_WARN("[EnemySync] EnDha extras parse error: {}", ex.what());
+    }
+}
+
 // Octorok (EN_OKUTA). headScale is the snout deformation -- the swell before it
 // spits, the suck as it drops back into the water. EnOkuta_UpdateHeadScale reads
 // the CURRENT action function to pick the shape, so nothing about it can be derived
@@ -715,6 +792,8 @@ void RegisterFrozenDrawAdapters() {
     Register(ACTOR_EN_DODOJR, EnDodojr_SerializeExtras, EnDodojr_DeserializeExtras);
     Register(ACTOR_EN_NY, EnNy_SerializeExtras, EnNy_DeserializeExtras);
     Register(ACTOR_EN_OKUTA, EnOkuta_SerializeExtras, EnOkuta_DeserializeExtras);
+    Register(ACTOR_EN_DH, EnDh_SerializeExtras, EnDh_DeserializeExtras);
+    Register(ACTOR_EN_DHA, EnDha_SerializeExtras, EnDha_DeserializeExtras);
 
     // Freezard owns its cylinder placement — see the note above EnFz_SerializeExtras.
     ActorSyncAdapter fz;
