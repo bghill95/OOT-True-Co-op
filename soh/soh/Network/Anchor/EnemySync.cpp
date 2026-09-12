@@ -489,6 +489,52 @@ static bool IsTrackingExcluded(Actor* actor) {
     if (actor->id == ACTOR_EN_VB_BALL) {
         return actor->params != 100;
     }
+    // EN_GANON_MANT, Ganondorf's cloak. It is ACTORCAT_BOSS (z_en_ganon_mant.c:21),
+    // so IsTrackedCategory picks it up and the mirror's copy has its Update
+    // suppressed -- and that Update IS the cloth simulation (EnGanonMant_Update,
+    // z_en_ganon_mant.c:343, over 12 strands of 12 joints). Bench-observed on
+    // 2026-09-12: P2's Ganondorf wore a cloak frozen in mid-air that did not follow
+    // him.
+    //
+    // Nothing about it needs the network. Its position and the four limb anchors are
+    // written every frame by BossGanon_Draw:3882-3888, which runs on EVERY client
+    // because the Draw is never suppressed; its Update reads only
+    // parent->actor.shape.rot.y (:361), which the pose stream already carries; and
+    // its simulation is deterministic apart from the tear velocities, which are
+    // cosmetic. Running one copy per client is therefore both correct and cheaper
+    // than streaming 144 joints.
+    //
+    // Covers both places it is born -- BossGanon_Init:383 and EnViewer_Init:106
+    // (the Ganondorf cutscene viewer) -- because the exclusion is on the id, not on
+    // the parent.
+    if (actor->id == ACTOR_EN_GANON_MANT) {
+        return true;
+    }
+    // Boss_Ganon's five projectile variants. One actorId multiplexes six
+    // actors, selected by params in BossGanon_Init (z_boss_ganon.c:347, :390):
+    // Ganondorf himself is (s16)params < 0x64 with health 40, and everything
+    // from 0x64 up is a light ball / shard / big-magic ball with health 0.
+    //
+    // They must stay untracked now that ACTOR_BOSS_GANON has an adapter. The
+    // leftStream clause below is
+    //     health == 0 && GetAdapter(id) == nullptr && !projectile
+    // so registering ANY adapter for this id flips all five at once from
+    // "never streamed" to "streamed and mirror-suppressed" — the regression
+    // that keeps RegisterBossTwAdapter empty (BossTwAdapter.cpp:130-145).
+    // Worse here than for Twinrova: BossGanon_LightBall_Update:3946/3950,
+    // func_808E1EB4:4262 and func_808E2544:4382/4388 dereference
+    // this->actor.parent unguarded on their first update, and mirror-side
+    // parent resolution is best-effort (see the En_Bb note above and :2451).
+    //
+    // SIGNED read, deliberately: the arena Ganondorf is placed with params
+    // 0xFFFF (ganon_boss room 0, scene data) and the overlay compares it as
+    // the s16 -1. An unsigned test would exclude the boss himself.
+    // Lot 2.7 (making the tennis ball playable for both players) is what
+    // revisits this; until then the five variants keep today's behaviour of
+    // running locally on every client.
+    if (actor->id == ACTOR_BOSS_GANON) {
+        return (int16_t)actor->params >= 0x64;
+    }
     // En_Bb flame trail: the bubble spawns five chain links and wires each one's
     // targetActor / parent / vTrailIdx in the statements right after Actor_Spawn.
     // Same shape as the Tailpasaran tails guarded by gActorInitDepth in
