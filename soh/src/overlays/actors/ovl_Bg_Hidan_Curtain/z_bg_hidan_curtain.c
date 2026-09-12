@@ -8,6 +8,8 @@
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 
+s32 Anchor_IsSessionActive(void); // soh/Network/Anchor/DummyPlayer.cpp
+
 #define FLAGS ACTOR_FLAG_UPDATE_CULLING_DISABLED
 
 void BgHidanCurtain_Init(Actor* thisx, PlayState* play);
@@ -163,7 +165,26 @@ void BgHidanCurtain_TurnOn(BgHidanCurtain* this, PlayState* play) {
     f32 riseSpeed = sHCParams[this->size].riseSpeed;
 
     if (Math_StepToF(&this->actor.world.pos.y, this->actor.home.pos.y, riseSpeed)) {
-        Flags_UnsetSwitch(play, this->actor.params);
+        // The re-arm below is only owed when this curtain CONSUMED a set flag: types
+        // 1..4 come here from BgHidanCurtain_WaitForTimer with the flag still set, and
+        // leaving it set would drop them straight back through WaitForSwitchOn into
+        // another cycle. Type 5 comes here from BgHidanCurtain_WaitForSwitchOff, which
+        // by construction only runs once the flag is ALREADY clear -- so the write is
+        // a no-op in every normal case, and in the one case where it is not (the flag
+        // was set again while we were rising) it is wrong: that set is a fresh request
+        // this cycle never served. Offline it is merely lost; in co-op it is P2's
+        // switch hit, and clearing it re-raises the curtain in P2's face --
+        // Flags_UnsetSwitch broadcasts (z_actor.c:704), so P2's own copy rises too.
+        // The castle's type 5 is ganon_sonogo room 1, params 0x5FF8 -> switch flag 56,
+        // and a sweep of every scene says it is the ONLY type 5 placed in the game.
+        //
+        // Session-gated like the rest of this lot. The skip is arguably an improvement
+        // offline too -- vanilla swallows a switch pressed during the rise -- but that
+        // is a change to single-player behaviour nobody asked for, and it is the one
+        // hunk of this whole lot that was not behind Anchor_IsSessionActive.
+        if ((this->type != 5) || !Anchor_IsSessionActive()) {
+            Flags_UnsetSwitch(play, this->actor.params);
+        }
         this->actionFunc = BgHidanCurtain_WaitForSwitchOn;
     }
 }

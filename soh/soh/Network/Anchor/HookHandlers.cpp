@@ -24,6 +24,7 @@ extern EffectSsInfo sEffectSsInfo; // z_effect_soft_sprite.c (no header declares
 void Anchor_ForgetCaptureVictim(Actor* enemy); // Packets/CapturePlayer.cpp
 #include "src/overlays/actors/ovl_Bg_Bombwall/z_bg_bombwall.h"
 #include "src/overlays/actors/ovl_Bg_Breakwall/z_bg_breakwall.h"
+#include "src/overlays/actors/ovl_Bg_Gnd_Soulmeiro/z_bg_gnd_soulmeiro.h"
 #include "src/overlays/actors/ovl_Bg_Haka_Zou/z_bg_haka_zou.h"
 #include "src/overlays/actors/ovl_Bg_Hidan_Hamstep/z_bg_hidan_hamstep.h"
 #include "src/overlays/actors/ovl_Bg_Hidan_Hrock/z_bg_hidan_hrock.h"
@@ -36,6 +37,7 @@ void Anchor_ForgetCaptureVictim(Actor* enemy); // Packets/CapturePlayer.cpp
 #include "src/overlays/actors/ovl_Bg_Spot17_Bakudankabe/z_bg_spot17_bakudankabe.h"
 #include "src/overlays/actors/ovl_Bg_Ydan_Maruta/z_bg_ydan_maruta.h"
 #include "src/overlays/actors/ovl_Bg_Ydan_Sp/z_bg_ydan_sp.h"
+#include "src/overlays/actors/ovl_Demo_Kekkai/z_demo_kekkai.h"
 #include "src/overlays/actors/ovl_Door_Shutter/z_door_shutter.h"
 #include "src/overlays/actors/ovl_En_Door/z_en_door.h"
 #include "src/overlays/actors/ovl_En_Si/z_en_si.h"
@@ -50,6 +52,9 @@ extern PlayState* gPlayState;
 
 void func_8086ED70(BgBombwall* bgBombwall, PlayState* play);
 void BgBreakwall_Wait(BgBreakwall* bgBreakwall, PlayState* play);
+void func_8087B284(BgGndSoulmeiro* bgGndSoulmeiro, PlayState* play);
+s32 DemoKekkai_CheckEventFlag(s32 params);
+void DemoKekkai_TrialBarrierDispel(Actor* thisx, PlayState* play);
 void func_80883000(BgHakaZou* bgHakaZou, PlayState* play);
 void func_808887C4(BgHidanHamstep* bgHidanHamstep, PlayState* play);
 void func_808896B8(BgHidanHrock* bgHidanHrock, PlayState* play);
@@ -257,6 +262,36 @@ void Anchor::RegisterHooks() {
         }
     });
 
+    // Ganon's Castle, Spirit trial (ganontika room 18: params 0x0A00 / 0x0A01 / 0x0A02,
+    // switch flag 10). The web reads its flag at Init (z_bg_gnd_soulmeiro.c:74) and
+    // then only inside func_8087B284, whose whole body is behind `if (!Flags_GetSwitch
+    // (...))` (:163) -- so a flag arriving from the other client is never seen: the web
+    // P1 burned stayed drawn and kept its AC cylinder up for P2, and P2 never got the
+    // Mir_Ray beam that the burn spawns, which is what lights the room below. Re-read
+    // the flag every frame and take the same branch Init would have taken. Same shape
+    // as the Bg_Ice_Shelter hook further down, and the same shape the Demo_Kekkai hook
+    // below uses -- one class of defect, "flag read once at Init", two actors.
+    //
+    // The other two thirds of this puzzle need nothing: params 1 and 2 (light source
+    // and lit floor) run func_8087B350, which already re-reads the flag every frame
+    // and just swaps `draw` (:178).
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_BG_GND_SOULMEIRO, isConnected, [&](void* refActor, bool* should) {
+        BgGndSoulmeiro* actor = static_cast<BgGndSoulmeiro*>(refActor);
+
+        // The actionFunc test is what keeps this off the client that lit it: a copy
+        // already burning runs func_8087AF38, which sets the flag itself at the
+        // halfway point of its own effect (:116) and kills itself 20 frames later
+        // (:121). Firing here on that flag would cut the effect the player triggered.
+        if ((actor->actor.params & 0xFF) == 0 && actor->actionFunc == func_8087B284 &&
+            Flags_GetSwitch(gPlayState, (actor->actor.params >> 8) & 0x3F)) {
+            Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_MIR_RAY, actor->actor.world.pos.x,
+                        actor->actor.world.pos.y, actor->actor.world.pos.z, 0, 0, 0, 9, true);
+            actor->actor.draw = NULL;
+            Actor_Kill(&actor->actor);
+            *should = false;
+        }
+    });
+
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_BG_HAKA_ZOU, isConnected, [&](void* refActor, bool* should) {
         BgHakaZou* actor = static_cast<BgHakaZou*>(refActor);
 
@@ -364,6 +399,38 @@ void Anchor::RegisterHooks() {
         if ((actor->actionFunc == BgYdanSp_FloorWebIdle || actor->actionFunc == BgYdanSp_WallWebIdle) &&
             Flags_GetSwitch(gPlayState, actor->isDestroyedSwitchFlag)) {
             BgYdanSp_BurnWeb(actor, gPlayState);
+        }
+    });
+
+    // Ganon's Castle barriers -- seven instances, all in ganontika: params 0 is the
+    // tower barrier (room 1), params 1..6 the six trial barriers (rooms 4, 11, 15, 13,
+    // 19, 7). The EVENTCHKINF behind each one replicates already, but the actor only
+    // consults it at Init (z_demo_kekkai.c:126). A trial P1 dispelled therefore stayed
+    // whole for P2, who was still inside the room: the trial barriers run
+    // DemoKekkai_TrialBarrierIdle as their update and submit AT and OC every single
+    // frame with no state test at all (:255-271), so P2 stayed walled in AND took
+    // contact damage from a barrier that no longer exists on P1's screen. Same defect
+    // class and same remedy as the Bg_Gnd_Soulmeiro hook above: re-read each frame and
+    // take the branch Init would have taken.
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_DEMO_KEKKAI, isConnected, [&](void* refActor, bool* should) {
+        DemoKekkai* actor = static_cast<DemoKekkai*>(refActor);
+
+        // Never interrupt a dispel this client is already playing: the trial barrier
+        // swaps its update to DemoKekkai_TrialBarrierDispel for the sage cutscene
+        // (:265), and the tower barrier latches sfxFlag bit 0 when its own sequence
+        // starts (:172) and sets the EVENTCHKINF itself 100 frames later (:179).
+        // Without this guard the flag would land mid-animation and kill the actor that
+        // is playing it.
+        if ((actor->actor.update == DemoKekkai_TrialBarrierDispel) || (actor->sfxFlag & 1)) {
+            return;
+        }
+
+        if (DemoKekkai_CheckEventFlag(actor->actor.params)) {
+            if (actor->actor.params == KEKKAI_TOWER) {
+                gPlayState->envCtx.unk_BF = 1;
+            }
+            Actor_Kill(&actor->actor);
+            *should = false;
         }
     });
 

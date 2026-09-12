@@ -12,6 +12,35 @@
 
 #define FLAGS ACTOR_FLAG_UPDATE_CULLING_DISABLED
 
+s32 Anchor_IsSessionActive(void);       // soh/Network/Anchor/DummyPlayer.cpp
+void FxSync_OnSunSwitchLightArrow(void); // soh/Network/Anchor/FxSync.cpp
+
+/**
+ * Co-op: clear a scene switch flag WITHOUT broadcasting it.
+ *
+ * Flags_UnsetSwitch fires GameInteractor_ExecuteOnSceneFlagUnset (z_actor.c:704) the
+ * moment the bit actually changes, and HookHandlers.cpp turns that into an UNSET_FLAG
+ * packet. That is right for a world event and wrong for housekeeping a Destroy does on
+ * ITS OWN room exit -- the other player did not leave our room.
+ *
+ * Same shape as the fix already in z_bg_mizu_shutter.c:97-109, and as the three helpers
+ * this same lot adds to z_bg_mizu_water.c, z_bg_relay_objects.c and z_en_owl.c. Kept
+ * local to the overlay for the same reason Anchor_IsSessionActive is re-declared in
+ * each of them.
+ */
+static void ObjLightswitch_UnsetSwitchLocal(PlayState* play, s32 flag) {
+    if (!Anchor_IsSessionActive()) {
+        Flags_UnsetSwitch(play, flag);
+        return;
+    }
+
+    if (flag < 0x20) {
+        play->actorCtx.flags.swch &= ~(1 << flag);
+    } else {
+        play->actorCtx.flags.tempSwch &= ~(1 << (flag - 0x20));
+    }
+}
+
 typedef enum {
     /* 0x00 */ FACE_EYES_CLOSED,
     /* 0x01 */ FACE_EYES_OPEN,
@@ -259,8 +288,31 @@ void ObjLightswitch_Destroy(Actor* thisx, PlayState* play2) {
             case OBJLIGHTSWITCH_TYPE_2:
             case OBJLIGHTSWITCH_TYPE_1:
                 // Except for this one, because we want the chain platform to stay down for good
+                //
+                // Co-op: `sunSwitchActivatedByLightArrow` is a plain global of this
+                // overlay (:105), written only by the client whose own arrow hit the
+                // emblem, so the two clients do not even agree that a reset is due.
+                // The Flags_UnsetSwitch is a networked scene-flag change (z_actor.c:704
+                // -> OnSceneFlagUnset), and Destroy runs when THIS client leaves the
+                // room: P1 stepping out of Ganon's Castle room 18 broadcast a clear of
+                // flag 25 and re-locked the Spirit trial for P2, who was still inside
+                // solving it.
+                //
+                // Clear it LOCALLY rather than not at all. Suppressing the write
+                // outright was the first version of this fix and it reached much
+                // further than the castle: this switch runs the whole game (five live
+                // placements -- ganontika 18 flag 25, jyasinzou 4/8/15/18 flags 35, 36,
+                // 15 and 22), and flags 15, 22 and 25 are < 0x20, so they live in
+                // `swch`, which Play_SaveSceneFlags (z_play.c:2097) copies into the
+                // save file. Never clearing them made a Light-Arrow activation
+                // PERMANENT and written to disk -- the Spirit puzzles solved for good,
+                // on that save, back in single player. It also re-armed the two defects
+                // the reset exists for, named right above: the rock in the wall
+                // vanishing on its own and the cobra mirror turning to face the sun.
+                // A local clear is exact on both machines, because the global that
+                // gates it is already per-client.
                 if (this->actor.room != 25) {
-                    Flags_UnsetSwitch(play, this->actor.params >> 8 & 0x3F);
+                    ObjLightswitch_UnsetSwitchLocal(play, this->actor.params >> 8 & 0x3F);
                 }
                 sunSwitchActivatedByLightArrow = false;
                 break;
@@ -296,6 +348,18 @@ void ObjLightswitch_Off(ObjLightswitch* this, PlayState* play) {
                 if (sunLightArrowsEnabledOnSunSwitchLoad) {
                     if (this->collider.base.ac != NULL && this->collider.base.ac->id == ACTOR_EN_ARROW) {
                         sunSwitchActivatedByLightArrow = true;
+                        // Co-op: tell the other player too. This global is what gates
+                        // the Destroy-time reset, and only the client whose own arrow
+                        // hit ever sets it -- a replicated arrow arrives with its AT
+                        // collider disarmed (FxSync.cpp, `atFlags &= ~AT_ON`), so it
+                        // can never trip this branch. Without the announcement P2
+                        // receives the switch flag, never learns WHY, and so never
+                        // clears it: flags 15, 22 and 25 are < 0x20, they live in
+                        // `swch`, and Play_SaveSceneFlags writes them to the save
+                        // file. The Light-Arrow activation would become permanent on
+                        // his machine -- the very thing making the reset local was
+                        // meant to stop, just moved one seat over.
+                        FxSync_OnSunSwitchLightArrow();
                     }
                 }
             }
