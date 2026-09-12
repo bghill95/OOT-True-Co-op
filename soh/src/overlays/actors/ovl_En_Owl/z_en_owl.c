@@ -110,6 +110,31 @@ static InitChainEntry sInitChain[] = {
     ICHAIN_F32(uncullZoneDownward, 2400, ICHAIN_STOP),
 };
 
+// Co-op (Anchor/DummyPlayer.cpp)
+s32 Anchor_IsSessionActive(void);
+
+/**
+ * Co-op: clear a scene switch flag WITHOUT broadcasting it.
+ *
+ * Flags_UnsetSwitch fires GameInteractor_ExecuteOnSceneFlagUnset (z_actor.c:706) whenever
+ * the bit was actually on, and HookHandlers.cpp:148-149 turns that into an UNSET_FLAG
+ * packet. That is right for a world event and wrong for the housekeeping an *_Init does
+ * on a scene load: the peer did not load our scene, so our reset overwrites the state he
+ * is standing in. Same shape as the fix already in z_bg_mizu_shutter.c:97-109.
+ */
+static void EnOwl_UnsetSwitchLocal(PlayState* play, s32 flag) {
+    if (!Anchor_IsSessionActive()) {
+        Flags_UnsetSwitch(play, flag);
+        return;
+    }
+
+    if (flag < 0x20) {
+        play->actorCtx.flags.swch &= ~(1 << flag);
+    } else {
+        play->actorCtx.flags.tempSwch &= ~(1 << (flag - 0x20));
+    }
+}
+
 void EnOwl_Init(Actor* thisx, PlayState* play) {
     EnOwl* this = (EnOwl*)thisx;
     ColliderCylinder* collider;
@@ -198,7 +223,26 @@ void EnOwl_Init(Actor* thisx, PlayState* play) {
             break;
         case OWL_HYLIA_SHORTCUT:
             this->actionFunc = EnOwl_WaitHyliaShortcut;
-            Flags_UnsetSwitch(play, 0x23);
+            // Co-op: re-arm the Lake Hylia gravestone gate on OUR side only.
+            //
+            // Switch 0x23 is not bookkeeping, it is a progression gate: Bg_Haka:81-84
+            // refuses to let child Link pull the Lake Hylia stone while it is clear, and
+            // the only thing that sets it is func_80ACB148:596, at the end of this owl's
+            // conversation. 0x23 is >= 0x20 so Play_SaveSceneFlags (z_play.c:2093-2100)
+            // never writes it to the save -- but replication does not care:
+            // GameInteractor_RawAction::UnsetSceneFlag clears tempSwch on any client in
+            // the same scene (GameInteractor_RawAction.cpp:175-180).
+            //
+            // So, before: P2 talks to the owl and walks to the stone, P1 enters Lake Hylia
+            // behind him, this Init clears 0x23 -- and the stone stops moving for P2, with
+            // nothing on screen to say why. He has to find the owl and sit through it again.
+            //
+            // The reset itself must stay: vanilla wants the gate re-armed on every visit,
+            // and 0x23 is a temp flag precisely so that it is. It is a scene-load reset,
+            // local housekeeping, not a world event. The SET at :596 keeps travelling,
+            // which is the half a shared world wants: one conversation opens the stone for
+            // both.
+            EnOwl_UnsetSwitchLocal(play, 0x23);
             return;
         case OWL_DEATH_MOUNTAIN:
             this->actionFunc = EnOwl_WaitDeathMountainShortcut;
