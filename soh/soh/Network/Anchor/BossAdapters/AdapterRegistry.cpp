@@ -18,6 +18,7 @@ void RegisterVolvagiaAdapters();
 void RegisterMorphaAdapter();
 void RegisterBongoBongoAdapter();
 void RegisterBossTwAdapter();
+void RegisterBossGanonAdapter();
 
 namespace EnemySync {
 
@@ -55,6 +56,7 @@ void RegisterBuiltInAdapters() {
     RegisterMorphaAdapter();
     RegisterBongoBongoAdapter();
     RegisterBossTwAdapter();
+    RegisterBossGanonAdapter();
 }
 
 } // namespace EnemySync
