@@ -962,6 +962,29 @@ static bool IsRegrower(Actor* actor) {
     return actor->id == ACTOR_EN_KAREBABA;
 }
 
+// Drops on death, but never fires the defeat hook — so nothing clears
+// pendingKillFrames for it, and it reaches the force-kill with its drop already
+// made. Rolling a generic one there would be a SECOND drop.
+//
+// This is the same defect ownsDeathDrop handles, on actors that cannot carry
+// that flag: it lives on ActorSyncAdapter, and these two have no adapter.
+// Giving them one to hold a single bool would be worse than the bug — neither
+// writes its own colChkInfo.health, so both keep the 0 from Actor_Spawn's
+// memset, and registering an adapter would flip them out of leftStream
+// (see EnemySync.cpp's leftStream clause) into full mirror suppression, with a
+// draw reading fields nobody sends. That is precisely why BossTwAdapter's
+// Register is left empty.
+//
+// Found by sweeping every En_* overlay for "drops at least once, never calls
+// GameInteractor_ExecuteOnEnemyDefeat": ten actors, of which only these two are
+// tracked at all (the rest are ACTORCAT_PROP or NPC). En_Fw appears force-killed
+// three times in the 2026-09-12 session log, so this is observed, not theorised.
+static bool DropsWithoutDefeatHook(int16_t actorId) {
+    // En_Fw: Item_DropCollectibleRandom(..., 0xA0) at z_en_fw.c:271.
+    // En_Zl3: Item_DropCollectible(play, &sp20, 3) at z_en_zl3.c:140.
+    return actorId == ACTOR_EN_FW || actorId == ACTOR_EN_ZL3;
+}
+
 // Keep a dying copy's pending hit lethal until its own damage code takes the
 // death branch. Every frame: health 1, damage 1 (Actor_ApplyDamage: damage >=
 // health -> 0 -> death), and the AC hit re-primed on its collider. The enemy's
@@ -2645,7 +2668,7 @@ static void OnEnemyActorUpdate(Actor* actor) {
             if (adapter != nullptr && adapter->OnForcedKill != nullptr) {
                 adapter->OnForcedKill(actor);
             }
-            if (adapter == nullptr || !adapter->ownsDeathDrop) {
+            if ((adapter == nullptr || !adapter->ownsDeathDrop) && !DropsWithoutDefeatHook(actor->id)) {
                 Item_DropCollectibleRandom(gPlayState, actor, &actor->world.pos, 0x10);
             }
             Actor_Kill(actor);
