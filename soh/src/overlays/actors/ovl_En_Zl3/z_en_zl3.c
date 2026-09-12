@@ -2482,6 +2482,25 @@ s32 func_80B5944C(PlayState* play, s32 limbIndex, Gfx** dList, Vec3f* pos, Vec3s
     return false;
 }
 
+void FxSync_OnTowerTimerStart(s16 seconds);
+s32 Anchor_IsSessionActive(void);
+
+// Is a collapse countdown of OURS already ticking?
+//
+// subTimerState 1..4 is the countdown's arm / slide-in / count sequence
+// (z_parameter.c:6135-6199); 7..10 is the same state machine counting UP (the
+// running man's stopwatch), 5 and 6 are its two expiry states, 0 is off.
+//
+// Tested on the state and NEVER on subTimerSeconds, for exactly the reason
+// written up in z_obj_roomtimer.c for the other HUD clock: nothing in the game
+// ever writes the seconds back to 0 — func_80088AA0 only ever assigns what it is
+// given, and stopping a clock just parks the state — so anyone who had once run
+// a timed errand would keep a positive leftover and make a seconds-based test
+// lie for the rest of the session. Mirrored by FxSync::CollapseTimerRunning().
+static s32 EnZl3_TowerTimerRunning(void) {
+    return (gSaveContext.subTimerState >= 1) && (gSaveContext.subTimerState <= 4);
+}
+
 s32 func_80B59698(EnZl3* this, PlayState* play) {
     s32 cond = Flags_GetSwitch(play, 0x37) &&
                ((play->sceneNum == SCENE_GANON_BOSS) || (play->sceneNum == SCENE_GANONS_TOWER_COLLAPSE_EXTERIOR) ||
@@ -2536,6 +2555,31 @@ void func_80B59828(EnZl3* this, PlayState* play) {
 
     if (func_80B59698(this, play) != 0) {
         func_80088AA0(180);
+        // Co-op: this is the replay arm of the sequence. Announce only — there is
+        // nothing to adopt at this site, so the call above stays unconditional. It
+        // still has to be announced: whoever re-enters second would otherwise
+        // restart a fresh three minutes against the other player's clock.
+        //
+        // Two things an earlier version of this comment got wrong, corrected here
+        // because a wrong invariant is what the NEXT change will be built on:
+        //
+        //  - func_80B59698 does not test "no countdown is live". Its third clause
+        //    (:2514) is `(subTimerSeconds <= 0) || (subTimerState == 0)`, a
+        //    disjunction: a countdown still in state 1..4 that has reached zero
+        //    seconds but has not yet parked satisfies the first term. The window is
+        //    a tick or two, but it exists.
+        //  - the adoption does NOT make the receiver take this same branch. It puts
+        //    him in state 1..4, i.e. func_80B59698 FALSE for him — the opposite
+        //    branch, which skips this whole re-arm block: Magic_Fill, the health
+        //    accumulator, Bg_Zg's respawn and the 0x21..0x2A flag wipe, and may
+        //    Actor_Kill Zelda instead. There is no convergence here to rely on.
+        //    It does not bite today only because func_80B59828 is reached from
+        //    func_80B59DB8 (:2694) as soon as OBJECT_ZL2_ANIME2 finishes loading —
+        //    one or two frames after the scene load, before any heartbeat can
+        //    arrive. Do not lean on that ordering without re-checking it.
+        if (Anchor_IsSessionActive()) {
+            FxSync_OnTowerTimerStart(180);
+        }
         func_80B53468();
         gSaveContext.healthAccumulator = 320;
         Magic_Fill(play);
@@ -2581,7 +2625,33 @@ void func_80B59AD0(EnZl3* this, PlayState* play) {
     Actor* thisx = &this->actor; // unused, necessary to use 'this' first to fix regalloc
 
     Flags_SetSwitch(play, 0x36);
-    func_80088AA0(180);
+    // Co-op: the collapse countdown, shared. This actor is ACTORCAT_NPC, so it is
+    // outside EnemySync's tracked set and nothing suppresses the mirror's update:
+    // every client runs its own Zelda and arms its own three minutes the frame ITS
+    // player's escape cutscene reaches csAction 7 (func_80B553E8, :898). Entering
+    // ten seconds apart gave two clocks ten seconds apart, and z_en_eg.c ejects
+    // only whoever hits zero first.
+    //
+    // Same shape as Obj_Roomtimer (z_obj_roomtimer.c:61-85): adopt a countdown
+    // already running instead of restarting it, and announce the one we do start
+    // so the other side adopts ours. We only announce when we actually armed it,
+    // and FxSync refuses to re-arm a live countdown, so this cannot ping-pong.
+    // z_en_eg.c re-announces the remaining seconds every 40 ticks on top of this,
+    // for the player who was not yet in the scene when the one-shot went out.
+    //
+    // No collision with any other user of this clock. The four other callers of
+    // func_80088AA0 (En_Hs, En_Kz's Biggoron errand, En_Mk, En_Mm2's marathon) are
+    // overworld actors: none of them can be running in the four collapse scenes,
+    // which is the set the receiving side gates adoption on, so neither can this
+    // announcement land on one of their clocks nor theirs on this one. And
+    // Obj_Roomtimer is not a collision either, despite the plan's warning and
+    // despite sharing the HUD: it drives timer 1 through func_80088B34
+    // (timerSeconds / timerState), a different pair of fields from the subTimer
+    // this writes, and a different FxSync event.
+    if (!Anchor_IsSessionActive() || !EnZl3_TowerTimerRunning()) {
+        func_80088AA0(180);
+        FxSync_OnTowerTimerStart(180);
+    }
     func_80B54EA4(this, play);
     func_80B53614(this, play);
     Flags_UnsetEventChkInf(EVENTCHKINF_WATCHED_GANONS_CASTLE_COLLAPSE_CAUGHT_BY_GERUDO);
