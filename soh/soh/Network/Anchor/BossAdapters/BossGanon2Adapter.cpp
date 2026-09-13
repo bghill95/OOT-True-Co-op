@@ -2,6 +2,7 @@
 #include "soh/Network/Anchor/EnemySync.h"
 #include "soh/Network/Anchor/JsonConversions.hpp"
 #include "soh/OTRGlobals.h"
+#include "soh/Enhancements/randomizer/randomizer.h"
 
 #include <cmath>
 
@@ -31,9 +32,13 @@ void func_808FD5F4(BossGanon2* self, PlayState* play);
 void func_80901020(BossGanon2* self, PlayState* play);
 // z_boss_ganon2.c:1531 — the cutscene itself, compared by address only.
 void func_8090120C(BossGanon2* self, PlayState* play);
-// z_player.c:10705 — re-equips the sword after the Ganon fight disarm, and is the
-// call that knows about the randomizer's shuffled Master Sword. Non-static.
+// z_player.c:10705 — puts the sword back in Link's hand after the Ganon fight
+// disarm. It knows NOTHING about the randomizer; see the handback below.
 void func_80846720(PlayState* play, Player* self, s32 arg2);
+// OTRGlobals.h:132, but that declaration sits inside an `#ifndef __cplusplus`
+// block, so every .cpp in this tree redeclares it here (CosmeticsEditor.cpp:57,
+// NoMasterSword.cpp:14, PauseWarp.cpp:13). Same idiom.
+u8 Randomizer_GetSettingValue(RandomizerSettingKey randoSettingKey);
 // z_boss_ganon2.c:61. Non-static, so an extern declaration reaches it. Only ever
 // null-tested here; the incomplete type is deliberate (no En_Zl3 header needed).
 struct EnZl3;
@@ -326,20 +331,40 @@ static void BossGanon2_SerializeExtras(Actor* actor, nlohmann::json& x) {
     // not its hitbox; that half belongs with §3.4's collision work.
     x["fr"] = R3(g->unk_324);
 
-    // The Master Sword, §3.5. It is sBossGanon2Particles[0] -- a file static, not an
-    // actor, so nothing replicates it, and the whole particle update runs from
-    // BossGanon2_Update (:2256) which is suppressed on the mirror. Result before this:
-    // on P2's machine the sword's `type` stayed 0, so it was neither drawn nor
-    // reachable. He could not walk to a blade he could not see.
+    // The Master Sword, §3.5. It is sBossGanon2Particles[0] -- a global, not an
+    // actor, so nothing replicates it, and the particle update runs from
+    // BossGanon2_Update which is suppressed on the mirror.
     //
-    // Only the fields the Draw needs. The particle loop that draws it is inside
-    // BossGanon2_Draw (:2992), which runs on every client, so `type` + where + how big
-    // + which way up is the whole requirement. Sent only while the sword exists, which
-    // is the short window between Ganon knocking it out of Link's hands and someone
-    // picking it up.
+    // What this fixes is a DRIFT, not an absence, and the first version of this
+    // comment claimed the opposite -- that P2 "could not walk to a blade he could
+    // not see". Wrong: both func_808FD210 and the unk_2E = 1 plant are inside
+    // func_808FD5F4, the introduction, which C3.2 makes every client run for
+    // itself. The mirror therefore forges its own blade in slot 0 and draws it.
+    // What it cannot do is keep it in step afterwards, since its update stops: any
+    // divergence in where the blade came to rest is frozen in. Streaming the
+    // placement keeps both copies on the same spot, which is what the pickup test
+    // then measures against. (The commit message got this right; the comment did
+    // not.)
     //
-    // The other half of §3.5 is in the overlay: the pickup proximity test now runs
-    // against Anchor_NearestPlayer, so EITHER player can reach it.
+    // Only the fields the Draw needs: `type`, where, and which way up. NOT how big
+    // -- the type 1 draw hardcodes Matrix_Scale(0.03f) and never reads
+    // effect->scale, which only type 2 particles use. `scale` travels anyway
+    // because the receiver writes the whole record; it is three bytes of nothing.
+    // Sent only while the sword exists, which is the window between Ganon knocking
+    // it out of Link's hands and someone picking it up.
+    //
+    // Why clearing slot 0 on the mirror is safe -- and the original reasoning for
+    // this was also wrong. It is NOT that nothing else claims slot 0: func_808FD27C
+    // hands out the first free slot starting at 0. What makes it safe is that the
+    // two windows are disjoint. DeserializeExtras is only reached past the
+    // ShouldMirror gate (EnemySync.cpp:1759), and that gate keeps the mirror local
+    // for the whole introduction -- which is the only time this overlay fills the
+    // particle pool. When we deserialize, its update is not running; when its
+    // update runs, we do not deserialize. Move DeserializeExtras ahead of that gate
+    // and this breaks.
+    //
+    // The other half of §3.5 is in the overlay: the pickup proximity test runs
+    // against Anchor_NearestPlayerToPos, so EITHER player can reach it.
     {
         // "msg": the blade has been recovered. Not unk_334 as state -- its
         // consequence, handing each client's own Link his sword back. See
@@ -464,7 +489,9 @@ static void BossGanon2_MirrorFireRing(BossGanon2* g) {
         return;
     }
     for (size_t j = 0; j < ARRAY_COUNT(player->bodyFlameTimers); j++) {
-        player->bodyFlameTimers[j] = Rand_S16Offset(0, 200);
+        // bodyFlameTimers is u8[]; Rand_S16Offset(0, 200) yields 0..199, so the
+        // narrowing is exact. Cast to say so rather than let C4244 imply a bug.
+        player->bodyFlameTimers[j] = (u8)Rand_S16Offset(0, 200);
     }
     player->bodyIsBurning = true;
     func_8002F6D4(gPlayState, &g->actor, 10.0f, Math_Atan2S(dz, dx), 0.0f, 0x10);
@@ -488,14 +515,34 @@ static void BossGanon2_MirrorFireRing(BossGanon2* g) {
 // The restitution goes through the game's own two calls, the ones behind the
 // "this is when link picks up the sword in the Ganon fight" comment in
 // z_player.c:func_8085283C -- Item_Give then func_80846720(play, player, 0).
-// Doing it by hand would miss what func_80846720 handles, in particular the
-// randomizer case where the Master Sword is shuffled and must NOT come back.
+//
+// The randomizer guard below is NOT redundant, and the first version of this
+// function got that badly wrong: its comment claimed func_80846720 handled the
+// shuffled-Master-Sword case. It does not. Read in full (z_player.c:10705-10721)
+// it contains no randomizer test at all -- it reads D_808546F0[linkAge] and
+// equips unconditionally. Item_Give does not filter either (z_parameter.c:1956
+// and :1979 set both the owned flag and buttonItems[0]; only sticks and nuts are
+// gated). The real vanilla guard is hasFoundMasterSword, a per-client file static
+// computed once in BossGanon2_Init (:196-200), which makes the pickup and the
+// draw skip out entirely on a shuffled seed -- and this path does not go through
+// either of them.
+//
+// Without the guard: a seed where P1 found the Master Sword and P2 did not would
+// hand P2 a blade the seed refuses him, duplicating the check instead of moving
+// it, and leaving INFTABLE_SWORDLESS set beside an equipped sword.
 static void BossGanon2_MirrorGiveMasterSword(BossGanon2* g) {
     if (gPlayState == NULL) {
         return;
     }
     Player* player = GET_PLAYER(gPlayState);
     if (player == NULL) {
+        return;
+    }
+    if (IS_RANDO && Randomizer_GetSettingValue(RSK_SHUFFLE_MASTER_SWORD) &&
+        !CHECK_OWNED_EQUIP(EQUIP_TYPE_SWORD, EQUIP_INV_SWORD_MASTER)) {
+        // Same refusal the disarm itself takes, z_player.c:16510-16516.
+        g->unk_334 = 1; // consume the event; this client is meant to stay swordless
+        ESYNC_LOG("[BossGanon2Sync] Master Sword handback refused: shuffled and not owned");
         return;
     }
     // unk_334 is the mirror's own latch, and nothing local ever writes it (its
@@ -666,7 +713,24 @@ static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
 // actionFunc value, so there is nothing else to compare against.)
 static uint8_t BossGanon2_GetPhase(Actor* actor) {
     BossGanon2* g = (BossGanon2*)actor;
-    if (actor->colChkInfo.health == 0) {
+    // DEFEATED is "the ending has actually started", not "health reached 0", and
+    // the difference is load-bearing in two ways.
+    //
+    // Too early: health hits 0 before the ending in co-op, because the debt
+    // fallback (EnemySync.cpp:2787) writes it directly. The edge is consumed once
+    // and only once (EnemySync.cpp:1745), so a DEFEATED sent while the authority
+    // is still fighting releases the mirror for good -- st.dying, remoteStates
+    // erased -- and leaves two Ganons diverging for the rest of the fight.
+    //
+    // Never: colChkInfo.health is a u8 while the fight compares it signed
+    // (:2048, `temp_v0_4 <= 0`). Two damage off a health of 1 leaves 255, which
+    // the overlay treats as dead and `== 0` does not see at all.
+    //
+    // func_8090120C is assigned in exactly one place, func_80901020:1492, which is
+    // the only way into the ending -- so this is precisely "the ending is running",
+    // and it stays true for the rest of the fight. Reading actionFunc here is
+    // allowed: it is compared locally and only the resulting uint8_t is streamed.
+    if (g->actionFunc == func_8090120C) {
         return GANON2_PHASE_DEFEATED;
     }
     if (g->actionFunc == func_808FD5F4) {
@@ -740,15 +804,16 @@ static bool BossGanon2_OnPhaseChange(Actor* actor, uint8_t fromPhase, uint8_t to
         return true;
     }
 
-    BossGanon2ActionFunc before = g->actionFunc;
     actor->colChkInfo.health = 0;
     actor->flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
     func_80901020(g, gPlayState);
 
-    if (g->actionFunc == before) {
-        ESYNC_LOG("[BossGanon2Sync] defeat handoff REFUSED: setup did not take, staying mirrored");
-        return false;
-    }
+    // No "did the setup take?" check here, unlike phase 1's handoff. There it was
+    // load-bearing: BossGanon_SetupDeathCutscene is conditional on
+    // OBJECT_GANON_ANIME2 and quietly does nothing otherwise. func_80901020 has no
+    // such condition -- it assigns actionFunc = func_8090120C unconditionally
+    // (z_boss_ganon2.c:1492) -- so the equivalent test could never fire, and a
+    // guard that can never fire reads like protection that is not there.
     ESYNC_LOG("[BossGanon2Sync] defeat handoff (func_80901020 ran locally)");
     return true;
 }

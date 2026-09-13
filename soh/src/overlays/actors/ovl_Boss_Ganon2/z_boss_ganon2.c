@@ -85,6 +85,10 @@ Player* Anchor_NearestPlayer(Actor* from);
 // Same, but nearest to a POINT. Use it when the proximity question is about
 // something that is not this actor -- see the Master Sword pickup below.
 Player* Anchor_NearestPlayerToPos(Vec3f* from);
+// Co-op (Anchor/DummyPlayer.cpp:448): index 0 is the local Link, then every live
+// same-scene puppet; NULL when exhausted. For questions that must be asked of
+// EVERY player rather than of the nearest one -- see the finishing blow.
+Actor* Anchor_PlayerActorAt(s32 index);
 
 void BossGanon2_InitRand(s32 seedInit0, s32 seedInit1, s32 seedInit2) {
     sBossGanon2Seed1 = seedInit0;
@@ -1720,16 +1724,48 @@ void func_8090120C(BossGanon2* this, PlayState* play) {
             // (startPlayerCutscene, the sub-camera). Either player can now END the
             // fight; each client then watches its own ending, which is the same
             // shape as the defeat handoff itself.
-            Player* striker = Anchor_NearestPlayerToPos(&this->unk_1B8);
-            if (striker == NULL) {
-                striker = player;
-            }
+            // It must test EVERY player, not the nearest one. "Nearest" is a
+            // valid reduction only for a PURE proximity question -- if the
+            // closest player is too far, everyone is, which is why the Master
+            // Sword pickup above can use it. This gate is a conjunction of four
+            // independent predicates: angle, distance, weapon swinging, Master
+            // Sword in hand. Evaluating only the nearest makes it NON-MONOTONE:
+            // an idle, disarmed puppet standing on unk_1B8 two units closer
+            // silently locks out the player who IS swinging the Master Sword at
+            // it. P2 would block P1 by doing nothing at all.
+            //
+            // Anchor_PlayerActorAt walks index 0 (the local Link) then every live
+            // same-scene puppet, returning NULL when exhausted -- so offline this
+            // loop runs exactly once, on GET_PLAYER, and the vanilla path is
+            // unchanged.
             this->unk_339 = 23;
-            temp_f14 = this->unk_1B8.x - striker->actor.world.pos.x;
-            temp_f12 = this->unk_1B8.z - striker->actor.world.pos.z;
-            temp_a0_2 = Math_Atan2S(temp_f12, temp_f14) - striker->actor.shape.rot.y;
-            if ((ABS(temp_a0_2) < 0x2000) && (sqrtf(SQ(temp_f14) + SQ(temp_f12)) < 70.0f) &&
-                (striker->meleeWeaponState != 0) && (striker->heldItemAction == PLAYER_IA_SWORD_MASTER)) {
+            Player* striker = NULL;
+            {
+                s32 pi;
+                for (pi = 0; pi < 8; pi++) {
+                    Actor* candidateActor = Anchor_PlayerActorAt(pi);
+                    f32 dx;
+                    f32 dz;
+                    s16 yawDiff;
+                    Player* candidate;
+
+                    if (candidateActor == NULL) {
+                        break;
+                    }
+                    candidate = (Player*)candidateActor;
+                    dx = this->unk_1B8.x - candidate->actor.world.pos.x;
+                    dz = this->unk_1B8.z - candidate->actor.world.pos.z;
+                    yawDiff = Math_Atan2S(dz, dx) - candidate->actor.shape.rot.y;
+
+                    if ((ABS(yawDiff) < 0x2000) && (sqrtf(SQ(dx) + SQ(dz)) < 70.0f) &&
+                        (candidate->meleeWeaponState != 0) &&
+                        (candidate->heldItemAction == PLAYER_IA_SWORD_MASTER)) {
+                        striker = candidate;
+                        break;
+                    }
+                }
+            }
+            if (striker != NULL) {
                 func_80064520(play, &play->csCtx);
                 GameInteractor_ExecuteOnBossDefeat(&this->actor);
                 this->unk_39E = Play_CreateSubCamera(play);
@@ -2071,33 +2107,50 @@ void BossGanon2_Update(Actor* thisx, PlayState* play) {
     // Co-op (§3.6): Ganon at 0 health but still on his feet is not a state this
     // fight has an answer for, and nothing else ever gets him out of it.
     //
-    // Vanilla cannot reach it. Health only ever drops in the two damage branches
-    // (:1987 and :2020), and both call func_80901020 in the same breath. A remote
-    // hit takes neither: ApplyRemoteHit stamps AC_HIT on the collider and lets the
-    // actor's own update do the accounting (EnemySync.cpp:876), but the branch that
-    // ends this fight is gated on unk_424.elements[15] -- the tail -- and a
-    // forwarded hit does not land on that element (§3.4, the per-element routing
-    // that does not exist yet). So when P2 lands the blow, the authority's Ganon
-    // reaches 0 health and simply stays standing, forever.
+    // Vanilla cannot reach it, because the damage function refuses it in three
+    // separate places (:2044-2053): under 0x15 with the sword still on the floor
+    // it goes to func_80900818 instead of dying, a lethal hit calls func_80901020
+    // in the same breath, and the remaining branch clamps 0 back up to 1. Health
+    // simply never rests at 0.
     //
-    // Measured in a real fight on 2026-09-13: P2 saw the whole ending -- Zelda,
-    // the beam of light -- while P1 stood in the arena next to a Ganon with no
-    // health left. That is the original defect turned inside out.
+    // A remote hit takes none of those branches, and the reason is worse than the
+    // per-element mis-routing §3.4 describes. Ganon2 submits TWO AC colliders in
+    // the same update -- unk_424 (body and tail) at :2201 and unk_444 (his weapon)
+    // at :2203 -- and EnemySync's OnColliderSetAC overwrites its record on each
+    // call (EnemySync.cpp:2891), so the collider it stamps is always unk_444.
+    // func_80902524 only ever reads unk_424, so a forwarded hit is not
+    // mis-attributed: it is never seen at all. What actually takes the health down
+    // is the debt fallback, EnemySync.cpp:2787, which writes colChkInfo.health
+    // directly and clamps it to 0 sixty frames later, bypassing all three refusals.
     //
-    // This is deliberately a state repair, not a damage path: it asks "is he dead
-    // and not yet dying", the one question whose answer cannot depend on WHICH
-    // client did it or HOW. It is idempotent (func_80901020 installs
-    // func_8090120C) and unreachable offline, so the vanilla fight is untouched.
-    // It is not a substitute for §3.4: hits landing on the wrong element still
-    // mis-account damage all through the fight. It only guarantees that however
-    // the last point of health went, the ending starts here too.
+    // That is also the honest explanation of what was measured from the controller
+    // on 2026-09-13 -- "P2 damages Ganon's whole body, P1 only the tail" -- and it
+    // is why P2 could leave the authority's Ganon standing at 0 health.
+    //
+    // WHICH IS WHY THE REPAIR MUST ASK ABOUT THE SWORD. Reaching 0 with unk_334 == 0
+    // means the Master Sword is still planted where the introduction threw it and
+    // NEITHER Link is carrying one -- the introduction disarms both, locally, on
+    // every client. Starting the ending there arms a door nobody can open: the
+    // finishing blow at :1732 demands PLAYER_IA_SWORD_MASTER in hand, so case 6
+    // waits forever, :2199 stops submitting colliders, and the mirror has already
+    // been released for good by the phase edge. Both players, stuck, permanently.
+    // The first version of this guard did exactly that, and it replaced a state
+    // vanilla RECOVERS from (:1478-1479 puts him back to 25) with a deadlock.
+    //
+    // So: sword recovered -> start the ending, which is what the damage branch
+    // would have done. Sword still on the floor -> refuse 0 exactly as :2052-2053
+    // refuses it, and let the fight carry on to the pickup it is waiting for.
     //
     // The null check on Zelda is the same guard the mirror's defeat handoff takes:
     // the ending dereferences sBossGanon2Zelda from end to end, and staying stuck
     // is a better failure than crashing.
     if ((this->actor.colChkInfo.health == 0) && (this->actionFunc != func_8090120C) &&
         (this->actionFunc != func_808FD5F4) && (sBossGanon2Zelda != NULL)) {
-        func_80901020(this, play);
+        if (this->unk_334 == 0) {
+            this->actor.colChkInfo.health = 1;
+        } else {
+            func_80901020(this, play);
+        }
     }
 
     if ((this->unk_337 == 0) || (this->unk_337 == 2)) {
@@ -3014,16 +3067,31 @@ void func_80905DA8(BossGanon2* this, PlayState* play) {
                     // stood on the sword and nothing happened, every time, because P1
                     // was closer to the boss. Select on the same point you test.
                     //
-                    // What this does NOT do: hand the sword to P2. The sequence that
-                    // follows (csState 10) plays on the authority and gives the sword
-                    // to ITS Link. Either player can now UNBLOCK the fight; who ends
-                    // up holding the blade is §3.6's problem, and §3.6 has to be
-                    // measured before it is written.
+                    // What this does NOT do: hand the sword to the reacher. The
+                    // sequence that follows (csState 10) plays on the authority and
+                    // arms ITS Link; the mirror gets its own blade back through the
+                    // "msg" consequence in BossGanon2Adapter.cpp. Either player can
+                    // UNBLOCK the fight, and both end up armed.
+                    //
+                    // The actionFunc test is not decoration. `this->csState = 10`
+                    // below only means "pick up the sword" inside func_80900890,
+                    // which is the only action function with that case (:1411). This
+                    // whole effect loop runs unconditionally at the tail of
+                    // BossGanon2_Update (:2350) in EVERY action function, so without
+                    // the test a Link who merely walks over the blade mid-fight
+                    // erases it (`type = 0`) while unk_334 stays 0 -- the sword is
+                    // gone, the latch never set, the fight unwinnable -- or, during
+                    // func_8090120C, jumps the ending straight to ITS case 10, the
+                    // beam of light, skipping the finishing blow. The hazard predates
+                    // co-op, but making the blade reachable by a puppet is exactly
+                    // what invites a second player to walk onto it at the wrong
+                    // moment, so the guard belongs with that change.
                     Player* reacher = Anchor_NearestPlayerToPos(&effect->position);
                     if (reacher == NULL) {
                         reacher = player;
                     }
-                    if ((SQ(reacher->actor.world.pos.x - effect->position.x) +
+                    if ((this->actionFunc == func_80900890) &&
+                        (SQ(reacher->actor.world.pos.x - effect->position.x) +
                          SQ(reacher->actor.world.pos.z - effect->position.z)) < SQ(25.0f)) {
                         effect->type = 0;
                         this->csState = 10;
