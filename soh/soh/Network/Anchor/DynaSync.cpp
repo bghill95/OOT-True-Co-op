@@ -16,6 +16,7 @@ extern "C" {
 #include "src/overlays/actors/ovl_Bg_Hidan_Rock/z_bg_hidan_rock.h"
 #include "src/overlays/actors/ovl_Bg_Ice_Objects/z_bg_ice_objects.h"
 #include "src/overlays/actors/ovl_Bg_Gnd_Iceblock/z_bg_gnd_iceblock.h"
+#include "src/overlays/actors/ovl_En_Trap/z_en_trap.h" // SPIKETRAP_MODE_*, for the pinned split
 extern PlayState* gPlayState;
 }
 
@@ -158,6 +159,118 @@ static bool IsSyncedDynaActor(const Actor* actor) {
             // The other params are the gates: one-shot switch-flag movers the flag
             // sync already replays on both clients, so they stay out.
             return actor->params == 0;
+
+        default:
+            return false;
+    }
+}
+
+// PINNED: free-phase OBSTACLES whose position must agree but whose Update must keep
+// running on the mirror. Third regime, and it exists because `synced` is the wrong
+// answer for a hazard.
+//
+// `synced` suppresses the mirror's Update. For a platform that costs nothing. For
+// these two actors the Update IS the hazard: it is where the collider is submitted
+// and where the damage is dealt --
+//   En_Goroiwa  z_en_goroiwa.c:761-767, the only CollisionCheck_SetAT/SetOC in the
+//               overlay, plus the knockback in EnGoroiwa_Roll (:605-607) and the
+//               reverse/wait state machine;
+//   En_Trap     z_en_trap.c:173-179, `play->damagePlayer(play, -4)` + func_8002F7A0
+//               inline in the Update on a plain xzDistToPlayer test -- there is no AT
+//               collider at all -- plus the SetOC/SetAC at :384-386.
+// Classed `synced` they would stop hurting the mirroring player ALTOGETHER: a boulder
+// and five blades that are lethal for whoever happens to hold the scene authority and
+// purely decorative for the other. That is the BG_HAKA_TUBO defect this file already
+// paid for once (see IsClaimableDynaActor: the small-key jar no mirror could break).
+//
+// `claimable` -- which is exactly "pin the position, keep the Update running" -- is
+// not available to them either: its claim signal is ((DynaPolyActor*)actor)->unk_150
+// (push) or ->interactFlags (ride), and NEITHER actor is a DynaPolyActor. Grep both
+// overlays: no DynaPoly_SetBgActor, no DynaPolyActor in the struct. That cast would
+// read past the end of a plain Actor. Hence a separate regime rather than a reuse.
+//
+// So: pin world.pos/shape.rot from the authority's stream every frame and leave
+// *should alone. The mirror's own AI advances at most one update from the pinned
+// value before being pinned again, and each client keeps hurting ITS OWN Link from a
+// position both clients now agree on. Neither actor registers DynaPoly, so both are
+// fed to OnDynaRegistered by an OnActorInit hook, like BG_SPOT01_FUSYA.
+//
+// NOT a place for player-REACTIVE obstacles: see the En_Trap split below. Pinning one
+// of those is strictly worse than leaving it alone, because its correct behaviour is
+// already per-client.
+static bool IsPinnedDynaActor(const Actor* actor) {
+    switch (actor->id) {
+        // Rolling boulders. EnGoroiwa_Init ends on EnGoroiwa_SetupRoll (:558), so the
+        // boulder starts down its scene path the instant the room loads: the phase is
+        // decided by WHEN each client loaded the room and never converges -- the
+        // BG_MORI_HASHIRA4 signature. On top of that the trajectory is PLAYER-DEPENDENT
+        // (EnGoroiwa_Roll reverses on AT_HIT, :589-599), so the two copies cannot be
+        // kept in step by determinism alone; the position has to be streamed.
+        // All 20 placements are the same free-phase path roller, so the whole id
+        // qualifies -- counted in the scene data: HIDAN r5 x6 / r10 x3 / r13 x1,
+        // MIZUsin r12 x2, ganontika r8 x2, men r2 x2, spot04 x1, spot09 x1, spot16 x2.
+        // The overlay was already patched for co-op twice (the Anchor_IsSessionActive
+        // pause at :743 and the AT_HIT owner guard at :605); both removed a DIVERGENCE
+        // SOURCE, neither aligns the phase. This does.
+        case ACTOR_EN_GOROIWA:
+            return true;
+
+        // Spike traps, but only the two free-phase modes. EnTrap_Init/EnTrap_Update
+        // branch on the mode bits of the low params byte (params &= 0xFF at :72):
+        //   LINEAR (0x10)   shuttles at a constant speed from the room load, reversing
+        //                   on a wall or a poly 30 units ahead -> free phase.
+        //   CIRCULAR (0x20) vAngularPos += vAngularVel every update from the room load
+        //                   (:211-212) -> free phase, the EN_TRAP twin of
+        //                   BG_SPOT08_ICEBLOCK's orbiting floe.
+        //   FOUR-WAY        neither bit (0x30 would take the LINEAR branch first, so it
+        //                   is unreachable; the engine's own test is
+        //                   `!(params & (LINEAR | CIRCULAR))`, :168). It SITS
+        //                   AT home.pos and lunges at whoever comes within 200 units,
+        //                   picking its direction from yawTowardsPlayer (:313-319).
+        //                   That is not free phase, it is per-player by design and it
+        //                   is already CORRECT on both clients. Pinning it would aim
+        //                   P2's blade at P1 and never at P2. EXCLUDED.
+        // Counted in the scene data: 35 placements (24 LINEAR, 8 CIRCULAR, 3 FOUR-WAY);
+        // an earlier comment here said 27, which silently dropped the 8 circular ones.
+        // The only four-way ones are
+        // the three in ddan r9 (params 0x5F01 / 0x6F01 / 0x5F09). The five of
+        // ganontika r17 (0x0410, 0x0610 x3, 0x0A10) are all LINEAR.
+        //
+        // PosKey checked, because BG_SPOT08_ICEBLOCK's twin floes are the standing
+        // warning here: across all 35 En_Trap and all 20 En_Goroiwa placements exactly
+        // ONE pair shares a spawn position, the two circular traps of HAKAdan r9, both
+        // at (2110, -1343, 3368) with params 0x1220 and 0x1620. They do NOT collide,
+        // and not by luck of rounding: EnTrap_Init places a circular trap at
+        // home + (0, 0, radius) with radius = (upperParams & 0xF) * 40 (:79-82), i.e.
+        // z+80 and z+240, and OnActorInit runs after Init. No other pair is even close.
+        //
+        // CIRCULAR IS EXCLUDED TOO, and that is a correction to the first version of
+        // this function, which pinned it. Pinning a circular trap does NOTHING: the
+        // hook runs at z_actor.c:2703 and the actor's own Update at :2704, with
+        // nothing in between, and EnTrap_Update does not ADVANCE a circular trap, it
+        // RECOMPUTES it absolutely --
+        //     world.pos.x = vRadius * SinS(vAngularPos) + home.pos.x   (:217)
+        //     world.pos.z = vRadius * CosS(vAngularPos) + home.pos.z   (:218)
+        //     world.pos.y = floorHeight                                (:219)
+        // -- so the pinned position is overwritten on all three axes in the same
+        // frame, before Collider_UpdateCylinder and before the Draw. The phase gap
+        // the regime exists to close is exactly as wide as before, and we would be
+        // paying a DYNA_STATE entry per tick per trap for it.
+        //
+        // LINEAR is not in that case and genuinely works: it moves through
+        // Actor_MoveXZGravity (:372) with x/z restored from posTemp (:374-380), i.e.
+        // purely incremental, so the pin adds on top.
+        //
+        // What a circular trap actually needs on the wire is vAngularPos, not a
+        // position — the rest of its equation is identical on every client (home.pos
+        // from the scene, vRadius and vAngularVel from the params). Classing it
+        // `synced` is NOT the answer even though BG_SPOT08_ICEBLOCK's floe is synced:
+        // the floe is a platform, while a suppressed Update here removes the inline
+        // play->damagePlayer at :177 and leaves a decorative blade. 8 placements stay
+        // out of sync until someone streams the angle: jyasinzou r0/r1/r27,
+        // ice_doukutu r1/r9, men r9, HAKAdan r9 x2.
+        case ACTOR_EN_TRAP:
+            return (actor->params & SPIKETRAP_MODE_LINEAR) != 0;
 
         default:
             return false;
@@ -312,6 +425,7 @@ struct TrackedDyna {
     bool suppressed = false;
     bool claimable = false;
     bool ride = false;          // claimed by standing on it, mirrored with update suppressed
+    bool pinned = false;        // position mirrored, update NEVER suppressed (see IsPinnedDynaActor)
     bool hadUncullFlag = false; // actor's own culling setting, restored on release
     uint64_t localClaimTick = 0; // last tick our player pushed/moved it
     uint64_t softClaimTick = 0;  // last tick a module asked us to keep driving it (HoldSoftClaim)
@@ -399,7 +513,8 @@ static uint64_t PosKey(const Actor* actor) {
 // Fires from DynaPoly_SetBgActor (z_bgcheck.c) during the actor's own Init
 // (or from OnActorInit for whitelisted spinners with no DynaPoly).
 static void OnDynaRegistered(Actor* actor) {
-    if (!SyncEnabled() || sTracked.contains(actor) || (!IsSyncedDynaActor(actor) && !IsClaimableDynaActor(actor))) {
+    if (!SyncEnabled() || sTracked.contains(actor) ||
+        (!IsSyncedDynaActor(actor) && !IsClaimableDynaActor(actor) && !IsPinnedDynaActor(actor))) {
         return;
     }
 
@@ -407,6 +522,7 @@ static void OnDynaRegistered(Actor* actor) {
     st.key = PosKey(actor);
     st.claimable = IsClaimableDynaActor(actor);
     st.ride = IsRideClaimable(actor);
+    st.pinned = IsPinnedDynaActor(actor);
     st.prevPos = actor->world.pos;
     st.hadUncullFlag = (actor->flags & ACTOR_FLAG_UPDATE_CULLING_DISABLED) != 0;
     sTracked[actor] = st;
@@ -550,6 +666,13 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
         BgGndIceblock_CoopRebuildGridIndex((BgGndIceblock*)actor);
     }
     st.suppressed = true;
+    // Pinned obstacles keep their update RUNNING, unconditionally: the whole point of
+    // the regime is that the mirror still submits its colliders and still damages its
+    // OWN Link, from the position just written above (see IsPinnedDynaActor). They are
+    // never claimable, so the branches below would suppress them.
+    if (st.pinned) {
+        return;
+    }
     // Claimables keep their update RUNNING while mirroring: the block's own
     // update is what offers the grab (A) to our player, so a suppressed block
     // could never be claimed by anyone but the authority. Its idle AI can't
@@ -692,6 +815,15 @@ void RegisterHooks(bool isConnected) {
     // above; track them from their plain actor init.
     COND_ID_HOOK(OnActorInit, ACTOR_BG_SPOT01_FUSYA, isConnected,
                  [](void* actor) { OnDynaRegistered((Actor*)actor); });
+
+    // Same door for the pinned obstacles: neither registers DynaPoly, so
+    // OnDynaPolySetBgActor never fires for them. OnActorInit runs AFTER the actor's own
+    // Init (z_actor.c:1265-1271), which is what makes the key usable: EnGoroiwa_Init has
+    // already run EnGoroiwa_TeleportToWaypoint(.., 0) (:555), so PosKey quantises path
+    // waypoint 0 -- the same value on every client -- and EnTrap_Init has already masked
+    // params to its low byte (:72), which is what IsPinnedDynaActor reads.
+    COND_ID_HOOK(OnActorInit, ACTOR_EN_GOROIWA, isConnected, [](void* actor) { OnDynaRegistered((Actor*)actor); });
+    COND_ID_HOOK(OnActorInit, ACTOR_EN_TRAP, isConnected, [](void* actor) { OnDynaRegistered((Actor*)actor); });
 
     COND_HOOK(OnActorDestroy, isConnected, [](void* actor) { sTracked.erase((Actor*)actor); });
 

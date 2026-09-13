@@ -35,6 +35,11 @@ void BgHidanDalm_BreakFromPeer(Actor* thisx, PlayState* play, u8 reverse);
 void BgJyaBigmirror_ApplySolvedFromPeer(Actor* thisx, u8 solvedBits);
 // Puts one Gerudo guard down on behalf of the peer (see FX_EV_GERUDOKO).
 void EnGe2_KnockOutFromPeer(Actor* thisx, PlayState* play);
+// Ejects us from the collapsing tower on behalf of the peer whose countdown ran
+// out first, and latches En_Eg's `voided` so our own copy stays quiet (FX_EV_TOWERVOID).
+void EnEg_VoidOutFromPeer(PlayState* play);
+// Plain global of ovl_Obj_Lightswitch (z_obj_lightswitch.c:134), not in its header.
+extern bool sunSwitchActivatedByLightArrow;
 extern PlayState* gPlayState;
 // z_en_g_switch.c: silver-rupee tally accessor + action funcs.
 s16* EnGSwitch_CoopCollectedCount(void);
@@ -84,7 +89,46 @@ enum FxEventKind : uint8_t {
     FX_EV_GERUDOKO = 19,   // a Gerudo guard was knocked out (key = SPAWN position, they patrol)
     FX_EV_FALSEDOOR = 20,  // a Door_Killer with no switch flag was smashed (key = position)
     FX_EV_SHUTTER = 21,    // a sliding door was pushed open here (key = SPAWN position, it slides)
+    FX_EV_TOWERTIMER = 22, // the collapse countdown is at `sec`: peers with no clock of their own adopt it
+    FX_EV_TOWERVOID = 23,  // En_Eg: the collapse countdown expired — everyone in the sequence is ejected
+    FX_EV_SUNSWITCH = 24,  // Obj_Lightswitch: a sun switch was lit by a LIGHT ARROW, not by real sunlight
 };
+
+// Ganon's tower / castle collapse. Exactly the four scenes z_parameter.c:6210-6214 and
+// z_en_zl3.c:2505-2508 test for, and the only places where the HUD sub-timer means "the
+// building is coming down" rather than Biggoron's sword (En_Kz), the Lakeside
+// scientist (En_Mk) or the running man (En_Mm2). The countdown adoption is gated on
+// this set so a clock announced from the tower can never land on a player in the
+// middle of one of those errands; the eject is gated more narrowly still, at its own
+// handler, on the two scenes that carry an En_Eg.
+// The one value the collapse countdown is ever started at, by func_80B59AD0 and
+// func_80B59828 in z_en_zl3.c — both of which spell 180 out themselves and do not
+// see this header, so this is the clamp's constant and not a shared one. Used as
+// the upper bound on an adopted clock: no legitimate announcement can exceed the
+// full cycle.
+#define TOWER_COLLAPSE_SECONDS 180
+
+// Scene gate for the collapse-countdown ADOPTION only. FX_EV_TOWERVOID has its own,
+// narrower gate at its handler (the two scenes that actually carry an En_Eg); do not
+// read this as covering both.
+static bool InCollapseSequence() {
+    if (gPlayState == nullptr) {
+        return false;
+    }
+    int16_t scene = gPlayState->sceneNum;
+    return scene == SCENE_GANON_BOSS || scene == SCENE_GANONS_TOWER_COLLAPSE_EXTERIOR ||
+           scene == SCENE_GANONS_TOWER_COLLAPSE_INTERIOR || scene == SCENE_INSIDE_GANONS_CASTLE_COLLAPSE;
+}
+
+// Is a collapse countdown of OURS ticking? subTimerState 1..4 is the countdown's
+// arm/slide-in/count sequence (z_parameter.c:6135-6199); 7..10 is the same machine
+// counting UP (the marathon stopwatch), 5/6 are its two expiry states, 0 is off.
+// Tested on the state and never on subTimerSeconds, for the reason spelled out in
+// z_obj_roomtimer.c: nothing in the game writes the seconds back to 0, so a
+// leftover would make this predicate lie for the rest of the session.
+static bool CollapseTimerRunning() {
+    return gSaveContext.subTimerState >= 1 && gSaveContext.subTimerState <= 4;
+}
 
 // --- Spells -----------------------------------------------------------------
 // The spell actors re-center on GET_PLAYER every update, so a replica must be
@@ -1105,6 +1149,77 @@ extern "C" void FxSync_OnRoomTimerStart(int16_t seconds) {
     ESYNC_LOG("[FxSync] room timer tx sec={}", seconds);
 }
 
+// Ganon's tower / castle collapse: the same defect as Obj_Roomtimer above, on the
+// OTHER HUD clock. func_80B59AD0 (z_en_zl3.c:2611) sets switch flag 0x36 and calls
+// func_80088AA0(180) the frame ITS player's escape cutscene ends. En_Zl3 is
+// ACTORCAT_NPC, so it is not in EnemySync's tracked set and no mirror suppression
+// applies: every client runs its own Zelda and starts its own three minutes,
+// whenever its own player got there. Whoever triggered second is ten seconds
+// behind, and z_en_eg.c ejects only whoever reaches zero first.
+//
+// This one is worse than the room timer, because half of the state DOES already
+// replicate: 0x36 is a scene switch flag, so HookHandlers.cpp:130 ships it while
+// the countdown stays local. A player who never ran the cutscene therefore
+// receives 0x36 with subTimerSeconds still 0 and is void'd out on the spot by
+// z_en_eg.c:87 — see the guard added there.
+//
+// Announce the countdown so whoever arrives second adopts the clock already
+// ticking. Two senders: z_en_zl3.c when it arms one, and z_en_eg.c every 40 ticks
+// while one is live -- the heartbeat, because this is fire-and-forget and nothing
+// in the code posts the entrances into these scenes (they come from the scene
+// data), so P2 routinely walks in long after the one-shot went out. The heartbeat
+// carries the CURRENT remaining seconds, which is the right answer: the tower
+// falls at a wall-clock moment, not three minutes after each player noticed.
+// The receiver below refuses to re-arm a live countdown, so neither can ping-pong.
+extern "C" void FxSync_OnTowerTimerStart(int16_t seconds) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_TOWERTIMER;
+    payload["sec"] = seconds;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] tower timer tx sec={}", seconds);
+}
+
+// The collapse countdown expired on our screen and En_Eg threw us out. Announce
+// it so the sequence fails for the whole party rather than for one player.
+//
+// Ejecting both is the deliberate choice over ejecting neither: the respawn this
+// leads to is ENTR_GANONS_TOWER_COLLAPSE_EXTERIOR_0 for everyone (z_sram.c:60-61,
+// z_play.c:2138), so a collective void puts P1 and P2 back on the same tile,
+// while a one-sided one leaves the other player alone inside a scene whose fail
+// state has already fired — the exact split the sequence cannot recover from.
+// Sharing the clock (FX_EV_TOWERTIMER) makes the two expiries land within a tick
+// of each other in the normal case; this event covers the one that is left, a
+// player who never armed a clock of his own.
+// Obj_Lightswitch's `sunSwitchActivatedByLightArrow` is a plain global of that
+// overlay, set only by the client whose OWN arrow hit the emblem — a replicated
+// arrow arrives with its AT collider disarmed, so it can never set it. That global
+// is what gates the Destroy-time reset, so without this announcement only the
+// shooter ever undoes the activation, and the other player keeps a switch flag that
+// Play_SaveSceneFlags writes into his save file (flags 15, 22 and 25 are all < 0x20).
+// Announce the REASON, not the flag: the flag itself already replicates on its own.
+extern "C" void FxSync_OnSunSwitchLightArrow(void) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_SUNSWITCH;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] sun switch light-arrow tx");
+}
+
+extern "C" void FxSync_OnTowerVoid(void) {
+    if (!FxSync::SyncEnabled() || Anchor::Instance == nullptr) {
+        return;
+    }
+    nlohmann::json payload;
+    payload["kind"] = FX_EV_TOWERVOID;
+    Anchor::Instance->SendPacket_FxEvent(payload);
+    ESYNC_LOG("[FxSync] tower void tx");
+}
+
 // Gerudo Training Ground eye targets: the lit tally is a file-scope counter in
 // the overlay, fed only by the local Link's arrows. Split the four eyes between
 // two players and neither side ever reaches four. Announce our hits so the peer
@@ -1373,6 +1488,69 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             }
             // Evaluated before the call, or it would report the opposite.
             ESYNC_LOG("[FxSync] room timer rx sec={} adopted={}", sec, adopt);
+            return;
+        }
+
+        if (kind == FX_EV_TOWERTIMER) {
+            int16_t sec = payload.value("sec", (int16_t)0);
+            // Two gates, and both are load-bearing.
+            //
+            // InCollapseSequence: this clock is gSaveContext state, not scene
+            // state — adopting it outside the four collapse scenes would drop a
+            // three-minute doomsday counter on a player standing in Hyrule Field,
+            // and (through z_en_eg.c) on one who later walks into the tower.
+            //
+            // CollapseTimerRunning: a second announcement must never reset a
+            // countdown in progress, and our own En_Zl3 may not have reached its
+            // start yet. Note this also refuses to clobber a count-UP timer
+            // (subTimerState 7..10, the running man's stopwatch) — which cannot
+            // legitimately be live in these scenes anyway, so refusing costs
+            // nothing and mis-stomping it would silently void the marathon.
+            //
+            // Upper bound: the two senders only ever emit 180 or what is left of it,
+            // but a packet has not been through them. func_80088AA0 (z_parameter.c:3763)
+            // writes subTimerSeconds with no validation of its own, so sec = 32000 from
+            // a desynced or corrupt peer would arm a nine-hour clock -- and because
+            // CollapseTimerRunning() would then be true forever, EVERY later
+            // announcement, including P1's correct heartbeat, would be refused for the
+            // rest of the session. Clamp to the one value the sequence ever starts at.
+            bool adopt = sec > 0 && sec <= TOWER_COLLAPSE_SECONDS && InCollapseSequence() && !CollapseTimerRunning();
+            if (adopt) {
+                func_80088AA0(sec); // the same sub-timer z_en_zl3.c:2638 starts
+            }
+            // Evaluated before the call, or it would report the opposite.
+            ESYNC_LOG("[FxSync] tower timer rx sec={} adopted={}", sec, adopt);
+            return;
+        }
+
+        if (kind == FX_EV_SUNSWITCH) {
+            // Set the same overlay global the shooter set, so that when THIS client
+            // later leaves the room his own ObjLightswitch_Destroy takes the reset
+            // branch. No scene or room test: the global is a plain bool with no
+            // per-switch state, Destroy checks the flag and the params itself, and
+            // an Obj_Lightswitch that is not loaded has no Destroy to run. Setting
+            // it early is harmless; failing to set it is what leaves a saved flag.
+            sunSwitchActivatedByLightArrow = true;
+            ESYNC_LOG("[FxSync] sun switch light-arrow rx");
+            return;
+        }
+
+        if (kind == FX_EV_TOWERVOID) {
+            // Only the two scenes that actually carry an En_Eg: ganon_sonogo's
+            // five rooms and ganontikasonogo's two (checked in the scene data —
+            // ganon_final and ganon_boss have none). Outside them there is no
+            // collapse to fail out of, and Play_TriggerRespawn would be a
+            // teleport out of nowhere.
+            bool apply = gPlayState != nullptr &&
+                         (gPlayState->sceneNum == SCENE_GANONS_TOWER_COLLAPSE_INTERIOR ||
+                          gPlayState->sceneNum == SCENE_INSIDE_GANONS_CASTLE_COLLAPSE);
+            if (apply) {
+                // Runs the same void En_Eg runs locally and latches its `voided`
+                // static, so our own copy will not fire a second one — and, since
+                // this path never announces, there is no echo back to the sender.
+                EnEg_VoidOutFromPeer(gPlayState);
+            }
+            ESYNC_LOG("[FxSync] tower void rx applied={}", apply);
             return;
         }
 
