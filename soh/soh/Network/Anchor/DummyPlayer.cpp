@@ -394,31 +394,48 @@ extern "C" int32_t Anchor_IsOwnClientId(uint32_t clientId) {
     return Anchor::Instance != nullptr && clientId != 0 && clientId == Anchor::Instance->ownClientId;
 }
 
-// Nearest live player (the local Link or a same-scene puppet) to `from`, by 3D
+// Nearest live player (the local Link or a same-scene puppet) to a POINT, by 3D
 // distance. For boss code that reads player->actor.world.pos directly instead
 // of the engine's xzDistToPlayer / yawTowardsPlayer (which EnemySync's
 // OverridePlayerPerception already re-points at the nearest player) — with the
 // bare GET_PLAYER, Phantom Ganon only ever threw at the authority's own Link.
 // Offline, or with no puppet in range, this is exactly GET_PLAYER.
-extern "C" Player* Anchor_NearestPlayer(Actor* from) {
+//
+// Take the point form whenever the proximity question is about something that
+// is NOT the actor: a dropped item, a spawn point, a switch. Measured on the
+// bench, 2026-09-13: §3.5 asked "is a player standing on the Master Sword",
+// which lies wherever Ganon knocked it, and answered it with
+// Anchor_NearestPlayer(&this->actor) — so the game picked the Link nearest
+// GANON and then tested THAT Link's distance to the blade. Two different
+// criteria. P2 walked onto the sword and nothing happened, every time, because
+// P1 was the one closer to the boss. Whenever the answer must be about one
+// point, select on that same point.
+extern "C" Player* Anchor_NearestPlayerToPos(Vec3f* from) {
     Player* best = GET_PLAYER(gPlayState);
     if (Anchor::Instance == nullptr || gPlayState == NULL || from == NULL || best == NULL) {
         return best;
     }
-    f32 bestSq = Math3D_Vec3fDistSq(&from->world.pos, &best->actor.world.pos);
+    f32 bestSq = Math3D_Vec3fDistSq(from, &best->actor.world.pos);
     for (auto& [cid, client] : Anchor::Instance->clients) {
         if (client.self || !client.online || !client.isSaveLoaded || client.player == NULL ||
             client.player->actor.update == NULL || client.sceneNum != gPlayState->sceneNum ||
             (client.stateFlags1 & PLAYER_STATE1_DEAD)) {
             continue;
         }
-        f32 sq = Math3D_Vec3fDistSq(&from->world.pos, &client.player->actor.world.pos);
+        f32 sq = Math3D_Vec3fDistSq(from, &client.player->actor.world.pos);
         if (sq < bestSq) {
             bestSq = sq;
             best = client.player;
         }
     }
     return best;
+}
+
+extern "C" Player* Anchor_NearestPlayer(Actor* from) {
+    if (from == NULL) {
+        return GET_PLAYER(gPlayState);
+    }
+    return Anchor_NearestPlayerToPos(&from->world.pos);
 }
 
 // Enumerate every live player actor: index 0 is the local Link, then one entry

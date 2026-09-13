@@ -79,6 +79,13 @@ s8 D_80910638;
 // which way to shove a victim already known to be the local player.
 s16 Anchor_LocalPlayerYaw(Actor* from);
 
+// Co-op (Anchor/DummyPlayer.cpp): nearest live player, local Link or puppet.
+// Returns the local Link when playing alone.
+Player* Anchor_NearestPlayer(Actor* from);
+// Same, but nearest to a POINT. Use it when the proximity question is about
+// something that is not this actor -- see the Master Sword pickup below.
+Player* Anchor_NearestPlayerToPos(Vec3f* from);
+
 void BossGanon2_InitRand(s32 seedInit0, s32 seedInit1, s32 seedInit2) {
     sBossGanon2Seed1 = seedInit0;
     sBossGanon2Seed2 = seedInit1;
@@ -2921,8 +2928,42 @@ void func_80905DA8(BossGanon2* this, PlayState* play) {
                         }
                         effect->velocity.y = 0.0f;
                     }
-                    if ((SQ(player->actor.world.pos.x - effect->position.x) +
-                         SQ(player->actor.world.pos.z - effect->position.z)) < SQ(25.0f)) {
+                    // Co-op: EITHER player may reach the sword, not just the local one.
+                    //
+                    // This test is the hard block of the whole fight. The Master Sword
+                    // is sBossGanon2Particles[0], a file static and not an actor, so
+                    // nothing replicates it; this whole function runs from
+                    // BossGanon2_Update (:2256), which is suppressed on the mirror. So
+                    // the pickup could only ever be satisfied by the authority's own
+                    // Link -- and until it IS satisfied, unk_334 stays 0, Ganon gets
+                    // back up with health 25 (:1471-1473) and the finishing blow
+                    // refuses (it wants PLAYER_IA_SWORD_MASTER, :1697). If the
+                    // authority's player was not the one standing next to the sword,
+                    // the fight never ended, for either of them.
+                    //
+                    // Anchor_NearestPlayerToPos is the established answer to "which
+                    // player is this proximity test really about" -- eleven overlays
+                    // use its actor form already. It returns the local Link when
+                    // playing alone, so the vanilla path is byte-identical offline.
+                    //
+                    // It has to be the POINT form, and the first attempt got this
+                    // wrong. Anchor_NearestPlayer(&this->actor) selects the Link
+                    // nearest GANON and then measures THAT Link against the blade --
+                    // two different criteria. Measured on the bench 2026-09-13: P2
+                    // stood on the sword and nothing happened, every time, because P1
+                    // was closer to the boss. Select on the same point you test.
+                    //
+                    // What this does NOT do: hand the sword to P2. The sequence that
+                    // follows (csState 10) plays on the authority and gives the sword
+                    // to ITS Link. Either player can now UNBLOCK the fight; who ends
+                    // up holding the blade is §3.6's problem, and §3.6 has to be
+                    // measured before it is written.
+                    Player* reacher = Anchor_NearestPlayerToPos(&effect->position);
+                    if (reacher == NULL) {
+                        reacher = player;
+                    }
+                    if ((SQ(reacher->actor.world.pos.x - effect->position.x) +
+                         SQ(reacher->actor.world.pos.z - effect->position.z)) < SQ(25.0f)) {
                         effect->type = 0;
                         this->csState = 10;
                     }

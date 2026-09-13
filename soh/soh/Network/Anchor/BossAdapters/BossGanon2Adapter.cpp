@@ -18,6 +18,9 @@ extern "C" {
 extern PlayState* gPlayState;
 // File-scope (non-static) in the overlay; not exported by its header.
 void BossGanon2_SetObjectSegment(BossGanon2* self, PlayState* play, s32 objectId, u8 setRSPSegment);
+// The particle pool. Slot 0 is the Master Sword once Ganon knocks it loose (§3.5).
+// Non-static in the overlay (z_boss_ganon2.c:65) but absent from its header.
+extern BossGanon2Effect sBossGanon2Particles[100];
 // The WHOLE introduction is one action function (z_boss_ganon2.c:223, a csState
 // machine). Compared by ADDRESS and only ever locally — a function pointer never
 // goes on the wire (ActorSyncAdapter.h:22).
@@ -88,10 +91,12 @@ extern struct EnZl3* sBossGanon2Zelda;
  *     func_80905674:2798-2800   gated on this->unk_380 > 0.0f
  * and the Draw is never suppressed. Nothing crashes today only because both
  * floats are frozen at 0. Putting them on the wire is therefore the act that
- * arms the trap, so both groups are gated on `sBossGanon2Zelda != NULL` on the
- * receiving side. C3.2 is what normally keeps the pointer valid (the mirror runs
- * its own intro and spawns its own En_Zl3), but the guard does not depend on
- * that holding.
+ * ARMS the trap -- so they are NOT on the wire, and the receiver forces them to 0
+ * on every applied packet. A `!= NULL` guard was the first answer and review took
+ * it apart: the zeroing never runs if DeserializeExtras is short-circuited (three
+ * upstream returns do that permanently), and NULL is not a liveness test anyway
+ * since the En_Zl3 in question calls Actor_Kill on itself without clearing the
+ * pointer. See the long note in SerializeExtras.
  *
  * §3.7 — the defect this adapter removes for free. colChkInfo.health is a u8 and
  * func_80902524 subtracts 1, 2 or 4 (:1974, :2008), so it can land exactly on 0.
@@ -111,13 +116,19 @@ extern struct EnZl3* sBossGanon2Zelda;
  *     the defeat and P2 sees the streamed pose. §3.6 owns the rest, and the
  *     plan's §2.5 prediction for phase 1 was already measured wrong at the
  *     bench, so §3.6's description should be re-measured before it is coded.
- *   - §3.4 (the tail HIT ACCOUNTING) and §3.5 (the Master Sword particle): out of
- *     scope by instruction. NOTE that the tail's three DRAW fields (unk_346,
+ *   - §3.4 (the tail HIT ACCOUNTING): still out of scope. NOTE that the tail's
+ *     three DRAW fields (unk_346,
  *     unk_348, unk_352) ARE here — they are §3.3 field-list items and pure
  *     OverrideLimbDraw inputs. The tail still is NOT playable for two until
  *     §3.4's per-element hit routing exists: ApplyRemoteHit sets BUMP_HIT on all
  *     sixteen elements at once, and func_80902524 distinguishes element 0 (the
  *     shield) from element 15 (the tail).
+ *   - §3.5 (the Master Sword) is now PARTLY done, in two halves: the particle
+ *     travels as "ms" so P2 can see the blade at all, and the pickup proximity
+ *     test in the overlay runs against Anchor_NearestPlayer so either player can
+ *     reach it. What is NOT done is who ends up HOLDING it -- the csState 10
+ *     sequence plays on the authority and arms its own Link. Either player can
+ *     unblock the fight; handing the sword across is §3.6's business.
  *   - unk_394 (0x394, f32, Draw:2840). Written only at :659 (`+= 0.5f`) and
  *     :668 (`= 0.0f`), inside intro csState 19, which lasts ten frames while
  *     Ganon is off-screen falling. C3.2 makes the mirror run that itself. The
@@ -305,6 +316,29 @@ static void BossGanon2_SerializeExtras(Actor* actor, nlohmann::json& x) {
     // not its hitbox; that half belongs with §3.4's collision work.
     x["fr"] = R3(g->unk_324);
 
+    // The Master Sword, §3.5. It is sBossGanon2Particles[0] -- a file static, not an
+    // actor, so nothing replicates it, and the whole particle update runs from
+    // BossGanon2_Update (:2256) which is suppressed on the mirror. Result before this:
+    // on P2's machine the sword's `type` stayed 0, so it was neither drawn nor
+    // reachable. He could not walk to a blade he could not see.
+    //
+    // Only the fields the Draw needs. The particle loop that draws it is inside
+    // BossGanon2_Draw (:2992), which runs on every client, so `type` + where + how big
+    // + which way up is the whole requirement. Sent only while the sword exists, which
+    // is the short window between Ganon knocking it out of Link's hands and someone
+    // picking it up.
+    //
+    // The other half of §3.5 is in the overlay: the pickup proximity test now runs
+    // against Anchor_NearestPlayer, so EITHER player can reach it.
+    {
+        const BossGanon2Effect* sword = &sBossGanon2Particles[0];
+        if (sword->type != 0) {
+            x["ms"] = { (int32_t)sword->type,   R3(sword->position.x), R3(sword->position.y),
+                        R3(sword->position.z),  (int32_t)sword->unk_2E, R3(sword->scale),
+                        R3(sword->unk_38.x),    R3(sword->unk_38.y),    R3(sword->unk_38.z) };
+        }
+    }
+
     // The lightning, all four or none — the group is gated in func_80904340:2508
     // on (unk_330 != 0 || unk_328 != 0) and the whole block is skipped otherwise.
     // W Update:2157-2160 in one burst. NOTE that func_80904340 is a DRAW function
@@ -379,6 +413,46 @@ static void BossGanon2_SerializeExtras(Actor* actor, nlohmann::json& x) {
     }
 }
 
+// The arena's ring of fire, replayed on the mirror.
+//
+// Bench-observed 2026-09-13: P2 walked straight out through the flames. Review had
+// predicted exactly this — streaming unk_324 restores the ring's LOOK (func_80904108
+// draws it from the Draw, which runs everywhere) but not its BITE, because the hurt
+// test lives at the tail of func_80902348 (z_boss_ganon2.c:1928-1941), reachable only
+// from the Update, which is suppressed on the mirror. The ring was scenery for P2.
+//
+// Re-run of the vanilla test, value for value: centre (-200, -200), radius 784, set
+// the body flame timers, light the player and knock him back along the outward angle
+// with the same magnitude and the same 0x10 flag.
+//
+// One deliberate omission: vanilla also does `sBossGanon2Zelda->unk_3C8 = 8` here, so
+// that Zelda reacts. That is the pointer this file refuses to touch on a mirror — see
+// the long note in SerializeExtras about why `!= NULL` is not a liveness test. The
+// effect is Zelda flinching; the cost of getting it wrong is a crash. Left out.
+//
+// Runs from DeserializeExtras, i.e. once per applied packet, which is the authority's
+// own Update cadence. When the mirror is NOT suppressed (the whole introduction, per
+// ShouldMirror) its own Update runs this test itself, so there is no double burn.
+static void BossGanon2_MirrorFireRing(BossGanon2* g) {
+    if (g->unk_324 <= 0.0f || gPlayState == NULL) {
+        return;
+    }
+    Player* player = GET_PLAYER(gPlayState);
+    if (player == NULL) {
+        return;
+    }
+    f32 dx = -200.0f - player->actor.world.pos.x;
+    f32 dz = -200.0f - player->actor.world.pos.z;
+    if (sqrtf(SQ(dx) + SQ(dz)) <= 784.0f) {
+        return;
+    }
+    for (size_t j = 0; j < ARRAY_COUNT(player->bodyFlameTimers); j++) {
+        player->bodyFlameTimers[j] = Rand_S16Offset(0, 200);
+    }
+    player->bodyIsBurning = true;
+    func_8002F6D4(gPlayState, &g->actor, 10.0f, Math_Atan2S(dz, dx), 0.0f, 0x10);
+}
+
 static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     BossGanon2* g = (BossGanon2*)actor;
     try {
@@ -438,7 +512,31 @@ static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
             g->unk_31A = x["hd"][0].get<int16_t>();
             g->unk_31C = x["hd"][1].get<int16_t>();
         }
-        if (x.contains("fr")) g->unk_324 = x["fr"].get<float>();
+        if (x.contains("fr")) {
+            g->unk_324 = x["fr"].get<float>();
+            BossGanon2_MirrorFireRing(g);
+        }
+
+        // The Master Sword particle (§3.5). Absent means "not lying on the ground
+        // right now", so clear it rather than leave a ghost blade planted forever --
+        // the mirror's own update never runs and would never clear it by itself.
+        if (x.contains("ms") && x["ms"].size() == 9) {
+            BossGanon2Effect* sword = &sBossGanon2Particles[0];
+            int32_t type = x["ms"][0].get<int32_t>();
+            // Only type 1 is the sword; anything else off the wire would put an
+            // unrelated particle behaviour on slot 0, which the draw reads blind.
+            sword->type = (type == 1) ? 1 : 0;
+            sword->position.x = x["ms"][1].get<float>();
+            sword->position.y = x["ms"][2].get<float>();
+            sword->position.z = x["ms"][3].get<float>();
+            sword->unk_2E = (s16)x["ms"][4].get<int32_t>();
+            sword->scale = x["ms"][5].get<float>();
+            sword->unk_38.x = x["ms"][6].get<float>();
+            sword->unk_38.y = x["ms"][7].get<float>();
+            sword->unk_38.z = x["ms"][8].get<float>();
+        } else {
+            sBossGanon2Particles[0].type = 0;
+        }
 
         if (x.contains("lt") && x["lt"].size() == 4) {
             g->unk_328 = x["lt"][0].get<int16_t>();
