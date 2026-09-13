@@ -83,6 +83,81 @@ bool ConsumeLatch(ReplayLatch& latch, s32 entrance) {
     return false;
 }
 
+// --- "we played this one ourselves" record ---------------------------------------
+//
+// This replaces the receiver's old first guard, `gPlayState->sceneNum == sceneNum`.
+// That test was never about the scene: it was a PROXY for "we both triggered the same
+// cutscene at the same moment, so neither of us needs pulling". In that simultaneous
+// case each client is already standing in the target scene by the time the partner's
+// packet lands, so dropping on scene equality happened to break the pull loop.
+//
+// The proxy is wrong for every cutscene whose own entrance sits INSIDE a scene the
+// partner is already standing in, and Ganon's Castle is built out of exactly those:
+// the six trial-barrier cutscenes (sEntranceCutsceneTable, z_demo.c:86-91) hang off
+// ENTR_INSIDE_GANONS_CASTLE_2..7, i.e. RE-ENTRIES into SCENE_INSIDE_GANONS_CASTLE --
+// which is where the partner stands while the other clears a trial. Scene equality was
+// therefore ALWAYS true there and kind 0 was a silent no-op: the partner never saw a
+// single sage. Kind 1 has the same hole (the Deku Tree death speech is replayed into
+// Kokiri Forest, where the partner may well be standing).
+//
+// So test the thing the proxy stood for. Both local detectors -- the VB for kind 0 and
+// the OnSceneInit probe for kind 1 -- record what they just played below, INCLUDING on
+// the self-replay path, so a simultaneous trigger still matches and is still dropped,
+// while a partner-only trigger now replays whether or not we share his scene.
+//
+// The window only has to cover the partner's packet crossing the wire while both
+// clients are loading, so it is kept short: the four Epona-jump entries carry
+// EVENTCHKINF_EPONA_OBTAINED, the one flag z_demo.c:2198 lets re-fire, and a long
+// window would swallow the partner's pull the next time someone jumps the same fence.
+struct LocalCsPlay {
+    bool valid = false;
+    u8 kind = 0;
+    s32 entrance = -1;
+    s32 csFlag = -1;
+    std::chrono::steady_clock::time_point when{};
+};
+
+LocalCsPlay sLastLocalCs;
+
+constexpr auto SIMULTANEOUS_WINDOW = std::chrono::seconds(10);
+
+void NoteLocalCsPlayed(u8 kind, s32 entrance, s32 csFlag) {
+    sLastLocalCs.valid = true;
+    sLastLocalCs.kind = kind;
+    sLastLocalCs.entrance = entrance;
+    sLastLocalCs.csFlag = csFlag;
+    sLastLocalCs.when = std::chrono::steady_clock::now();
+}
+
+// The only entries of sEntranceCutsceneTable (z_demo.c:86-91) whose destination is the
+// scene they are entered FROM: the six Ganon's Castle trial re-entries. For these, and
+// only for these, a `gPlayState->sceneNum == sceneNum` test can never be anything but
+// true, so it cannot tell "I already played it" from "pull me in".
+//
+// Listed one by one, NOT as a range. The six constants are not contiguous --
+// ENTR_INSIDE_GANONS_CASTLE_2 is 0x538 and _7 is 0x54C, and the 21 indices between
+// them belong to other spawns of the same scene. A `>= _2 && <= _7` test looks
+// natural, compiles, and silently swallows fifteen unrelated entrances.
+bool IsSameSceneTrialEntrance(s32 entrance) {
+    switch (entrance) {
+        case ENTR_INSIDE_GANONS_CASTLE_2: // forest barrier
+        case ENTR_INSIDE_GANONS_CASTLE_3: // water
+        case ENTR_INSIDE_GANONS_CASTLE_4: // shadow
+        case ENTR_INSIDE_GANONS_CASTLE_5: // fire
+        case ENTR_INSIDE_GANONS_CASTLE_6: // light
+        case ENTR_INSIDE_GANONS_CASTLE_7: // spirit
+            return true;
+        default:
+            return false;
+    }
+}
+
+bool PlayedLocallyJustNow(u8 kind, s32 entrance, s32 csFlag) {
+    return sLastLocalCs.valid && sLastLocalCs.kind == kind && sLastLocalCs.entrance == entrance &&
+           sLastLocalCs.csFlag == csFlag &&
+           (std::chrono::steady_clock::now() - sLastLocalCs.when) <= SIMULTANEOUS_WINDOW;
+}
+
 // --- Pull-replay reconciliation --------------------------------------------------
 //
 // Clearing the guard bit at receipt (kind 0) only stays convergent if the partner's
@@ -237,11 +312,53 @@ void Anchor::HandlePacket_CutsceneSync(nlohmann::json payload) {
     s32 cutsceneIndex = payload["cutsceneIndex"].get<s32>();
     s16 csFlag = payload["csFlag"].get<s16>();
 
-    // Guard 1: already in the target scene -> ignore. Covers simultaneous triggers:
-    // if both players fire the same entrance CS they are both already in the scene
-    // when they process the other's packet, so neither warps -> no double warp.
-    if (gPlayState->sceneNum == sceneNum) {
-        SPDLOG_INFO("[CutsceneSync] rx ignored (already in scene {})", sceneNum);
+    // Guard 1: WE just played this very cutscene ourselves -> ignore. That is the
+    // simultaneous-trigger case (both players walk the same entrance): our own detector
+    // already fired and recorded it, so neither of us needs to be pulled and the pull
+    // loop is still broken. This used to be `gPlayState->sceneNum == sceneNum`, which
+    // made the six Ganon's Castle trial cutscenes an unconditional no-op -- see the
+    // note on sLastLocalCs above for why scene equality was the wrong proxy.
+    //
+    // sceneNum is kept in the packet: it is what the reconciler below matches against
+    // to decide the replay landed (ReconcilePendingReplay), and it is still logged.
+    if (PlayedLocallyJustNow(kind, entranceIndex, csFlag)) {
+        SPDLOG_INFO("[CutsceneSync] rx ignored (we just played it ourselves) kind={} entrance={}", (int)kind,
+                    entranceIndex);
+        return;
+    }
+
+    // Guard 1b: KEEP the old scene test everywhere except the six trial entrances.
+    //
+    // Replacing `gPlayState->sceneNum == sceneNum` outright was too wide, and review
+    // showed two ways it bites, both outside the castle:
+    //
+    //  - kind 0, the four Epona fence jumps. Their csFlag is EVENTCHKINF_EPONA_OBTAINED
+    //    (0x18), the ONE flag z_demo.c:2197 exempts from the "already seen" test, so
+    //    that cutscene legitimately replays on EVERY jump -- and its destination scene
+    //    is Hyrule Field. Two players in Hyrule Field while one rides Epona is the
+    //    nominal case: without the scene test, every jump P1 makes drags P2 across the
+    //    field to watch it, and the CLEAR_EVENTCHKINF below would strip "Epona
+    //    obtained" from him until the replay lands.
+    //  - kind 1, the end-of-cutscene destinations. They carry no flag at all, and the
+    //    latch is consumed by whoever loads first. A partner who takes the same blue
+    //    warp half a minute later re-broadcasts, and outside the 10 s window the
+    //    sender gets warped back and replays the whole cutscene.
+    //
+    // The scene test was a proxy for "I already played this", and for the six trial
+    // re-entries it was a proxy that was ALWAYS true, which is the bug. Everywhere
+    // else it is a proxy that happens to be right for a second reason -- being in the
+    // destination scene means there is nothing to pull us into -- so it stays.
+    //
+    // Narrow by construction: only the entrances listed in sEntranceCutsceneTable that
+    // re-enter the scene they came from need the exception, and today that is exactly
+    // ENTR_INSIDE_GANONS_CASTLE_2..7 (z_demo.c:86-91).
+    if (kind == 0 && !IsSameSceneTrialEntrance(entranceIndex) && gPlayState != nullptr &&
+        gPlayState->sceneNum == sceneNum) {
+        SPDLOG_INFO("[CutsceneSync] rx ignored (already in the destination scene) entrance={}", entranceIndex);
+        return;
+    }
+    if (kind == 1 && gPlayState != nullptr && gPlayState->sceneNum == sceneNum) {
+        SPDLOG_INFO("[CutsceneSync] rx ignored (already in the destination scene) kind=1 entrance={}", entranceIndex);
         return;
     }
 
@@ -264,6 +381,19 @@ void Anchor::HandlePacket_CutsceneSync(nlohmann::json payload) {
         // here; clearing it re-arms Cutscene_HandleEntranceTriggers so the SAME
         // entrance CS plays locally on load. If flag sync is off it is already clear
         // and this is a harmless no-op.
+        //
+        // KNOWN, and worth naming since Guard 1 now lets the six Ganon's Castle
+        // barrier cutscenes through: for those six the "guard bit" is not a dedicated
+        // seen-it bit, it is the PROGRESS flag. csFlag is EVENTCHKINF_COMPLETED_*_TRIAL
+        // (z_demo.c:86-91), the very flag Demo_Kekkai reads to decide whether its
+        // barrier exists (DemoKekkai_CheckEventFlag, z_demo_kekkai.c:69-81). So between
+        // this clear and the load that re-SETs it (z_demo.c:2201) the trial reads as
+        // uncleared on this client. That is not a new hazard, it is exactly the vanilla
+        // sequence -- vanilla ALSO arrives at that entrance with the flag clear and sets
+        // it in the trigger, which is how the barrier is still there for the cutscene to
+        // shatter -- and the window is bounded on every failure path by
+        // ReconcilePendingReplay above (warp deferred, superseded, expired, or the CS
+        // refused on load). Both writes are raw, so none of it echoes to the partner.
         if (csFlag >= 0) {
             CLEAR_EVENTCHKINF(csFlag);
         }
@@ -291,6 +421,9 @@ void RegisterCutsceneSyncHooks(bool isConnected) {
         sEntranceCsReplay = {};
         sSceneLayerCsReplay = {};
         sPendingReplay = {};
+        // Same reason: a record kept across a reconnect would be a stale Guard 1 and
+        // would swallow the first legitimate packet of the new session.
+        sLastLocalCs = {};
     }
 
     // NOTE: the per-frame reconcile is NOT registered here; it is driven by the Anchor
@@ -304,6 +437,12 @@ void RegisterCutsceneSyncHooks(bool isConnected) {
     COND_VB_SHOULD(VB_PLAY_ENTRANCE_CS, isConnected, {
         s32 flag = va_arg(args, s32);
         s32 entrance = va_arg(args, s32);
+
+        // Whatever happens next, THIS client is playing this entrance CS right now.
+        // Record it before the latch test, so the self-replay path records it too:
+        // the record is Guard 1 on the receive side and it must not depend on whether
+        // we are the originator or the one who was pulled in.
+        NoteLocalCsPlayed(0, entrance, (s16)flag);
 
         // We armed this entrance CS because WE were pulled in: consume the latch and
         // do NOT re-broadcast (that would pull the original player right back).
@@ -326,6 +465,10 @@ void RegisterCutsceneSyncHooks(bool isConnected) {
         }
 
         s32 entrance = gSaveContext.entranceIndex;
+        // Same reason as kind 0: record before the latch test. The sender broadcasts
+        // csFlag = -1 for kind 1, so record -1 and the receiver's Guard 1 compares like
+        // for like.
+        NoteLocalCsPlayed(1, entrance, -1);
         if (ConsumeLatch(sSceneLayerCsReplay, entrance)) {
             SPDLOG_INFO("[CutsceneSync] tx suppressed (self-replay) kind=1 entrance={}", entrance);
             return;
