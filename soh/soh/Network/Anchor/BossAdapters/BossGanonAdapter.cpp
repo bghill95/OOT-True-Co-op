@@ -17,6 +17,8 @@ void BossGanon_SetColliderPos(Vec3f* pos, ColliderCylinder* collider);
 // only ever locally — a function pointer never goes on the wire.
 void BossGanon_SetupIntroCutscene(BossGanon* self, PlayState* play);
 void BossGanon_IntroCutscene(BossGanon* self, PlayState* play);
+// The defeat sequence, handed back to each client's own AI by OnPhaseChange.
+void BossGanon_SetupDeathCutscene(BossGanon* self, PlayState* play);
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +71,14 @@ enum {
  * uint16_t (as TrackedState::spawnParams does) turns the real boss into a
  * projectile variant.
  *
- * What this adapter does today (C2.1 + C2.2 of COOP-GANON-PLAN.md §2.1-§2.2):
+ * What this adapter does today (C2.1 to C2.4 of COOP-GANON-PLAN.md §2.1-§2.5):
+ *
+ *   - GetPhase / ShouldMirror (C2.3) and OnPhaseChange (C2.4). See the Phases
+ *     block at the top of the file and the handoff just above RegisterBossGanonAdapter;
+ *     both are there because of what the bench measured on 2026-09-12, not because
+ *     the plan asked for them in that order — it put them AFTER the draw fields, and
+ *     the measurement says they come first: without ShouldMirror(INTRO) P2 cannot
+ *     play the fight at all.
  *
  *   - customColliderPos. BossGanon_Update:2938 puts the body cylinder on the
  *     TORSO LIMB (BossGanon_SetColliderPos(&unk_1FC, &collider)), not on
@@ -89,11 +98,6 @@ enum {
  *     safe AFTER ShouldMirror(INTRO) is false — which is now the case (see the
  *     Phases block above), so it becomes eligible in the next commit rather than
  *     being ruled out; the sBossGanonZelda guard below still has to survive it.
- *   - OnPhaseChange (§2.5, the defeat handoff). Bench-measured on 2026-09-12:
- *     P2 sees NOTHING of the death — not the introduction replaying as the plan
- *     predicted, simply an actor that stops being drawn while it sits at 0 HP in
- *     his actor list. Whatever the handoff ends up doing, the plan's description
- *     of the symptom is wrong and should be re-read before it is written.
  *   - legRot (§2.2 n°6, 0x050C, Vec3f). Frozen at 0 on the mirror, so the six
  *     additions in BossGanon_OverrideLimbDraw:3270-3298 all contribute nothing
  *     and his legs do not sway. Purely cosmetic, and it is a Vec3f every tick
@@ -396,12 +400,59 @@ static bool BossGanon_ShouldMirror(Actor* actor, uint8_t streamedPhase) {
     return gd->actionFunc != BossGanon_SetupIntroCutscene && gd->actionFunc != BossGanon_IntroCutscene;
 }
 
+// Mirror side, on the streamed edge into DEFEATED (C2.4 / §2.5).
+//
+// Bench-measured 2026-09-12, and the plan's description of the symptom is WRONG:
+// §2.5 predicts the released mirror replays the INTRODUCTION cutscene. It does not.
+// P2 sees nothing at all — Ganondorf simply stops being drawn while he sits at 0 HP
+// in P2's actor list, with the room, the organ and P1's puppet rendering normally
+// around him. The defect is an absence, not a wrong cutscene.
+//
+// Hand the defeat back to the local AI, the way Phantom Ganon does: the streamed
+// pose has already been applied by the caller (EnemySync.cpp:1746), so the local
+// sequence starts from the right place and then owns the camera, the animation, the
+// window shattering and the tower cutscene.
+//
+// The awkward part is that BossGanon_SetupDeathCutscene (z_boss_ganon.c:1191) is
+// conditional all the way through — if OBJECT_GANON_ANIME2 is not resident it does
+// NOTHING, with no retry and no fallback. And there is no second chance here:
+// EnemySync consumes the phase edge (`st.phase = r.phase`, :1744) BEFORE calling us,
+// so returning false does not get us called again for this transition. So we check
+// whether the setup actually took, by comparing actionFunc across the call, and only
+// release the mirror if it did. If it did not, we stay mirrored — which is exactly
+// today's behaviour, no better but no worse, and the log says so.
+//
+// In practice the object is resident: BossGanon_SetupIntroCutscene waits on that
+// same OBJECT_GANON_ANIME2 before the fight can even begin (:485-499).
+static bool BossGanon_OnPhaseChange(Actor* actor, uint8_t fromPhase, uint8_t toPhase) {
+    if (!BossGanon_IsDorf(actor) || toPhase != GANON_PHASE_DEFEATED) {
+        return false;
+    }
+    BossGanon* gd = (BossGanon*)actor;
+    BossGanonActionFunc before = gd->actionFunc;
+
+    actor->colChkInfo.health = 0;
+    actor->flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
+    BossGanon_SetupDeathCutscene(gd, gPlayState);
+
+    if (gd->actionFunc == before) {
+        ESYNC_LOG("[BossGanonSync] defeat handoff REFUSED: OBJECT_GANON_ANIME2 not loaded, staying mirrored");
+        return false;
+    }
+    // Deliberately NOT calling Enemy_StartFinishingBlow: Phantom Ganon's overlay uses
+    // it, ovl_Boss_Ganon never does (zero occurrences), and adding it here would give
+    // the mirror a finishing-blow freeze the authority does not have.
+    ESYNC_LOG("[BossGanonSync] defeat handoff (SetupDeathCutscene ran locally)");
+    return true;
+}
+
 void RegisterBossGanonAdapter() {
     ActorSyncAdapter adapter;
     adapter.SerializeExtras = BossGanon_SerializeExtras;
     adapter.DeserializeExtras = BossGanon_DeserializeExtras;
     adapter.GetPhase = BossGanon_GetPhase;
     adapter.ShouldMirror = BossGanon_ShouldMirror;
+    adapter.OnPhaseChange = BossGanon_OnPhaseChange;
     // The body cylinder is placed on the torso limb by the adapter, not by
     // ApplyPose / SubmitColliders. See BossGanon_DeserializeExtras.
     adapter.customColliderPos = true;
