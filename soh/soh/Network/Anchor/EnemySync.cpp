@@ -2591,9 +2591,37 @@ void ReconcileRoster(int16_t roomNum, const nlohmann::json& entries) {
                 continue;
             }
             auto it = authority.find(st.key);
-            if (it == authority.end() || !it->second.first) {
-                // The authority no longer has this enemy alive: it died before we
-                // were listening. Kill the ghost quietly — no death code, no drops.
+            if (it == authority.end()) {
+                // ABSENT IS NOT DEAD, and reading it as dead cost a real fight.
+                //
+                // Measured in play 2026-09-13: a Lizalfos ghost-killed one
+                // millisecond after being tracked, while the authority went on
+                // sending hits AND its death for that same key -- each bouncing off
+                // "No match for enemy key=0x10025fffe". Dead on one machine, alive
+                // on the other, and untouchable from the first. Reproduced with
+                // Stalfos, so it is the whole class: any group of identical enemies
+                // in one room. A teleport cleared it, by forcing a room reload.
+                //
+                // The cause is that BuildRoster lists what the authority has
+                // TRACKED, not what the room contains. An enemy it has not tracked
+                // yet -- just spawned, or outside its camera's culling volume, since
+                // an actor only updates inside it -- is indistinguishable here from
+                // one it killed before we were listening. Both are simply absent.
+                //
+                // The two mistakes do not cost the same. Killing wrongly produces an
+                // enemy nobody can ever hit, which is what was observed; keeping one
+                // wrongly produces a straggler that the authority's own DIED packet
+                // will clear the moment it arrives. So absence now means "the
+                // authority did not say", and only an explicit alive == false kills.
+                //
+                // This also restores the fuzzy-match safety net below (:800): it
+                // only ever considers LIVE tracked actors, so ghost-killing first
+                // guaranteed it would find nothing.
+                continue;
+            }
+            if (!it->second.first) {
+                // Explicitly reported dead by the authority. Kill the ghost quietly
+                // — no death code, no drops.
                 ESYNC_LOG("[EnemySync] ROSTER ghost-kill key={:#x} id={}", st.key, actor->id);
                 st.deathCooldown = DEATH_COOLDOWN_FRAMES;
                 Actor_Kill(actor);
