@@ -31,6 +31,9 @@ void func_808FD5F4(BossGanon2* self, PlayState* play);
 void func_80901020(BossGanon2* self, PlayState* play);
 // z_boss_ganon2.c:1531 — the cutscene itself, compared by address only.
 void func_8090120C(BossGanon2* self, PlayState* play);
+// z_player.c:10705 — re-equips the sword after the Ganon fight disarm, and is the
+// call that knows about the randomizer's shuffled Master Sword. Non-static.
+void func_80846720(PlayState* play, Player* self, s32 arg2);
 // z_boss_ganon2.c:61. Non-static, so an extern declaration reaches it. Only ever
 // null-tested here; the incomplete type is deliberate (no En_Zl3 header needed).
 struct EnZl3;
@@ -338,6 +341,13 @@ static void BossGanon2_SerializeExtras(Actor* actor, nlohmann::json& x) {
     // The other half of §3.5 is in the overlay: the pickup proximity test now runs
     // against Anchor_NearestPlayer, so EITHER player can reach it.
     {
+        // "msg": the blade has been recovered. Not unk_334 as state -- its
+        // consequence, handing each client's own Link his sword back. See
+        // BossGanon2_MirrorGiveMasterSword.
+        if (g->unk_334 != 0) {
+            x["msg"] = true;
+        }
+
         const BossGanon2Effect* sword = &sBossGanon2Particles[0];
         if (sword->type != 0) {
             x["ms"] = { (int32_t)sword->type,   R3(sword->position.x), R3(sword->position.y),
@@ -460,6 +470,43 @@ static void BossGanon2_MirrorFireRing(BossGanon2* g) {
     func_8002F6D4(gPlayState, &g->actor, 10.0f, Math_Atan2S(dz, dx), 0.0f, 0x10);
 }
 
+// §3.5, the half the plan left open: who ends up HOLDING the Master Sword.
+//
+// Ganon knocks the blade out of Link's hands during the introduction, and the
+// introduction runs LOCALLY on every client (C3.2) -- so both Links really are
+// disarmed, symmetrically. Getting it back is not symmetric: that happens in the
+// pickup sequence (:1411-1441), driven by BossGanon2_Update, which the mirror
+// does not run. So P2 was left permanently swordless, and since the finishing
+// blow demands PLAYER_IA_SWORD_MASTER in hand (:1732), he could never end the
+// fight even once §3.6 gave him the right to.
+//
+// unk_334 itself stays off the wire, for the reason the file header gives: the
+// mirror's only reader of it is a suppressed Update. What travels is its
+// CONSEQUENCE, which is the shape this file already uses for unk_318 and the
+// lightning group.
+//
+// The restitution goes through the game's own two calls, the ones behind the
+// "this is when link picks up the sword in the Ganon fight" comment in
+// z_player.c:func_8085283C -- Item_Give then func_80846720(play, player, 0).
+// Doing it by hand would miss what func_80846720 handles, in particular the
+// randomizer case where the Master Sword is shuffled and must NOT come back.
+static void BossGanon2_MirrorGiveMasterSword(BossGanon2* g) {
+    if (gPlayState == NULL) {
+        return;
+    }
+    Player* player = GET_PLAYER(gPlayState);
+    if (player == NULL) {
+        return;
+    }
+    // unk_334 is the mirror's own latch, and nothing local ever writes it (its
+    // update is suppressed), so it doubles as the "already done" marker: no extra
+    // per-actor state to carry, and the restitution runs exactly once.
+    g->unk_334 = 1;
+    Item_Give(gPlayState, ITEM_SWORD_MASTER);
+    func_80846720(gPlayState, player, 0);
+    ESYNC_LOG("[BossGanon2Sync] Master Sword handed back to the local Link");
+}
+
 static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     BossGanon2* g = (BossGanon2*)actor;
     try {
@@ -522,6 +569,12 @@ static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
         if (x.contains("fr")) {
             g->unk_324 = x["fr"].get<float>();
             BossGanon2_MirrorFireRing(g);
+        }
+
+        // The blade has been recovered on the authority -- by EITHER player, since
+        // §3.5 opened the pickup. Hand this client's Link his sword back, once.
+        if (x.value("msg", false) && g->unk_334 == 0) {
+            BossGanon2_MirrorGiveMasterSword(g);
         }
 
         // The Master Sword particle (§3.5). Absent means "not lying on the ground
