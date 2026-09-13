@@ -25,6 +25,12 @@ extern BossGanon2Effect sBossGanon2Particles[100];
 // machine). Compared by ADDRESS and only ever locally — a function pointer never
 // goes on the wire (ActorSyncAdapter.h:22).
 void func_808FD5F4(BossGanon2* self, PlayState* play);
+// z_boss_ganon2.c:1489 — the death-cutscene setup, the analogue of
+// BossGanon_SetupDeathCutscene. Non-static, absent from the header. Called from
+// the overlay at :1987 and :2020, both under health <= 0.
+void func_80901020(BossGanon2* self, PlayState* play);
+// z_boss_ganon2.c:1531 — the cutscene itself, compared by address only.
+void func_8090120C(BossGanon2* self, PlayState* play);
 // z_boss_ganon2.c:61. Non-static, so an extern declaration reaches it. Only ever
 // null-tested here; the incomplete type is deliberate (no En_Zl3 header needed).
 struct EnZl3;
@@ -108,14 +114,15 @@ extern struct EnZl3* sBossGanon2Zelda;
  *
  * DELIBERATELY ABSENT — and each one has a line, not a silence:
  *
- *   - OnPhaseChange / the defeat handoff (§3.6). NOT WRITTEN. The death
- *     cutscene is func_8090120C, a 366-line csState machine that drives both
- *     players' cameras and dereferences sBossGanon2Zelda throughout; handing it
- *     to the mirror's local copy would start it from whatever action function
- *     the copy happened to hold. The mirror therefore keeps mirroring through
- *     the defeat and P2 sees the streamed pose. §3.6 owns the rest, and the
- *     plan's §2.5 prediction for phase 1 was already measured wrong at the
- *     bench, so §3.6's description should be re-measured before it is coded.
+ *   (OnPhaseChange / the defeat handoff was in this list, on the grounds that
+ *   handing the ending to the mirror's local copy would start it from whatever
+ *   action function that copy happened to hold. Measured in a real fight on
+ *   2026-09-13: without the handoff P2 sees no ending at all -- no beam of
+ *   light, no sages -- and stands in the arena through P1's credits, because the
+ *   scene change is itself inside the suppressed machine. It is now written; the
+ *   "whatever action function" worry is answered by going through
+ *   func_80901020, the overlay's own setup, and by refusing the handoff if
+ *   sBossGanon2Zelda is null.)
  *   - §3.4 (the tail HIT ACCOUNTING): still out of scope. NOTE that the tail's
  *     three DRAW fields (unk_346,
  *     unk_348, unk_352) ARE here — they are §3.3 field-list items and pure
@@ -638,6 +645,61 @@ static bool BossGanon2_ShouldMirror(Actor* actor, uint8_t streamedPhase) {
     return g->actionFunc != func_808FD5F4;
 }
 
+// §3.6, the endgame. Measured in a real fight on 2026-09-13, and it is the same
+// defect as Ganondorf's death was: once Ganon is struck down, P2 saw NOTHING --
+// not Zelda's beam of light, not the seven sages -- and stayed standing in the
+// arena while the credits rolled on P1's screen.
+//
+// The cause is not a missing packet. The entire ending is func_8090120C, a
+// csState machine reached only through func_80901020, and BOTH are driven by
+// BossGanon2_Update, which is suppressed on the mirror. The scene change out of
+// the arena is inside it (z_boss_ganon2.c:1872, nextEntranceIndex =
+// ENTR_CHAMBER_OF_THE_SAGES_0), so the mirror never even leaves the room. No
+// amount of streaming fixes that: the ending has to be handed back to each
+// client's own AI, exactly as C2.4 did for phase 1.
+//
+// The null guard is the load-bearing line. sBossGanon2Zelda is dereferenced
+// throughout the cutscene, and §3.2's whole lesson was that this pointer is the
+// trap of this file. It is spawned by the introduction (:251), which C3.2 makes
+// every client run for itself, so it should be set here -- but "should" is what
+// the plan said about several things that were measured false. If it is null we
+// keep mirroring: P2 then sees the streamed pose and no ending, which is today's
+// behaviour, rather than a crash.
+//
+// There is no second chance -- EnemySync consumes the phase edge before calling
+// us (EnemySync.cpp:1744) -- so everything this needs must be true on the frame
+// the authority's health reaches 0. Returning true erases the remote state and
+// ends suppression for good (:1748-1754); ShouldMirror is not consulted again.
+static bool BossGanon2_OnPhaseChange(Actor* actor, uint8_t fromPhase, uint8_t toPhase) {
+    if (toPhase != GANON2_PHASE_DEFEATED) {
+        return false;
+    }
+    BossGanon2* g = (BossGanon2*)actor;
+
+    if (sBossGanon2Zelda == NULL) {
+        ESYNC_LOG("[BossGanon2Sync] defeat handoff REFUSED: no local En_Zl3, staying mirrored");
+        return false;
+    }
+    if (g->actionFunc == func_8090120C) {
+        // Already in the ending (we were never suppressed, or ran the whole
+        // fight locally). Release, but do not restart the animation.
+        ESYNC_LOG("[BossGanon2Sync] defeat handoff: already in the ending");
+        return true;
+    }
+
+    BossGanon2ActionFunc before = g->actionFunc;
+    actor->colChkInfo.health = 0;
+    actor->flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
+    func_80901020(g, gPlayState);
+
+    if (g->actionFunc == before) {
+        ESYNC_LOG("[BossGanon2Sync] defeat handoff REFUSED: setup did not take, staying mirrored");
+        return false;
+    }
+    ESYNC_LOG("[BossGanon2Sync] defeat handoff (func_80901020 ran locally)");
+    return true;
+}
+
 void RegisterBossGanon2Adapter() {
     ActorSyncAdapter adapter;
     adapter.SerializeExtras = BossGanon2_SerializeExtras;
@@ -647,8 +709,9 @@ void RegisterBossGanon2Adapter() {
     // ovl_Boss_Ganon2 contains no Item_Drop: a generic roll would invent treasure
     // the fight does not give.
     adapter.ownsDeathDrop = true;
-    // NOT set, each for a stated reason (see the file header): OnPhaseChange
-    // (§3.6, the endgame), customColliderPos (JntSph, not cylinders),
-    // IsHealthless, ReplicateKill, ownsSfx, mirrorWhileDrawless.
+    adapter.OnPhaseChange = BossGanon2_OnPhaseChange;
+    // NOT set, each for a stated reason (see the file header): customColliderPos
+    // (JntSph, not cylinders), IsHealthless, ReplicateKill, ownsSfx,
+    // mirrorWhileDrawless.
     EnemySync::RegisterAdapter(ACTOR_BOSS_GANON2, adapter);
 }
