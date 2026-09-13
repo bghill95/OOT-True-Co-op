@@ -1695,13 +1695,41 @@ void func_8090120C(BossGanon2* this, PlayState* play) {
                 this->csState = 6;
             }
             break;
-        case 6:
+        case 6: {
+            // Co-op (§3.6): EITHER player may land the finishing blow.
+            //
+            // This is the gate the whole ending hangs on. Ganon is down and the
+            // machine waits here forever until someone swings the Master Sword at
+            // unk_1B8 -- and with the bare GET_PLAYER, "someone" could only ever be
+            // the Link of the machine running this code. On the authority that
+            // locked P2 out of finishing the fight he may have done all the work
+            // in; on a client that has just taken the defeat handoff it is worse,
+            // because that client's own Link may be nowhere near.
+            //
+            // The POINT form, for the reason measured on the bench today with the
+            // Master Sword pickup: the distance below is to unk_1B8, not to Ganon,
+            // and selecting a player on one criterion while testing another is how
+            // §3.5 shipped broken. Select on the same point you measure.
+            //
+            // The puppet carries what this test reads: DummyPlayer.cpp:146 applies
+            // heldItemAction and :152 applies meleeWeaponState, both streamed by
+            // PlayerUpdate.cpp:92 and :100. So a remote swing is visible here, and
+            // this is not a gate that can never open.
+            //
+            // What follows still plays locally, around this client's own Link
+            // (startPlayerCutscene, the sub-camera). Either player can now END the
+            // fight; each client then watches its own ending, which is the same
+            // shape as the defeat handoff itself.
+            Player* striker = Anchor_NearestPlayerToPos(&this->unk_1B8);
+            if (striker == NULL) {
+                striker = player;
+            }
             this->unk_339 = 23;
-            temp_f14 = this->unk_1B8.x - player->actor.world.pos.x;
-            temp_f12 = this->unk_1B8.z - player->actor.world.pos.z;
-            temp_a0_2 = Math_Atan2S(temp_f12, temp_f14) - player->actor.shape.rot.y;
+            temp_f14 = this->unk_1B8.x - striker->actor.world.pos.x;
+            temp_f12 = this->unk_1B8.z - striker->actor.world.pos.z;
+            temp_a0_2 = Math_Atan2S(temp_f12, temp_f14) - striker->actor.shape.rot.y;
             if ((ABS(temp_a0_2) < 0x2000) && (sqrtf(SQ(temp_f14) + SQ(temp_f12)) < 70.0f) &&
-                (player->meleeWeaponState != 0) && (player->heldItemAction == PLAYER_IA_SWORD_MASTER)) {
+                (striker->meleeWeaponState != 0) && (striker->heldItemAction == PLAYER_IA_SWORD_MASTER)) {
                 func_80064520(play, &play->csCtx);
                 GameInteractor_ExecuteOnBossDefeat(&this->actor);
                 this->unk_39E = Play_CreateSubCamera(play);
@@ -1715,6 +1743,7 @@ void func_8090120C(BossGanon2* this, PlayState* play) {
             } else {
                 break;
             }
+        } // case 6 — the brace scopes `striker`; control still falls into case 7
         case 7:
             this->unk_339 = 23;
             Math_ApproachZeroF(&play->envCtx.unk_D8, 1.0f, 0.2f);
