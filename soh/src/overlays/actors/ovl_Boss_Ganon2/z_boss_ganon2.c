@@ -2068,6 +2068,38 @@ void BossGanon2_Update(Actor* thisx, PlayState* play) {
     f32 angle;
     f32 sp44;
 
+    // Co-op (§3.6): Ganon at 0 health but still on his feet is not a state this
+    // fight has an answer for, and nothing else ever gets him out of it.
+    //
+    // Vanilla cannot reach it. Health only ever drops in the two damage branches
+    // (:1987 and :2020), and both call func_80901020 in the same breath. A remote
+    // hit takes neither: ApplyRemoteHit stamps AC_HIT on the collider and lets the
+    // actor's own update do the accounting (EnemySync.cpp:876), but the branch that
+    // ends this fight is gated on unk_424.elements[15] -- the tail -- and a
+    // forwarded hit does not land on that element (§3.4, the per-element routing
+    // that does not exist yet). So when P2 lands the blow, the authority's Ganon
+    // reaches 0 health and simply stays standing, forever.
+    //
+    // Measured in a real fight on 2026-09-13: P2 saw the whole ending -- Zelda,
+    // the beam of light -- while P1 stood in the arena next to a Ganon with no
+    // health left. That is the original defect turned inside out.
+    //
+    // This is deliberately a state repair, not a damage path: it asks "is he dead
+    // and not yet dying", the one question whose answer cannot depend on WHICH
+    // client did it or HOW. It is idempotent (func_80901020 installs
+    // func_8090120C) and unreachable offline, so the vanilla fight is untouched.
+    // It is not a substitute for §3.4: hits landing on the wrong element still
+    // mis-account damage all through the fight. It only guarantees that however
+    // the last point of health went, the ending starts here too.
+    //
+    // The null check on Zelda is the same guard the mirror's defeat handoff takes:
+    // the ending dereferences sBossGanon2Zelda from end to end, and staying stuck
+    // is a better failure than crashing.
+    if ((this->actor.colChkInfo.health == 0) && (this->actionFunc != func_8090120C) &&
+        (this->actionFunc != func_808FD5F4) && (sBossGanon2Zelda != NULL)) {
+        func_80901020(this, play);
+    }
+
     if ((this->unk_337 == 0) || (this->unk_337 == 2)) {
         BossGanon2_SetObjectSegment(this, play, OBJECT_GANON_ANIME3, false);
     } else {
