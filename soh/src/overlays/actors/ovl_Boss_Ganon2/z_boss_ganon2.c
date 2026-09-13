@@ -1574,11 +1574,11 @@ void func_8090109C(BossGanon2* this, PlayState* play) {
 
 void func_8090120C(BossGanon2* this, PlayState* play) {
     Player* player;
-    // temp_f14 / temp_f12 / temp_a0_2 used to hold the finishing-blow geometry.
-    // That test now loops over every player and keeps its own locals, so these
-    // were left with nothing but a declaration.
+    // temp_f14 / temp_f12 / temp_a0_2 held the finishing-blow geometry; that test
+    // now loops over every player and keeps its own locals. phi_f0 was already
+    // dead before any of this -- it survived the first cleanup because the commit
+    // only looked for the three names it had just orphaned.
     Camera* temp_v0_2;
-    f32 phi_f0;
     s32 phi_a1;
 
     player = GET_PLAYER(play);

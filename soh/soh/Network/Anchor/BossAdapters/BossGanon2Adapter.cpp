@@ -751,19 +751,42 @@ static bool BossGanon2_ShouldMirror(Actor* actor, uint8_t streamedPhase) {
     if (streamedPhase == GANON2_PHASE_INTRO) {
         return false;
     }
-    // Never mirror a Ganon whose ending is already running on the authority.
+    // The authority's ending is running. Normally the defeat handoff released us
+    // long ago and we are never asked again -- it does remoteStates.erase and
+    // st.dying, and EnemySync.cpp:1697 returns early from then on. So reaching
+    // here means the handoff REFUSED, which happens for exactly one reason: our
+    // own sBossGanon2Zelda was still null, because our introduction had not
+    // spawned her yet. That is the late joiner, someone who spawns Ganon2 during
+    // the ending; the phase edge was consumed before OnPhaseChange was even called
+    // (EnemySync.cpp:1745), so no second edge will ever come.
     //
-    // Normally the defeat handoff has released us long before this matters. It is
-    // the late joiner this covers: someone who spawns Ganon2 DURING the ending
-    // receives DEFEATED on his very first packet, and the phase edge is consumed
-    // before OnPhaseChange is even called (EnemySync.cpp:1745). His own
-    // introduction has not spawned Zelda yet, so the handoff refuses, and there is
-    // no second edge -- ever. Without this line he would finish his introduction
-    // and then spend the rest of the fight mirroring a frozen pose, never seeing
-    // the ending and never leaving the arena. Staying local means his own AI runs,
-    // which is the same answer the handoff gives everyone else.
+    // This is the retry the refusal needs, and it is here because ShouldMirror is
+    // the one thing re-evaluated every frame with this information to hand.
+    //
+    // The first version of this block just returned false -- release the mirror,
+    // let the local AI run -- with a comment claiming that was "the same answer
+    // the handoff gives everyone else". It was not. The handoff STARTS the ending
+    // (func_80901020); releasing alone un-suppresses an actor whose actionFunc is
+    // frozen wherever the suppression caught it, mid-fight, so the late joiner
+    // would fight a whole Ganon nobody else is fighting while everyone else is in
+    // the Chamber of the Sages. It also silently overruled OnPhaseChange's own
+    // "staying mirrored" refusal, whose log line then said the opposite of what
+    // happened.
     if (streamedPhase == GANON2_PHASE_DEFEATED) {
-        return false;
+        if (g->actionFunc == func_8090120C) {
+            return false; // ending already running here, keep running it
+        }
+        if ((sBossGanon2Zelda != NULL) && (g->actionFunc != func_808FD5F4) && (gPlayState != NULL)) {
+            actor->colChkInfo.health = 0;
+            actor->flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
+            func_80901020(g, gPlayState);
+            ESYNC_LOG("[BossGanon2Sync] defeat handoff retried (missed the phase edge)");
+            return false;
+        }
+        // Zelda still absent, or we are mid-introduction: keep mirroring, which is
+        // precisely what OnPhaseChange chose when it refused. The ending
+        // dereferences her from end to end; a frozen pose beats a crash.
+        return true;
     }
     return g->actionFunc != func_808FD5F4;
 }
