@@ -403,7 +403,7 @@ extern "C" int32_t Anchor_IsOwnClientId(uint32_t clientId) {
 //
 // Take the point form whenever the proximity question is about something that
 // is NOT the actor: a dropped item, a spawn point, a switch. Measured on the
-// bench, 2026-09-13: §3.5 asked "is a player standing on the Master Sword",
+// bench, 2026-09-13: the Ganon fight asked "is a player standing on the Master Sword",
 // which lies wherever Ganon knocked it, and answered it with
 // Anchor_NearestPlayer(&this->actor) — so the game picked the Link nearest
 // GANON and then tested THAT Link's distance to the blade. Two different

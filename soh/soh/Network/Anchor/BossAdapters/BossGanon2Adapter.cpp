@@ -19,7 +19,7 @@ extern "C" {
 extern PlayState* gPlayState;
 // File-scope (non-static) in the overlay; not exported by its header.
 void BossGanon2_SetObjectSegment(BossGanon2* self, PlayState* play, s32 objectId, u8 setRSPSegment);
-// The particle pool. Slot 0 is the Master Sword once Ganon knocks it loose (§3.5).
+// The particle pool. Slot 0 is the Master Sword once Ganon knocks it loose.
 // Non-static in the overlay (z_boss_ganon2.c:65) but absent from its header.
 extern BossGanon2Effect sBossGanon2Particles[100];
 // The WHOLE introduction is one action function (z_boss_ganon2.c:223, a csState
@@ -42,12 +42,11 @@ extern struct EnZl3* sBossGanon2Zelda;
 }
 
 /**
- * Ganon the beast (Boss_Ganon2, phase 2 of the final fight) — C3.1, C3.2, C3.3
- * of COOP-GANON-PLAN.md §3.1-§3.3.
+ * Ganon the beast (Boss_Ganon2, phase 2 of the final fight).
  *
  * ONE actor, ONE instance: ganon_demo room 0, params 0xFFFF, health 30
- * (BossGanon2_Init:178). Verified with tools/scene_actors.py --all --actor
- * Boss_Ganon2 — that is the only placement in the game.
+ * (BossGanon2_Init:178). Read out of the scene data rather than assumed — that
+ * is the only placement of this actor in the game.
  *
  * NO params MULTIPLEXING, and this was checked rather than assumed. Every
  * `params` mention in z_boss_ganon2.c reads ANOTHER actor's params (:963-964 and
@@ -57,7 +56,8 @@ extern struct EnZl3* sBossGanon2Zelda;
  * projectile variant into the stream and NO IsTrackingExcluded entry is needed.
  * The leftStream clause (`health == 0 && GetAdapter(id) == nullptr &&
  * !projectile`, EnemySync.cpp:2247-2248) has exactly one actor to act on here,
- * and it already has health 30 — the regime does not change (§3.7 below).
+ * and it already has health 30 — the regime does not change (see THE DEFECT
+ * THIS ADAPTER REMOVES FOR FREE below).
  *
  * WHAT THIS ADAPTER DOES
  *
@@ -93,7 +93,7 @@ extern struct EnZl3* sBossGanon2Zelda;
  *     reachability including every actionFunc assignment, vs Draw reachability
  *     including the three limb callbacks), not from the plan's list.
  *
- * §3.2 CRASH TRAP, AND THE PLAN UNDERSTATES IT. The plan says the NULL
+ * THE sBossGanon2Zelda CRASH TRAP, AND THE PLAN UNDERSTATES IT. The plan says the NULL
  * sBossGanon2Zelda (:61, assigned only at :244 inside the Update) is a null
  * dereference "as soon as the mirror is released". It is worse than that: the
  * two functions that dereference it are DRAW functions —
@@ -108,7 +108,7 @@ extern struct EnZl3* sBossGanon2Zelda;
  * since the En_Zl3 in question calls Actor_Kill on itself without clearing the
  * pointer. See the long note in SerializeExtras.
  *
- * §3.7 — the defect this adapter removes for free. colChkInfo.health is a u8 and
+ * THE DEFECT THIS ADAPTER REMOVES FOR FREE. colChkInfo.health is a u8 and
  * func_80902524 subtracts 1, 2 or 4 (:1974, :2008), so it can land exactly on 0.
  * Without an adapter leftStream would then be true for the whole death sequence,
  * the mirror would go stale, EndSuppression("stale") would release it, and P2's
@@ -127,19 +127,19 @@ extern struct EnZl3* sBossGanon2Zelda;
  *   "whatever action function" worry is answered by going through
  *   func_80901020, the overlay's own setup, and by refusing the handoff if
  *   sBossGanon2Zelda is null.)
- *   - §3.4 (the tail HIT ACCOUNTING): still out of scope. NOTE that the tail's
- *     three DRAW fields (unk_346,
- *     unk_348, unk_352) ARE here — they are §3.3 field-list items and pure
+ *   - The tail HIT ACCOUNTING is still out of scope. NOTE that the tail's
+ *     three DRAW fields (unk_346, unk_348, unk_352) ARE here — they are
+ *     "Update writes it / Draw reads it" field-list items and pure
  *     OverrideLimbDraw inputs. The tail still is NOT playable for two until
- *     §3.4's per-element hit routing exists: ApplyRemoteHit sets BUMP_HIT on all
+ *     per-element hit routing exists: ApplyRemoteHit sets BUMP_HIT on all
  *     sixteen elements at once, and func_80902524 distinguishes element 0 (the
  *     shield) from element 15 (the tail).
- *   - §3.5 (the Master Sword) is now PARTLY done, in two halves: the particle
+ *   - The Master Sword is now PARTLY done, in two halves: the particle
  *     travels as "ms" so P2 can see the blade at all, and the pickup proximity
  *     test in the overlay runs against Anchor_NearestPlayer so either player can
  *     reach it. What is NOT done is who ends up HOLDING it -- the csState 10
  *     sequence plays on the authority and arms its own Link. Either player can
- *     unblock the fight; handing the sword across is §3.6's business.
+ *     unblock the fight; handing the sword across belongs to the endgame work.
  *   - unk_394 (0x394, f32, Draw:2840). Written only at :659 (`+= 0.5f`) and
  *     :668 (`= 0.0f`), inside intro csState 19, which lasts ten frames while
  *     Ganon is off-screen falling. C3.2 makes the mirror run that itself. The
@@ -156,7 +156,8 @@ extern struct EnZl3* sBossGanon2Zelda;
  *     is correct advice for whoever writes that, and it stays unimplemented here
  *     rather than half-implemented.
  *   - sBossGanon2Particles[100] (file static, :65) — no Master Sword in the
- *     floor and no rubble on the mirror. §3.5.
+ *     floor and no rubble on the mirror, apart from slot 0 (see the Master
+ *     Sword note in SerializeExtras).
  *   - customColliderPos: meaningless for this actor. Both colliders are
  *     ColliderJntSph, and that flag only affects COLSHAPE_CYLINDER
  *     (EnemySync.cpp:1440-1446, :1526-1532). The JntSph world spheres are
@@ -179,7 +180,7 @@ extern struct EnZl3* sBossGanon2Zelda;
  * NOT ON THE WIRE because the mirror's suppressed Update is their ONLY reader —
  * streaming them would move bytes nobody looks at: unk_194, unk_198, unk_1A2[5],
  * unk_1AC, unk_311, unk_313 ("look_on"), unk_314, unk_316 ("no_hit_time"),
- * unk_320, unk_332, unk_334 (the Master Sword latch, §3.5), unk_335, unk_336,
+ * unk_320, unk_332, unk_334 (the Master Sword latch), unk_335, unk_336,
  * unk_338, unk_33C, unk_344, unk_390, unk_392, unk_39E, unk_3A4, unk_3B0,
  * unk_3BC, unk_410, unk_41C, unk_420, csState, csTimer. Three of them have
  * streamed CONSEQUENCES instead of being streamed themselves: unk_318 feeds
@@ -278,7 +279,7 @@ static void BossGanon2_SerializeExtras(Actor* actor, nlohmann::json& x) {
 
     // unk_1B0 (0x1B0, f32). W Update:2082 only. R BossGanon2_OverrideLimbDraw:2589
     // — the env colour of every tail limb (index >= 42). Frozen at 0 the whole
-    // tail renders black, which is what §3.3 describes.
+    // tail renders black.
     x["ta"] = R3(g->unk_1B0);
 
     // unk_1B4 (0x1B4, f32). W :552 (approach to 255) and :576 (= 0), both inside
@@ -324,10 +325,10 @@ static void BossGanon2_SerializeExtras(Actor* actor, nlohmann::json& x) {
     // and `= 0.0f` at :1554. R func_80904108:2478 (the gate) and :2486 (alpha) —
     // the ring of fire round the arena. Its damage zone is read at :1928, inside
     // the suppressed Update, so streaming it restores the SIGHT of the ring but
-    // not its hitbox; that half belongs with §3.4's collision work.
+    // not its hitbox; that half belongs with the per-element hit accounting work.
     x["fr"] = R3(g->unk_324);
 
-    // The Master Sword, §3.5. It is sBossGanon2Particles[0] -- a global, not an
+    // The Master Sword. It is sBossGanon2Particles[0] -- a global, not an
     // actor, so nothing replicates it, and the particle update runs from
     // BossGanon2_Update which is suppressed on the mirror.
     //
@@ -359,8 +360,9 @@ static void BossGanon2_SerializeExtras(Actor* actor, nlohmann::json& x) {
     // update runs, we do not deserialize. Move DeserializeExtras ahead of that gate
     // and this breaks.
     //
-    // The other half of §3.5 is in the overlay: the pickup proximity test runs
-    // against Anchor_NearestPlayerToPos, so EITHER player can reach it.
+    // The other half of the Master Sword work is in the overlay: the pickup
+    // proximity test runs against Anchor_NearestPlayerToPos, so EITHER player
+    // can reach it.
     {
         // "msg": the blade has been recovered. Not unk_334 as state -- its
         // consequence, handing each client's own Link his sword back. See
@@ -395,7 +397,7 @@ static void BossGanon2_SerializeExtras(Actor* actor, nlohmann::json& x) {
     // it. Same field, same role as unk_1A6 on phase 1.
     x["dm"] = g->unk_342;
 
-    // The tail's three DRAW inputs (§3.3; §3.4's hit accounting is NOT here).
+    // The tail's three DRAW inputs (its hit accounting is NOT here).
     // unk_346 (0x346, s16) — W the Math_ApproachS at Update:2089/:2099/:2103,
     //   R OverrideLimbDraw:2583, the tail's overall lift.
     // unk_348[5] / unk_352[5] (0x348 / 0x352, s16[5]) — W Update:2124-2125,
@@ -436,11 +438,12 @@ static void BossGanon2_SerializeExtras(Actor* actor, nlohmann::json& x) {
     //     the pointer. The guard passes on a freed actor, which is exactly the
     //     end-of-fight case it was meant to cover.
     //
-    // Both fields belong to the closing cutscene, which §3.6 has to be re-measured
-    // for anyway (the plan's account of the death was already wrong once, at the
-    // bench). Not sending them leaves P2 without those two effects — which is where
-    // he already is — and costs nothing else. Whoever writes §3.6 must close the
-    // gates in EndSuppression and test liveness, not nullness, before sending them.
+    // Both fields belong to the closing cutscene, which has to be re-measured at
+    // the bench anyway (the plan's account of the death was already wrong once,
+    // there). Not sending them leaves P2 without those two effects — which is where
+    // he already is — and costs nothing else. Whoever finishes the endgame work must
+    // close the gates in EndSuppression and test liveness, not nullness, before
+    // sending them.
 
     // unk_38C (0x38C, f32). W the Math_ApproachF at :1660/:1662.
     // R func_8090523C:2732 (gate) and :2737 (alpha) — the Triforce flash. This one
@@ -493,7 +496,7 @@ static void BossGanon2_MirrorFireRing(BossGanon2* g) {
     func_8002F6D4(gPlayState, &g->actor, 10.0f, Math_Atan2S(dz, dx), 0.0f, 0x10);
 }
 
-// §3.5, the half the plan left open: who ends up HOLDING the Master Sword.
+// The half of the Master Sword work the plan left open: who ends up HOLDING it.
 //
 // Ganon knocks the blade out of Link's hands during the introduction, and the
 // introduction runs LOCALLY on every client (C3.2) -- so both Links really are
@@ -501,7 +504,7 @@ static void BossGanon2_MirrorFireRing(BossGanon2* g) {
 // pickup sequence (:1411-1441), driven by BossGanon2_Update, which the mirror
 // does not run. So P2 was left permanently swordless, and since the finishing
 // blow demands PLAYER_IA_SWORD_MASTER in hand (:1732), he could never end the
-// fight even once §3.6 gave him the right to.
+// fight even once the endgame handoff gave him the right to.
 //
 // unk_334 itself stays off the wire, for the reason the file header gives: the
 // mirror's only reader of it is a suppressed Update. What travels is its
@@ -611,12 +614,13 @@ static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
         }
 
         // The blade has been recovered on the authority -- by EITHER player, since
-        // §3.5 opened the pickup. Hand this client's Link his sword back, once.
+        // the overlay's pickup test now accepts the nearest of them. Hand this
+        // client's Link his sword back, once.
         if (x.value("msg", false) && g->unk_334 == 0) {
             BossGanon2_MirrorGiveMasterSword(g);
         }
 
-        // The Master Sword particle (§3.5). Absent means "not lying on the ground
+        // The Master Sword particle. Absent means "not lying on the ground
         // right now", so clear it rather than leave a ghost blade planted forever --
         // the mirror's own update never runs and would never clear it by itself.
         if (x.contains("ms") && x["ms"].size() == 9) {
@@ -664,7 +668,7 @@ static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
         }
 
         // -------------------------------------------------------------------
-        // §3.2 crash trap: sBossGanon2Zelda is dereferenced by TWO DRAW paths.
+        // The crash trap: sBossGanon2Zelda is dereferenced by TWO DRAW paths.
         // -------------------------------------------------------------------
         //     func_80905674:2798-2800   reached when unk_380 > 0.0f
         //     func_80904FC8:2711-2712   reached when unk_384 > 0.0f
@@ -791,7 +795,7 @@ static bool BossGanon2_ShouldMirror(Actor* actor, uint8_t streamedPhase) {
     return g->actionFunc != func_808FD5F4;
 }
 
-// §3.6, the endgame. Measured in a real fight on 2026-09-13, and it is the same
+// The endgame. Measured in a real fight on 2026-09-13, and it is the same
 // defect as Ganondorf's death was: once Ganon is struck down, P2 saw NOTHING --
 // not Zelda's beam of light, not the seven sages -- and stayed standing in the
 // arena while the credits rolled on P1's screen.
@@ -805,7 +809,7 @@ static bool BossGanon2_ShouldMirror(Actor* actor, uint8_t streamedPhase) {
 // client's own AI, exactly as C2.4 did for phase 1.
 //
 // The null guard is the load-bearing line. sBossGanon2Zelda is dereferenced
-// throughout the cutscene, and §3.2's whole lesson was that this pointer is the
+// throughout the cutscene, and the crash trap's whole lesson was that this pointer is the
 // trap of this file. It is spawned by the introduction (:251), which C3.2 makes
 // every client run for itself, so it should be set here -- but "should" is what
 // the plan said about several things that were measured false. If it is null we

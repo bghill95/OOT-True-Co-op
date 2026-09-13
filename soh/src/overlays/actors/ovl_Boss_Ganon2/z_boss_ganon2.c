@@ -207,7 +207,7 @@ void BossGanon2_Init(Actor* thisx, PlayState* play) {
     }
 }
 
-// Co-op (§3.5): give THIS client's Link his Master Sword back, after the
+// Co-op: give THIS client's Link his Master Sword back, after the
 // authority reports the blade recovered. The pickup sequence that normally does
 // it (:1415-1421) is driven by BossGanon2_Update, which the mirror does not run,
 // so without this P2 stays disarmed for good -- and the finishing blow demands
@@ -1740,7 +1740,7 @@ void func_8090120C(BossGanon2* this, PlayState* play) {
             }
             break;
         case 6: {
-            // Co-op (§3.6): EITHER player may land the finishing blow.
+            // Co-op: EITHER player may land the finishing blow.
             //
             // This is the gate the whole ending hangs on. Ganon is down and the
             // machine waits here forever until someone swings the Master Sword at
@@ -1753,7 +1753,8 @@ void func_8090120C(BossGanon2* this, PlayState* play) {
             // The POINT form, for the reason measured on the bench today with the
             // Master Sword pickup: the distance below is to unk_1B8, not to Ganon,
             // and selecting a player on one criterion while testing another is how
-            // §3.5 shipped broken. Select on the same point you measure.
+            // the Master Sword pickup shipped broken. Select on the same point
+            // you measure.
             //
             // The puppet carries what this test reads: DummyPlayer.cpp:146 applies
             // heldItemAction and :152 applies meleeWeaponState, both streamed by
@@ -2148,7 +2149,7 @@ void BossGanon2_Update(Actor* thisx, PlayState* play) {
     f32 angle;
     f32 sp44;
 
-    // Co-op (§3.6): Ganon at 0 health but still on his feet is not a state this
+    // Co-op: Ganon at 0 health but still on his feet is not a state this
     // fight has an answer for, and nothing else ever gets him out of it.
     //
     // Vanilla cannot reach it, because the damage function refuses it in three
@@ -2158,7 +2159,7 @@ void BossGanon2_Update(Actor* thisx, PlayState* play) {
     // simply never rests at 0.
     //
     // A remote hit takes none of those branches, and the reason is worse than the
-    // per-element mis-routing §3.4 describes. Ganon2 submits TWO AC colliders in
+    // per-element mis-routing of tail hits. Ganon2 submits TWO AC colliders in
     // the same update -- unk_424 (body and tail) at :2201 and unk_444 (his weapon)
     // at :2203 -- and EnemySync's OnColliderSetAC overwrites its record on each
     // call (EnemySync.cpp:2891), so the collider it stamps is always unk_444.

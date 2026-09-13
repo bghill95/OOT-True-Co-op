@@ -63,15 +63,15 @@ enum {
  *   0x12C / 0x190         terminal shards             health 0
  *
  * SIGNEDNESS MATTERS. The two placed instances are ganon_boss room 0 with
- * params 0xFFFF and ganon_final room 0 with params 0x0001 (scene data, read
- * with tools/scene_actors.py). 0xFFFF is -1 as the s16 the overlay compares,
+ * params 0xFFFF and ganon_final room 0 with params 0x0001, read out of the
+ * scene data. 0xFFFF is -1 as the s16 the overlay compares,
  * so the arena Ganondorf passes `params < 0x64` only under a SIGNED read. Every
  * params test in this file therefore goes through GanondorfParams(), which
  * reads actor->params as s16 exactly like the overlay does. Reading it as
  * uint16_t (as TrackedState::spawnParams does) turns the real boss into a
  * projectile variant.
  *
- * What this adapter does today (C2.1 to C2.4 of COOP-GANON-PLAN.md §2.1-§2.5):
+ * What this adapter does today:
  *
  *   - GetPhase / ShouldMirror (C2.3) and OnPhaseChange (C2.4). See the Phases
  *     block at the top of the file and the handoff just above RegisterBossGanonAdapter;
@@ -87,18 +87,19 @@ enum {
  *     torso-height off. unk_1FC needs nothing on the wire: PostLimbDraw:3328
  *     writes it from limb 2 and the Draw runs on every client.
  *
- *   - the "Update writes it / Draw reads it" fields of §2.2 points 1 to 4.
+ *   - the "Update writes it / Draw reads it" fields — the four groups sent by
+ *     BossGanon_SerializeExtras below.
  *     On a mirror the tracked actor's Update is suppressed and its Draw is not,
  *     so each of these is frozen at the 0 that Actor_Spawn's memset left
  *     (z_actor.c:3403).
  *
  * DELIBERATELY ABSENT, and not an oversight:
  *
- *   - fwork[] (§2.2 n°5), triforceType and the rest of §2.2 n°7. fwork is only
+ *   - fwork[], triforceType and the rest of the cutscene fields. fwork is only
  *     safe AFTER ShouldMirror(INTRO) is false — which is now the case (see the
  *     Phases block above), so it becomes eligible in the next commit rather than
  *     being ruled out; the sBossGanonZelda guard below still has to survive it.
- *   - legRot (§2.2 n°6, 0x050C, Vec3f). Frozen at 0 on the mirror, so the six
+ *   - legRot (0x050C, Vec3f). Frozen at 0 on the mirror, so the six
  *     additions in BossGanon_OverrideLimbDraw:3270-3298 all contribute nothing
  *     and his legs do not sway. Purely cosmetic, and it is a Vec3f every tick
  *     for a gait: left off until the cheaper fields have been seen in play.
@@ -123,7 +124,7 @@ enum {
  */
 
 // ---------------------------------------------------------------------------
-// §2.6 crash trap 2: actor->parent
+// Crash trap 2: actor->parent
 // ---------------------------------------------------------------------------
 // BossGanon_LightBall_Update:3946/3950, func_808E1EB4:4262 and
 // func_808E2544:4382/4388 all dereference this->actor.parent on their FIRST
@@ -173,7 +174,7 @@ static void BossGanon_SerializeExtras(Actor* actor, nlohmann::json& x) {
     }
     BossGanon* gd = (BossGanon*)actor;
 
-    // §2.2 n°1 — unk_1A2 (0x1A2, s16). Written ONLY by BossGanon_Update:2898
+    // unk_1A2 (0x1A2, s16). Written ONLY by BossGanon_Update:2898
     // (`this->unk_1A2++`), read by six draws: DrawShock:3452,
     // DrawHandLightBall:3479/3494, DrawBigMagicCharge:3521/3536/3542/3555/3561,
     // DrawDarkVortex:3650. One s16 unfreezes six texture scrolls.
@@ -183,7 +184,7 @@ static void BossGanon_SerializeExtras(Actor* actor, nlohmann::json& x) {
     // and pushes Gfx_SetFog(255, 50, 0, ...), the red wash over Ganondorf when he is
     // hit. Armed to 15 by Update:2493 / :2767 / :2815 and decremented at :2916-2917,
     // so on a mirror it sits at 0 forever: today P2 lands a hit and Ganondorf does
-    // not flinch visually at all. The plan filed this under §2.2 n°7 with the
+    // not flinch visually at all. The plan filed this with the
     // cutscene fields; it does not belong there -- it is the only one of that group
     // that plays during the fight, and it is combat feedback, not decoration.
     //
@@ -194,14 +195,14 @@ static void BossGanon_SerializeExtras(Actor* actor, nlohmann::json& x) {
     // no variant ever reaches this code.
     x["df"] = gd->unk_1A6;
 
-    // §2.2 n°2 — the ball he charges in his hand. handLightBallScale (0x254)
+    // The ball he charges in his hand. handLightBallScale (0x254)
     // GATES the whole draw (DrawHandLightBall:3475), so at 0 the mirror sees an
     // empty hand wind up and throw nothing. unk_258 (0x258) is its spin
     // (Matrix_RotateZ, :3490). Written by PoundFloor:1971/1935,
     // PlayTennis:2391, SetupBlock:2438, ChargeLightBall:2340.
     x["hb"] = { R3(gd->handLightBallScale), R3(gd->unk_258) };
 
-    // §2.2 n°3 — the big magic, sent as one block (the plan is right that
+    // The big magic, sent as one block (the plan is right that
     // splitting it gives an effect at the world origin: unk_278 IS its centre).
     // unk_284 (0x284) gates DrawBigMagicCharge:3514 outright; unk_288 (0x288)
     // and unk_290 (0x290) are its two alphas (:3534/:3540, :3518); unk_28C
@@ -234,7 +235,7 @@ static void BossGanon_SerializeExtras(Actor* actor, nlohmann::json& x) {
         x["br"] = rays;
     }
 
-    // §2.2 n°4 — the shocks, all four together or none. unk_2E6 (0x2E6) and
+    // The shocks, all four together or none. unk_2E6 (0x2E6) and
     // unk_2E8 (0x2E8) are the two timers that gate DrawShock:3413 (and pick
     // which of its two branches runs, :3419); both are decremented by
     // BossGanon_Update:2924-2930, so on a mirror they never expire either.
@@ -344,7 +345,7 @@ static void BossGanon_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     BossGanon_SetColliderPos(&gd->unk_1FC, &gd->collider);
 
     // -----------------------------------------------------------------------
-    // §2.6 crash trap 1: sBossGanonZelda is NULL on a mirror.
+    // Crash trap 1: sBossGanonZelda is NULL on a mirror.
     // -----------------------------------------------------------------------
     // BossGanon_DrawTriforce:3612 does
     //     this->triforcePos = sBossGanonZelda->unk_31C;
@@ -400,10 +401,10 @@ static bool BossGanon_ShouldMirror(Actor* actor, uint8_t streamedPhase) {
     return gd->actionFunc != BossGanon_SetupIntroCutscene && gd->actionFunc != BossGanon_IntroCutscene;
 }
 
-// Mirror side, on the streamed edge into DEFEATED (C2.4 / §2.5).
+// Mirror side, on the streamed edge into DEFEATED (C2.4).
 //
 // Bench-measured 2026-09-12, and the plan's description of the symptom is WRONG:
-// §2.5 predicts the released mirror replays the INTRODUCTION cutscene. It does not.
+// it predicts the released mirror replays the INTRODUCTION cutscene. It does not.
 // P2 sees nothing at all — Ganondorf simply stops being drawn while he sits at 0 HP
 // in P2's actor list, with the room, the organ and P1's puppet rendering normally
 // around him. The defect is an absence, not a wrong cutscene.
