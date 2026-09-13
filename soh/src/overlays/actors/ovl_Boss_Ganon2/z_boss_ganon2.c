@@ -89,6 +89,9 @@ Player* Anchor_NearestPlayerToPos(Vec3f* from);
 // same-scene puppet; NULL when exhausted. For questions that must be asked of
 // EVERY player rather than of the nearest one -- see the finishing blow.
 Actor* Anchor_PlayerActorAt(s32 index);
+// z_player.c:10705 — puts the sword back in Link's hand after the Ganon fight
+// disarm. Non-static, absent from the header.
+void func_80846720(PlayState* play, Player* self, s32 arg2);
 
 void BossGanon2_InitRand(s32 seedInit0, s32 seedInit1, s32 seedInit2) {
     sBossGanon2Seed1 = seedInit0;
@@ -202,6 +205,43 @@ void BossGanon2_Init(Actor* thisx, PlayState* play) {
         !CHECK_OWNED_EQUIP(EQUIP_TYPE_SWORD, EQUIP_INV_SWORD_MASTER)) {
         hasFoundMasterSword = 0;
     }
+}
+
+// Co-op (§3.5): give THIS client's Link his Master Sword back, after the
+// authority reports the blade recovered. The pickup sequence that normally does
+// it (:1415-1421) is driven by BossGanon2_Update, which the mirror does not run,
+// so without this P2 stays disarmed for good -- and the finishing blow demands
+// PLAYER_IA_SWORD_MASTER in hand, so he could never end the fight either.
+//
+// It lives here, not in the adapter, because the guard has to be
+// hasFoundMasterSword -- a file static, and the same one the pickup (:3026) and
+// the draw (:3139) already use.
+//
+// It MUST be that one. The first version of this guard sat in the adapter and
+// read CHECK_OWNED_EQUIP(SWORD, MASTER) instead, calling it "the same refusal the
+// disarm takes". It is not the same: the disarm evaluates that test BEFORE
+// stripping the sword, and then calls Inventory_DeleteEquipment, which XORs the
+// owned bit away (z_inventory.c:194-203). Read at this point the bit is false for
+// EVERY client, so the guard refused the blade to the player who legitimately
+// owned it -- and a shuffled seed ended with both Links disarmed in front of a
+// finishing blow nobody could land. hasFoundMasterSword is computed in
+// BossGanon2_Init, before anyone is disarmed, which is exactly why it survives.
+//
+// The two calls are the game's own, from z_player.c:func_8085283C ("this is when
+// link picks up the sword in the Ganon fight"). Neither knows about the
+// randomizer: func_80846720 reads D_808546F0[linkAge] and equips unconditionally,
+// and Item_Give gates only sticks and nuts. The guard is the whole protection.
+void BossGanon2_CoopGiveMasterSword(PlayState* play) {
+    Player* player = GET_PLAYER(play);
+
+    if (player == NULL) {
+        return;
+    }
+    if (IS_RANDO && !hasFoundMasterSword) {
+        return; // this seed withholds the blade from this client, by design
+    }
+    Item_Give(play, ITEM_SWORD_MASTER);
+    func_80846720(play, player, 0);
 }
 
 void BossGanon2_Destroy(Actor* thisx, PlayState* play) {
@@ -1534,10 +1574,10 @@ void func_8090109C(BossGanon2* this, PlayState* play) {
 
 void func_8090120C(BossGanon2* this, PlayState* play) {
     Player* player;
-    f32 temp_f14;
-    f32 temp_f12;
+    // temp_f14 / temp_f12 / temp_a0_2 used to hold the finishing-blow geometry.
+    // That test now loops over every player and keeps its own locals, so these
+    // were left with nothing but a declaration.
     Camera* temp_v0_2;
-    s16 temp_a0_2;
     f32 phi_f0;
     s32 phi_a1;
 
@@ -1742,6 +1782,10 @@ void func_8090120C(BossGanon2* this, PlayState* play) {
             Player* striker = NULL;
             {
                 s32 pi;
+                // 8 is a safety stop, not a player cap: Anchor keeps its clients
+                // in an unbounded map and ends the walk with NULL, which is what
+                // actually terminates this loop. It only guarantees we cannot spin
+                // if that contract ever changes.
                 for (pi = 0; pi < 8; pi++) {
                     Actor* candidateActor = Anchor_PlayerActorAt(pi);
                     f32 dx;

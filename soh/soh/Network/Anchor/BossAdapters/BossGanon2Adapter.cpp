@@ -32,13 +32,9 @@ void func_808FD5F4(BossGanon2* self, PlayState* play);
 void func_80901020(BossGanon2* self, PlayState* play);
 // z_boss_ganon2.c:1531 — the cutscene itself, compared by address only.
 void func_8090120C(BossGanon2* self, PlayState* play);
-// z_player.c:10705 — puts the sword back in Link's hand after the Ganon fight
-// disarm. It knows NOTHING about the randomizer; see the handback below.
-void func_80846720(PlayState* play, Player* self, s32 arg2);
-// OTRGlobals.h:132, but that declaration sits inside an `#ifndef __cplusplus`
-// block, so every .cpp in this tree redeclares it here (CosmeticsEditor.cpp:57,
-// NoMasterSword.cpp:14, PauseWarp.cpp:13). Same idiom.
-u8 Randomizer_GetSettingValue(RandomizerSettingKey randoSettingKey);
+// z_boss_ganon2.c — hands the local Link his Master Sword back, guarded by
+// hasFoundMasterSword, which is a file static only the overlay can read.
+void BossGanon2_CoopGiveMasterSword(PlayState* play);
 // z_boss_ganon2.c:61. Non-static, so an extern declaration reaches it. Only ever
 // null-tested here; the incomplete type is deliberate (no En_Zl3 header needed).
 struct EnZl3;
@@ -530,28 +526,24 @@ static void BossGanon2_MirrorFireRing(BossGanon2* g) {
 // Without the guard: a seed where P1 found the Master Sword and P2 did not would
 // hand P2 a blade the seed refuses him, duplicating the check instead of moving
 // it, and leaving INFTABLE_SWORDLESS set beside an equipped sword.
+// The work itself is in the overlay, BossGanon2_CoopGiveMasterSword, and it has
+// to be: the only correct guard is hasFoundMasterSword, a file static of
+// z_boss_ganon2.c computed before anyone is disarmed. This function tried to
+// carry its own guard first and got it wrong -- CHECK_OWNED_EQUIP read here is
+// false for EVERY client, because the introduction's Inventory_DeleteEquipment
+// has already XORed the owned bit away, so a shuffled seed left both Links
+// permanently swordless in front of a finishing blow neither could land.
 static void BossGanon2_MirrorGiveMasterSword(BossGanon2* g) {
     if (gPlayState == NULL) {
         return;
     }
-    Player* player = GET_PLAYER(gPlayState);
-    if (player == NULL) {
-        return;
-    }
-    if (IS_RANDO && Randomizer_GetSettingValue(RSK_SHUFFLE_MASTER_SWORD) &&
-        !CHECK_OWNED_EQUIP(EQUIP_TYPE_SWORD, EQUIP_INV_SWORD_MASTER)) {
-        // Same refusal the disarm itself takes, z_player.c:16510-16516.
-        g->unk_334 = 1; // consume the event; this client is meant to stay swordless
-        ESYNC_LOG("[BossGanon2Sync] Master Sword handback refused: shuffled and not owned");
-        return;
-    }
-    // unk_334 is the mirror's own latch, and nothing local ever writes it (its
-    // update is suppressed), so it doubles as the "already done" marker: no extra
-    // per-actor state to carry, and the restitution runs exactly once.
+    // unk_334 is the mirror's own latch, and nothing local writes it while its
+    // update is suppressed, so it doubles as the "already done" marker: no extra
+    // per-actor state to carry, and the restitution runs exactly once. Set before
+    // the call so a withheld blade consumes the event too.
     g->unk_334 = 1;
-    Item_Give(gPlayState, ITEM_SWORD_MASTER);
-    func_80846720(gPlayState, player, 0);
-    ESYNC_LOG("[BossGanon2Sync] Master Sword handed back to the local Link");
+    BossGanon2_CoopGiveMasterSword(gPlayState);
+    ESYNC_LOG("[BossGanon2Sync] Master Sword handback played for the local Link");
 }
 
 static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
@@ -757,6 +749,20 @@ static uint8_t BossGanon2_GetPhase(Actor* actor) {
 static bool BossGanon2_ShouldMirror(Actor* actor, uint8_t streamedPhase) {
     BossGanon2* g = (BossGanon2*)actor;
     if (streamedPhase == GANON2_PHASE_INTRO) {
+        return false;
+    }
+    // Never mirror a Ganon whose ending is already running on the authority.
+    //
+    // Normally the defeat handoff has released us long before this matters. It is
+    // the late joiner this covers: someone who spawns Ganon2 DURING the ending
+    // receives DEFEATED on his very first packet, and the phase edge is consumed
+    // before OnPhaseChange is even called (EnemySync.cpp:1745). His own
+    // introduction has not spawned Zelda yet, so the handoff refuses, and there is
+    // no second edge -- ever. Without this line he would finish his introduction
+    // and then spend the rest of the fight mirroring a frozen pose, never seeing
+    // the ending and never leaving the arena. Staying local means his own AI runs,
+    // which is the same answer the handoff gives everyone else.
+    if (streamedPhase == GANON2_PHASE_DEFEATED) {
         return false;
     }
     return g->actionFunc != func_808FD5F4;
