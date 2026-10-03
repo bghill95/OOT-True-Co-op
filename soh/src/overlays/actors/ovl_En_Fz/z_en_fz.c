@@ -4,6 +4,8 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ObjectExtension/ActorMaximumHealth.h"
 
+s32 Anchor_IsMirroredActor(Actor* actor);
+
 #define FLAGS                                                                                 \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
      ACTOR_FLAG_HOOKSHOT_PULLS_PLAYER)
@@ -752,6 +754,28 @@ void EnFz_Draw(Actor* thisx, PlayState* play) {
     }
 
     CLOSE_DISPS(play->state.gfxCtx);
+
+    // Co-op: the ice smoke table is filled by iceSmokeSpawnFuncs and aged by
+    // EnFz_UpdateIceSmoke, both at the end of EnFz_Update. On a mirror that update
+    // never runs, so EnFz_DrawIceSmoke below looped over forty empty slots and the
+    // Freezard sat there with no cold mist at all. Run that half here instead.
+    //
+    // counter has to be stepped with it: EnFz_SpawnIceSmokeActiveState only spawns on
+    // counter % 4 and the hidden state on counter % 16, and EnFz_Update is the only
+    // thing that increments it. Frozen, the mist would either never appear or appear
+    // every single frame.
+    //
+    // This covers the AMBIENT mist only (EnFz_SpawnIceSmokeNoFreeze, type 1, harmless).
+    // The FREEZING jet is spawned by EnFz_BlowSmokeStationary, an action function, and
+    // reproducing an action function on a mirror is exactly what suppression exists to
+    // prevent. A mirrored Freezard therefore breathes cold but does not freeze — see
+    // the collider note in the adapter, and T41.
+    if (Anchor_IsMirroredActor(&this->actor)) {
+        this->counter++;
+        iceSmokeSpawnFuncs[this->state](this);
+        EnFz_UpdateIceSmoke(this, play);
+    }
+
     EnFz_DrawIceSmoke(this, play);
 }
 
@@ -846,7 +870,21 @@ void EnFz_UpdateIceSmoke(EnFz* this, PlayState* play) {
                     }
                 }
 
-                if ((this->unusedTimer2 == 0) && (iceSmoke->primAlpha >= 101) && iceSmoke->isTimerMod8) {
+                // Co-op: on a mirror this function is driven from EnFz_Draw, and the
+                // mirror must not touch collider3 AT ALL -- position included. The
+                // adapter parks that cylinder out of the world every packet precisely
+                // because a mirrored Freezard cannot reproduce the freezing jet, and
+                // writing a real position here would undo the parking: EnemySync
+                // resubmits the AT from the streamed enable bits, so the mirror would
+                // freeze on an invisible hitbox until the next packet reparked it.
+                //
+                // It is not a dead branch on a mirror either. Type-2 particles are only
+                // spawned by EnFz_BlowSmokeStationary, an action function, so normally
+                // none exist here -- but the ones already in flight when authority
+                // changes hands survive into suppression, and they are exactly the ones
+                // that would land here.
+                if (!Anchor_IsMirroredActor(&this->actor) && (this->unusedTimer2 == 0) &&
+                    (iceSmoke->primAlpha >= 101) && iceSmoke->isTimerMod8) {
                     this->collider3.dim.pos.x = (s16)iceSmoke->pos.x;
                     this->collider3.dim.pos.y = (s16)iceSmoke->pos.y;
                     this->collider3.dim.pos.z = (s16)iceSmoke->pos.z;

@@ -74,8 +74,8 @@ static void DrivePuppetFairy(uint32_t clientId, Actor* actor) {
     AnchorClient* client = nullptr;
     if (Anchor::Instance != nullptr) {
         auto cit = Anchor::Instance->clients.find(clientId);
-        if (cit != Anchor::Instance->clients.end() && cit->second.online &&
-            cit->second.player != nullptr && cit->second.player->actor.update != NULL) {
+        if (cit != Anchor::Instance->clients.end() && cit->second.online && cit->second.player != nullptr &&
+            cit->second.player->actor.update != NULL) {
             client = &cit->second;
             puppet = cit->second.player;
         }
@@ -84,8 +84,8 @@ static void DrivePuppetFairy(uint32_t clientId, Actor* actor) {
     // Parked: puppet in another scene / offline / save not loaded (same predicate
     // DummyPlayer uses). SNAP away — a lerp under the 20/frame clamp would streak
     // the fairy across the whole map. The lifecycle tick reaps it shortly after.
-    bool parked = (client == nullptr) || (gPlayState == nullptr) ||
-                  (client->sceneNum != gPlayState->sceneNum) || !client->isSaveLoaded || !client->online;
+    bool parked = (client == nullptr) || (gPlayState == nullptr) || (client->sceneNum != gPlayState->sceneNum) ||
+                  !client->isSaveLoaded || !client->online;
     if (parked) {
         SnapFairyAway(elf);
         return;
@@ -177,8 +177,7 @@ static void PuppetFairyLifecycle() {
     }
 
     for (auto& [clientId, client] : clients) {
-        if (client.self || !client.online || client.player == nullptr ||
-            client.player->actor.update == NULL) {
+        if (client.self || !client.online || client.player == nullptr || client.player->actor.update == NULL) {
             continue;
         }
         if (sFairies.count(clientId)) {
@@ -186,8 +185,8 @@ static void PuppetFairyLifecycle() {
         }
 
         Vec3f pos = client.player->actor.world.pos;
-        Actor* fairy = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_ELF, pos.x, pos.y + 60.0f, pos.z, 0,
-                                   0, 0, FAIRY_KOKIRI, false);
+        Actor* fairy = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_ELF, pos.x, pos.y + 60.0f, pos.z, 0, 0,
+                                   0, FAIRY_KOKIRI, false);
         if (fairy == nullptr) {
             continue;
         }

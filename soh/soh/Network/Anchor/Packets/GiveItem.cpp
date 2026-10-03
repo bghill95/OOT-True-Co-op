@@ -50,6 +50,12 @@ void Anchor::HandlePacket_GiveItem(nlohmann::json payload) {
     }
 
     uint32_t clientId = payload["clientId"].get<uint32_t>();
+    // operator[] would insert a blank AnchorClient for an unknown id, leaving a
+    // ghost in the map that RefreshClientActors and Anchor_NearestPlayer iterate.
+    if (!clients.contains(clientId)) {
+        SPDLOG_WARN("[Anchor] GIVE_ITEM from unknown client {}, dropped", clientId);
+        return;
+    }
     AnchorClient& client = clients[clientId];
     u16 modId = payload["modId"].get<u16>();
     u16 getItemId = payload["getItemId"].get<u16>();

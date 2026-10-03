@@ -55,12 +55,23 @@ void func_808B27F0(PlayState* play, s16 waterSurface) {
     waterBox->ySurface = waterSurface;
 }
 
+Actor* Anchor_PlayerActorAt(s32 index);
+s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
+
+// Is ANY player standing in the oasis? Vanilla asked only about the local Link,
+// which in co-op made the rising oasis a coin toss: the Song of Storms sets env
+// flag 5 for a single frame, so the player who was not standing in the water at
+// that exact instant simply never saw it rise — and it is the scene's waterbox
+// that moves, not an actor, so nothing about it replicates afterwards. Testing
+// every player makes both clients reach the same verdict from their own copy,
+// with no packet at all.
 s32 func_808B280C(PlayState* play) {
-    Player* player = GET_PLAYER(play);
     Vec3f sp58;
     Vec3f sp4C;
     Vec3f sp40;
     s32 i;
+    s32 playerIndex;
+    Actor* playerActor;
 
     sp58.x = D_808B2E10[0][0];
     sp58.z = D_808B2E10[0][1];
@@ -69,13 +80,16 @@ s32 func_808B280C(PlayState* play) {
     sp4C.y = 0.0f;
     sp40.y = 0.0f;
 
-    for (i = 1; i < ARRAY_COUNT(D_808B2E10) - 1; i++) {
-        sp4C.x = D_808B2E10[i][0];
-        sp4C.z = D_808B2E10[i][1];
-        sp40.x = D_808B2E10[i + 1][0];
-        sp40.z = D_808B2E10[i + 1][1];
-        if (Math3D_TriChkPointParaYSlopedY(&sp58, &sp4C, &sp40, player->actor.world.pos.z, player->actor.world.pos.x)) {
-            return 1;
+    for (playerIndex = 0; (playerActor = Anchor_PlayerActorAt(playerIndex)) != NULL; playerIndex++) {
+        for (i = 1; i < ARRAY_COUNT(D_808B2E10) - 1; i++) {
+            sp4C.x = D_808B2E10[i][0];
+            sp4C.z = D_808B2E10[i][1];
+            sp40.x = D_808B2E10[i + 1][0];
+            sp40.z = D_808B2E10[i + 1][1];
+            if (Math3D_TriChkPointParaYSlopedY(&sp58, &sp4C, &sp40, playerActor->world.pos.z,
+                                               playerActor->world.pos.x)) {
+                return 1;
+            }
         }
     }
     return 0;
@@ -96,7 +110,11 @@ void func_808B2970(BgSpot11Oasis* this) {
 
 void func_808B2980(BgSpot11Oasis* this, PlayState* play) {
     if (Flags_GetEnv(play, 5) && func_808B280C(play)) {
-        OnePointCutscene_Init(play, 4150, -99, &this->actor, MAIN_CAM);
+        // Only the player near the water loses their camera to it; the other one
+        // may be anywhere in the Colossus.
+        if (Anchor_ShouldPlayCameraCutscene(&this->actor, 800.0f)) {
+            OnePointCutscene_Init(play, 4150, -99, &this->actor, MAIN_CAM);
+        }
         func_808B29E0(this);
     }
 }

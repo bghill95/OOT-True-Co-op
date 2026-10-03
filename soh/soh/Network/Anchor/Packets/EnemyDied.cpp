@@ -21,7 +21,7 @@ extern PlayState* gPlayState;
  * period if the enemy is somehow still alive.
  */
 
-void Anchor::SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanent) {
+void Anchor::SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanent, u32 dmgFlags) {
     if (!IsSaveLoaded() || !EnemySync::SyncEnabled()) {
         return;
     }
@@ -35,6 +35,7 @@ void Anchor::SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanen
     payload["actorId"] = actor->id;
     payload["homePos"] = actor->home.pos;
     payload["permanent"] = permanent; // Actor_Kill death vs defeat-hook death (regrowers)
+    payload["dmgFlags"] = dmgFlags;   // the lethal blow's flags: the copy must accept the same hit
 
     int sent = 0;
     for (auto& [clientId, client] : clients) {
@@ -44,7 +45,7 @@ void Anchor::SendPacket_EnemyDied(Actor* actor, uint64_t enemyKey, bool permanen
             sent++;
         }
     }
-    ESYNC_LOG("[EnemySync] DIED tx id={} n={}", actor->id, sent);
+    ESYNC_LOG("[EnemySync] DIED tx id={} key={:#x} n={}", actor->id, enemyKey, sent);
 }
 
 void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
@@ -54,11 +55,11 @@ void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
     if (payload["sceneNum"].get<int16_t>() != gPlayState->sceneNum) {
         return;
     }
-    ESYNC_LOG("[EnemySync] DIED rx id={}", payload["actorId"].get<int16_t>());
+    ESYNC_LOG("[EnemySync] DIED rx id={} key={:#x}", payload["actorId"].get<int16_t>(), payload["key"].get<uint64_t>());
 
     uint64_t key = payload["key"].get<uint64_t>();
-    Actor* actor = EnemySync::FindActorForPacket(key, payload["actorId"].get<int16_t>(),
-                                                 payload["homePos"].get<Vec3f>());
+    Actor* actor =
+        EnemySync::FindActorForPacket(key, payload["actorId"].get<int16_t>(), payload["homePos"].get<Vec3f>());
     if (actor == NULL) {
         // Bug D: the enemy lives in a room we don't have loaded (the authority can
         // still re-enter it later). Record the kill so its copy dies on room load
@@ -86,6 +87,7 @@ void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
 
     // Death handoff: ApplyRemoteDeath releases suppression for good (after its
     // echo/duplicate guards) so the local simulation plays the death naturally.
-    bool permanent = !payload.contains("permanent") || payload["permanent"].get<bool>();
-    EnemySync::ApplyRemoteDeath(actor, attacker, permanent);
+    bool permanent = JsonBool(payload, "permanent", true);
+    uint32_t dmgFlags = payload.value("dmgFlags", (uint32_t)0);
+    EnemySync::ApplyRemoteDeath(actor, attacker, permanent, dmgFlags);
 }

@@ -180,8 +180,8 @@ void Tick() {
         if (seqId != NA_BGM_DISABLED) {
             u32 target = (seekTest > 0) ? pos + (u32)seekTest : pos;
             Audio_StartSeqSkipTicks(SEQ_PLAYER_BGM_MAIN, seqId & 0xFF, target);
-            SPDLOG_INFO("[Bgm] debug local reseek seqId={} from tick={} to tick={} (+{})", seqId & 0xFF, pos,
-                        target, seekTest);
+            SPDLOG_INFO("[Bgm] debug local reseek seqId={} from tick={} to tick={} (+{})", seqId & 0xFF, pos, target,
+                        seekTest);
         } else {
             SPDLOG_INFO("[Bgm] debug local reseek skipped: no active MAIN bgm");
         }

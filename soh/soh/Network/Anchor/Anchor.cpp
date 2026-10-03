@@ -13,6 +13,24 @@ extern PlayState* gPlayState;
 // MARK: - Overrides
 
 void Anchor::Enable() {
+    // A PERMANENT hook, installed before the socket can ever connect: it is what carries
+    // OnConnected / OnDisconnected over to the game thread (see TickConnection). It
+    // cannot live in RegisterHooks, whose own hooks are conditioned on isConnected --
+    // they do not exist yet at the moment a connection has to be reacted to.
+    //
+    // OnGameStateMainStart, NOT OnGameFrameUpdate, and that is load-bearing:
+    // TickConnection calls RegisterHooks, which registers an OnGameFrameUpdate hook,
+    // and RegisterGameHook inserts into the hook map immediately. Running from an
+    // OnGameFrameUpdate hook would mean inserting into the unordered_map that
+    // ExecuteHooks is iterating right then -- a rehash invalidates the loop's own
+    // reference and iterator. Anchor registers nothing on OnGameStateMainStart.
+    static bool sConnectionTickInstalled = false;
+    if (!sConnectionTickInstalled) {
+        sConnectionTickInstalled = true;
+        GameInteractor::Instance->RegisterGameHook<GameInteractor::OnGameStateMainStart>(
+            [this]() { TickConnection(); });
+    }
+
     Network::Enable(CVarGetString(CVAR_REMOTE_ANCHOR("Host"), "anchor.hm64.org"),
                     CVarGetInteger(CVAR_REMOTE_ANCHOR("Port"), 43383));
     ownClientId = CVarGetInteger(CVAR_REMOTE_ANCHOR("LastClientId"), 0);
@@ -22,21 +40,55 @@ void Anchor::Enable() {
 void Anchor::Disable() {
     Network::Disable();
 
+    DropQueuedPackets();
+
     clients.clear();
     RefreshClientActors();
 }
 
+// Both of these are called from ReceiveFromServer -- the WEBSOCKET thread. What they
+// used to do there does not belong to it: RegisterHooks rewrites GameInteractor's
+// static hook maps (an unordered_map of std::function, rehashed in place) while the
+// game thread is iterating those same maps in ExecuteHooks, and SendPacket_Handshake
+// / IsSaveLoaded dereference gPlayState and gSaveContext, which the game thread
+// reassigns across a scene transition. Same class of bug as the one that put a freed
+// actor's arena under the graphics thread. Only a flag is raised here; TickConnection
+// does the work on the frame hook.
 void Anchor::OnConnected() {
-    SendPacket_Handshake();
-    RegisterHooks();
+    pendingConnected = true;
+}
 
-    if (IsSaveLoaded()) {
-        SendPacket_RequestTeamState();
+void Anchor::EnqueuePacket(nlohmann::json payload) {
+    std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+    incomingPacketQueue.push_back(std::move(payload));
+}
+
+void Anchor::DropQueuedPackets() {
+    std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+    incomingPacketQueue.clear();
+}
+
+void Anchor::TickConnection() {
+    if (pendingDisconnected.exchange(false)) {
+        // An ordinary network drop never goes through Disable() -- ReceiveFromServer
+        // loops and reconnects by itself -- and the drain is conditioned on
+        // isConnected, so it stops while the socket is down. Without this, whatever
+        // was queued when the link died is replayed into the new session.
+        DropQueuedPackets();
+        RegisterHooks();
+    }
+    if (pendingConnected.exchange(false)) {
+        SendPacket_Handshake();
+        RegisterHooks();
+
+        if (IsSaveLoaded()) {
+            SendPacket_RequestTeamState();
+        }
     }
 }
 
 void Anchor::OnDisconnected() {
-    RegisterHooks();
+    pendingDisconnected = true;
 }
 
 void Anchor::SendJsonToRemote(nlohmann::json payload) {
@@ -57,114 +109,213 @@ void Anchor::OnIncomingJson(nlohmann::json payload) {
         return;
     }
 
-    // If it's not a quiet payload, log it
+    // NET_LOG, not SPDLOG_DEBUG: this runs on the receive thread, where the plain
+    // macro crashes on a null default logger even for a line it would have filtered
+    // out. Network.cpp learned that the hard way; this call site is on the same
+    // thread and had been left behind -- the G: minidump of 2026-09-11 23:42 caught
+    // it here, in should_log, with the logger at null.
     if (!payload.contains("quiet")) {
-        SPDLOG_DEBUG("[Anchor] Received payload:\n{}", payload.dump());
+        NET_LOG(SPDLOG_LOGGER_DEBUG, "[Anchor] Received payload:\n{}", payload.dump());
     }
 
-    std::string packetType = payload["type"].get<std::string>();
+    // The version filter that used to sit here read `clients` -- on the websocket
+    // thread, while the game thread inserts into and erases from that same map. It
+    // moved down into the drain (see ProcessIncomingPacketQueue) so that this
+    // function touches nothing but the queue.
 
-    // Ignore packets from mismatched clients, except for ALL_CLIENT_STATE or UPDATE_CLIENT_STATE
-    if (packetType != ALL_CLIENT_STATE && packetType != UPDATE_CLIENT_STATE) {
-        if (payload.contains("clientId")) {
-            uint32_t clientId = payload["clientId"].get<uint32_t>();
-            if (clients.contains(clientId) && clients[clientId].clientVersion != clientVersion) {
-                return;
+    // PLAYER_UPDATE used to be handled right here, on the WEBSOCKET thread, with the
+    // note "no need to queue". There was: HandlePacket_PlayerUpdate writes clients[id]
+    // (inserting a new entry when a peer appears), calls FxSync::IngestPlayerProjectiles
+    // -- which writes sProj's per-client arrow vectors -- and can call
+    // RefreshClientActors(), which spawns, kills and destroys puppet actors. Every one of
+    // those is read or walked by the GAME thread in the same instant: DummyPlayer_Update
+    // ticks the replicas, Anchor_GetPuppetActors iterates clients, Actor_UpdateAll walks
+    // the actor list. Two crashes came out of that race -- W: died in
+    // TickPuppetProjectiles reading an arrowReplicas whose begin pointer was 0 (the
+    // vector was being reallocated under it), and G: died on an En_Ishi whose `update`
+    // field alone had been overwritten.
+    // A pose packet is absolute state, last-writer-wins, so deferring it to the drain at
+    // the top of the next frame costs at most one frame of staleness and nothing else.
+    // Queue all packets to be processed on the game thread
+    std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+
+    // Poses coalesce: a client's stale queued pose is DROPPED and the new one appended
+    // at the back. Without that, a scene load -- during which the game thread stops
+    // draining -- builds an unbounded backlog and replays it in a single frame, which
+    // means N kill+respawn of every puppet at once.
+    // Dropping and appending, rather than overwriting the old entry where it sits,
+    // is what keeps the queue in TCP order: the newest pose must be applied at the
+    // position it ARRIVED, not at the position of the oldest one it replaces.
+    // Otherwise [POSE(sceneX), UPDATE_CLIENT_STATE(sceneX)] plus a later POSE(sceneY)
+    // applies Y then X, and the puppet goes back to the scene its owner just left.
+    // is_string / is_number_unsigned rather than get<>, because nothing here is inside
+    // a try and this is the websocket thread: an exception escaping ends the process.
+    if (payload["type"].is_string() && payload["type"].get<std::string>() == PLAYER_UPDATE &&
+        payload.contains("clientId") && payload["clientId"].is_number_unsigned()) {
+        uint32_t poseClientId = payload["clientId"].get<uint32_t>();
+        for (auto it = incomingPacketQueue.begin(); it != incomingPacketQueue.end(); ++it) {
+            // find(), not operator[]: the entry is non-const, so a subscript would
+            // INSERT a null "clientId" into a packet that has none and defeat the
+            // contains("clientId") guards its handler relies on.
+            const nlohmann::json& q = *it;
+            auto queuedType = q.find("type");
+            auto queuedId = q.find("clientId");
+            if (queuedType != q.end() && *queuedType == PLAYER_UPDATE && queuedId != q.end() &&
+                *queuedId == poseClientId) {
+                incomingPacketQueue.erase(it);
+                break; // at most one pose per client is ever queued
             }
         }
     }
-
-    // Handle PLAYER_UPDATE packets immediately, no need to queue
-    if (packetType == PLAYER_UPDATE) {
-        HandlePacket_PlayerUpdate(payload);
-        return;
-    }
-
-    // Queue all packets to be processed on the game thread
-    std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
-    incomingPacketQueue.push(payload);
+    incomingPacketQueue.push_back(std::move(payload));
 }
 
 void Anchor::ProcessIncomingPacketQueue() {
-    std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+    // Take the queue and release the lock BEFORE handling anything. Holding it for
+    // the whole drain deadlocks: HandlePacket_DisableAnchor -> Disable() ->
+    // Network::Disable() joins the receive thread, which may itself be blocked on
+    // this very mutex trying to enqueue. It also meant every blocking send a handler
+    // makes froze the receive thread along with it.
+    std::deque<nlohmann::json> batch;
+    {
+        std::lock_guard<std::mutex> lock(incomingPacketQueueMutex);
+        batch.swap(incomingPacketQueue);
+    }
 
-    while (!incomingPacketQueue.empty()) {
-        nlohmann::json payload = incomingPacketQueue.front();
-        incomingPacketQueue.pop();
+    while (!batch.empty()) {
+        // A handler can disable Anchor mid-batch (HandlePacket_DisableAnchor). What it
+        // clears is the queue, not this batch, which was already swapped out of it --
+        // so stop here rather than keep applying a dead session's items and warps.
+        if (!isEnabled) {
+            break;
+        }
+        nlohmann::json payload = batch.front();
+        batch.pop_front();
 
-        std::string packetType = payload["type"].get<std::string>();
+        std::string packetType;
+        try {
+            packetType = payload["type"].get<std::string>();
+        } catch (const std::exception& ex) {
+            SPDLOG_WARN("[Anchor] dropping packet with no usable type: {}", ex.what());
+            continue;
+        }
+
+        // Ignore packets from mismatched clients, except for ALL_CLIENT_STATE or
+        // UPDATE_CLIENT_STATE. This ran on the websocket thread until it was found
+        // reading `clients` while this thread was rehashing it.
+        // contains() first: payload is non-const here, so a bare operator[] would
+        // INSERT "clientId": null and defeat the contains("clientId") guards the
+        // handlers below rely on. And is_number_unsigned rather than a bare get<>:
+        // this runs outside the try below, so a malformed clientId must not throw
+        // its way out of the game frame.
+        if (packetType != ALL_CLIENT_STATE && packetType != UPDATE_CLIENT_STATE && payload.contains("clientId") &&
+            payload["clientId"].is_number_unsigned()) {
+            uint32_t clientId = payload["clientId"].get<uint32_t>();
+            auto it = clients.find(clientId);
+            if (it != clients.end() && it->second.clientVersion != clientVersion) {
+                continue;
+            }
+        }
 
         isProcessingIncomingPacket = true;
 
-        // packetType here is a string so we can't use a switch statement
-        if (packetType == ALL_CLIENT_STATE)
-            HandlePacket_AllClientState(payload);
-        else if (packetType == BGM_POS)
-            HandlePacket_BgmPos(payload);
-        else if (packetType == BGM_POS_REQUEST)
-            HandlePacket_BgmPosRequest(payload);
-        else if (packetType == BGM_RESTART)
-            HandlePacket_BgmRestart(payload);
-        else if (packetType == BGM_STATE)
-            HandlePacket_BgmState(payload);
-        else if (packetType == BOSS_ENTRY)
-            HandlePacket_BossEntry(payload);
-        else if (packetType == CUTSCENE_SYNC)
-            HandlePacket_CutsceneSync(payload);
-        else if (packetType == DAMAGE_PLAYER)
-            HandlePacket_DamagePlayer(payload);
-        else if (packetType == DISABLE_ANCHOR)
-            HandlePacket_DisableAnchor(payload);
-        else if (packetType == ENEMY_DESPAWN)
-            HandlePacket_EnemyDespawn(payload);
-        else if (packetType == ENEMY_DIED)
-            HandlePacket_EnemyDied(payload);
-        else if (packetType == ENEMY_HIT)
-            HandlePacket_EnemyHit(payload);
-        else if (packetType == ENEMY_HIT_REQUEST)
-            HandlePacket_EnemyHitRequest(payload);
-        else if (packetType == ENEMY_ROSTER)
-            HandlePacket_EnemyRoster(payload);
-        else if (packetType == ENEMY_SPAWN)
-            HandlePacket_EnemySpawn(payload);
-        else if (packetType == ENEMY_STATE)
-            HandlePacket_EnemyState(payload);
-        else if (packetType == ENTRANCE_DISCOVERED)
-            HandlePacket_EntranceDiscovered(payload);
-        else if (packetType == GAME_COMPLETE)
-            HandlePacket_GameComplete(payload);
-        else if (packetType == GIVE_ITEM)
-            HandlePacket_GiveItem(payload);
-        else if (packetType == PLAYER_LIFE_STATE)
-            HandlePacket_PlayerLifeState(payload);
-        else if (packetType == PLAYER_SFX)
-            HandlePacket_PlayerSfx(payload);
-        else if (packetType == UPDATE_TEAM_STATE)
-            HandlePacket_UpdateTeamState(payload);
-        else if (packetType == REQUEST_TEAM_STATE)
-            HandlePacket_RequestTeamState(payload);
-        else if (packetType == REQUEST_TELEPORT)
-            HandlePacket_RequestTeleport(payload);
-        else if (packetType == RUPEE_CHANGE)
-            HandlePacket_RupeeChange(payload);
-        else if (packetType == SERVER_MESSAGE)
-            HandlePacket_ServerMessage(payload);
-        else if (packetType == SET_CHECK_STATUS)
-            HandlePacket_SetCheckStatus(payload);
-        else if (packetType == SET_FLAG)
-            HandlePacket_SetFlag(payload);
-        else if (packetType == TELEPORT_TO)
-            HandlePacket_TeleportTo(payload);
-        else if (packetType == UNSET_FLAG)
-            HandlePacket_UnsetFlag(payload);
-        else if (packetType == UPDATE_BEANS_COUNT)
-            HandlePacket_UpdateBeansCount(payload);
-        else if (packetType == UPDATE_CLIENT_STATE)
-            HandlePacket_UpdateClientState(payload);
-        else if (packetType == UPDATE_ROOM_STATE)
-            HandlePacket_UpdateRoomState(payload);
-        else if (packetType == UPDATE_DUNGEON_ITEMS)
-            HandlePacket_UpdateDungeonItems(payload);
+        // Every handler below reads its payload with json::get<>, which throws on a
+        // missing or mistyped field — a truncated packet, or a peer on a different
+        // build. Unhandled, that exception unwinds out of the game frame and takes
+        // the process with it, and leaves isProcessingIncomingPacket latched true,
+        // which silently disables every local broadcast for the rest of the session.
+        // One bad packet must cost one packet, nothing more.
+        try {
+            // packetType here is a string so we can't use a switch statement
+            if (packetType == ALL_CLIENT_STATE)
+                HandlePacket_AllClientState(payload);
+            else if (packetType == BGM_POS)
+                HandlePacket_BgmPos(payload);
+            else if (packetType == BGM_POS_REQUEST)
+                HandlePacket_BgmPosRequest(payload);
+            else if (packetType == BGM_RESTART)
+                HandlePacket_BgmRestart(payload);
+            else if (packetType == BGM_STATE)
+                HandlePacket_BgmState(payload);
+            else if (packetType == BOMBF_EVENT)
+                HandlePacket_BombfEvent(payload);
+            else if (packetType == BOMB_EVENT)
+                HandlePacket_BombEvent(payload);
+            else if (packetType == BREAK_EVENT)
+                HandlePacket_BreakEvent(payload);
+            else if (packetType == BOSS_ENTRY)
+                HandlePacket_BossEntry(payload);
+            else if (packetType == CARRY_EVENT)
+                HandlePacket_CarryEvent(payload);
+            else if (packetType == CUTSCENE_SYNC)
+                HandlePacket_CutsceneSync(payload);
+            else if (packetType == CAPTURE_PLAYER)
+                HandlePacket_CapturePlayer(payload);
+            else if (packetType == DAMAGE_PLAYER)
+                HandlePacket_DamagePlayer(payload);
+            else if (packetType == DISABLE_ANCHOR)
+                HandlePacket_DisableAnchor(payload);
+            else if (packetType == DYNA_STATE)
+                HandlePacket_DynaState(payload);
+            else if (packetType == ENEMY_DESPAWN)
+                HandlePacket_EnemyDespawn(payload);
+            else if (packetType == ENEMY_DIED)
+                HandlePacket_EnemyDied(payload);
+            else if (packetType == ENEMY_HIT)
+                HandlePacket_EnemyHit(payload);
+            else if (packetType == ENEMY_HIT_REQUEST)
+                HandlePacket_EnemyHitRequest(payload);
+            else if (packetType == ENEMY_ROSTER)
+                HandlePacket_EnemyRoster(payload);
+            else if (packetType == ENEMY_SPAWN)
+                HandlePacket_EnemySpawn(payload);
+            else if (packetType == ENEMY_STATE)
+                HandlePacket_EnemyState(payload);
+            else if (packetType == ENTRANCE_DISCOVERED)
+                HandlePacket_EntranceDiscovered(payload);
+            else if (packetType == FX_EVENT)
+                HandlePacket_FxEvent(payload);
+            else if (packetType == GAME_COMPLETE)
+                HandlePacket_GameComplete(payload);
+            else if (packetType == GIVE_ITEM)
+                HandlePacket_GiveItem(payload);
+            else if (packetType == PLAYER_LIFE_STATE)
+                HandlePacket_PlayerLifeState(payload);
+            else if (packetType == PLAYER_SFX)
+                HandlePacket_PlayerSfx(payload);
+            else if (packetType == PLAYER_UPDATE)
+                HandlePacket_PlayerUpdate(payload);
+            else if (packetType == UPDATE_TEAM_STATE)
+                HandlePacket_UpdateTeamState(payload);
+            else if (packetType == REQUEST_TEAM_STATE)
+                HandlePacket_RequestTeamState(payload);
+            else if (packetType == REQUEST_TELEPORT)
+                HandlePacket_RequestTeleport(payload);
+            else if (packetType == RUPEE_CHANGE)
+                HandlePacket_RupeeChange(payload);
+            else if (packetType == SERVER_MESSAGE)
+                HandlePacket_ServerMessage(payload);
+            else if (packetType == SET_CHECK_STATUS)
+                HandlePacket_SetCheckStatus(payload);
+            else if (packetType == SET_FLAG)
+                HandlePacket_SetFlag(payload);
+            else if (packetType == TELEPORT_TO)
+                HandlePacket_TeleportTo(payload);
+            else if (packetType == TIME_SYNC)
+                HandlePacket_TimeSync(payload);
+            else if (packetType == UNSET_FLAG)
+                HandlePacket_UnsetFlag(payload);
+            else if (packetType == UPDATE_BEANS_COUNT)
+                HandlePacket_UpdateBeansCount(payload);
+            else if (packetType == UPDATE_CLIENT_STATE)
+                HandlePacket_UpdateClientState(payload);
+            else if (packetType == UPDATE_ROOM_STATE)
+                HandlePacket_UpdateRoomState(payload);
+            else if (packetType == UPDATE_DUNGEON_ITEMS)
+                HandlePacket_UpdateDungeonItems(payload);
+        } catch (const std::exception& ex) {
+            SPDLOG_WARN("[Anchor] handler for '{}' threw: {}", packetType, ex.what());
+        }
 
         isProcessingIncomingPacket = false;
     }
@@ -189,7 +340,23 @@ void Anchor::RefreshClientActors() {
     }
 
     actorIndexToClientId.clear();
-    refreshingActors = true;
+
+    // Scoped, not a bare flag. ShouldActorInit converts every ACTOR_PLAYER spawned
+    // while this is set into a puppet -- so if anything threw out of the loop below,
+    // the flag latched true and the next REAL Link was converted too. ACTORCAT_PLAYER
+    // then had no head, and Actor_InitContext dereferenced it on the following scene
+    // load (z_actor.c:2566 -> func_8002C0C0). Same shape as the isHandlingUpdateTeamState
+    // latch fixed earlier; this was the second one.
+    struct RefreshGuard {
+        bool& flag;
+        explicit RefreshGuard(bool& f) : flag(f) {
+            flag = true;
+        }
+        ~RefreshGuard() {
+            flag = false;
+        }
+    } refreshGuard(refreshingActors);
+
     for (auto& [clientId, client] : clients) {
         if (!client.online || client.self) {
             continue;
@@ -204,7 +371,6 @@ void Anchor::RefreshClientActors() {
                                  client.posRot.rot.z, actorIndexToClientId.size() - 1, false);
         client.player = (Player*)dummy;
     }
-    refreshingActors = false;
 }
 
 bool Anchor::IsSaveLoaded() {

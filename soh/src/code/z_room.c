@@ -414,11 +414,21 @@ BgImage* func_80096A74(PolygonType1* polygon1, PlayState* play) {
 
     camera = GET_ACTIVE_CAM(play);
     camId = camera->camDataIdx;
-    if (camId == -1 && (CVarGetInteger(CVAR_CHEAT("NoRestrictItems"), 0) ||
-                        (CVarGetInteger(CVAR_REMOTE_CROWD_CONTROL("Enabled"), 0)))) {
+    if (camId == -1) {
         // This prevents a crash when using items that change the
         // camera (such as din's fire), voiding out or dying on
         // scenes with prerendered backgrounds.
+        //
+        // The guard used to be conditioned on NoRestrictItems or CrowdControl being
+        // on, which left everyone else exposed to it: func_80041C10 indexes
+        // cameraDataList[camId] and then runs SEGMENTED_TO_VIRTUAL over whatever
+        // camPosData it read, so camId == -1 turns arbitrary neighbouring bytes into
+        // a pointer that [2].y dereferences. Anchor reaches it without any cheat
+        // being enabled: TimeSync flipping day/night reloads the prerendered
+        // exteriors (shrine_scene <-> shrine_n_scene), and G: died there at
+        // 2026-09-12 01:28, 0.3s after the reload, reading address -1.
+        // The caller already handles a NULL return; there is no case where reading
+        // camera data for camera -1 is correct.
         return NULL;
     }
 

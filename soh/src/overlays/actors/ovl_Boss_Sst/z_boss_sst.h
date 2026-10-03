@@ -60,4 +60,18 @@ typedef enum {
     /*  1 */ BONGO_RIGHT_HAND
 } BossSstType;
 
+// Co-op (Anchor/BossAdapters/BongoBongoAdapter.cpp). The head and the two hands
+// are one state machine spread over three actors through the overlay's file
+// statics, so the phase is always the HEAD's -- a hand has none of its own.
+typedef enum {
+    /* 0 */ BONGO_COOP_LURK,  // ambush: the three actors have no draw yet
+    /* 1 */ BONGO_COOP_INTRO, // the 611-frame intro cutscene, per client
+    /* 2 */ BONGO_COOP_FIGHT,
+    /* 3 */ BONGO_COOP_DEATH // defeat cutscene, per client
+} BossSstCoopPhase;
+
+u8 BossSst_CoopGetPhase(Actor* thisx);
+void BossSst_CoopMirrorSetupDeath(Actor* thisx, PlayState* play);
+void BossSst_CoopMirrorTick(Actor* thisx, PlayState* play, s32 vanish);
+
 #endif

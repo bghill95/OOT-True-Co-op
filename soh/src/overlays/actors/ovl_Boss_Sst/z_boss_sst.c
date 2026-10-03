@@ -235,6 +235,17 @@ static Vec3f sCameraEyePoints[] = {
 static Vec3f sZeroVec = { 0.0f, 0.0f, 0.0f };
 static u32 sBodyStatic = false;
 
+// Co-op: the authority killed Bongo Bongo while OUR copy was still in the ambush
+// or in its intro cutscene. The defeat cannot be played from there -- see
+// BossSst_CoopMirrorSetupDeath -- so it waits here until the intro has ended on
+// its own terms (inputs given back, camera returned) and fires from
+// BossSst_HeadIntro's last frame.
+// Leaving the room before that drops the flag with the rest of the overlay state
+// (BossSst_Reset), and nothing is lost: Flags_SetClear travels as a FLAG_SCENE_CLEAR
+// scene flag, so the peer's Init takes the cleared branch on the way back in and
+// spawns the blue warp and the heart container without a fight.
+static u8 sCoopPendingDeath = false;
+
 // Unreferenced. Maybe two zero vectors?
 static u32 sUnkValues[] = { 0, 0, 0, 0, 0, 0 };
 
@@ -271,6 +282,11 @@ static InitChainEntry sInitChain[] = {
     ICHAIN_U8(targetMode, 5, ICHAIN_CONTINUE),
     ICHAIN_VEC3F_DIV1000(scale, 20, ICHAIN_STOP),
 };
+
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
 
 void BossSst_Init(Actor* thisx, PlayState* play2) {
     PlayState* play = play2;
@@ -442,6 +458,13 @@ void BossSst_HeadIntro(BossSst* this, PlayState* play) {
         sHands[LEFT]->colliderJntSph.base.ocFlags1 |= OC1_ON;
         sHands[RIGHT]->colliderJntSph.base.ocFlags1 |= OC1_ON;
         this->timer = 112;
+        // Co-op: the peer finished the fight while we were still watching the
+        // intro. The inputs and the camera have just been given back, so the
+        // defeat can play now -- one frame of Neutral, then the death cutscene.
+        if (sCoopPendingDeath) {
+            sCoopPendingDeath = false;
+            BossSst_CoopMirrorSetupDeath(&this->actor, play);
+        }
     } else if (this->timer >= 546) {
         if (player->actor.world.pos.y > 100.0f) {
             player->actor.world.pos.x = sRoomCenter.x;
@@ -782,8 +805,13 @@ void BossSst_HeadCharge(BossSst* this, PlayState* play) {
         this->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
         sHands[LEFT]->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
         sHands[RIGHT]->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
-        func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
-        Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        // Co-op: a puppet carries its own AC cylinder, so AT_HIT fires for
+        // whichever player the head hit -- while func_8002F71C and Player_PlaySfx
+        // always act on the LOCAL Link. Only shove them if they were the victim.
+        if (this->colliderJntSph.base.at == &GET_PLAYER(play)->actor) {
+            func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
+            Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        }
     }
 }
 
@@ -1533,11 +1561,20 @@ void BossSst_HandSlam(BossSst* this, PlayState* play) {
         if (this->colliderJntSph.base.atFlags & AT_HIT) {
             Player* player = GET_PLAYER(play);
 
-            player->actor.world.pos.x = (Math_SinS(this->actor.yawTowardsPlayer) * 100.0f) + this->actor.world.pos.x;
-            player->actor.world.pos.z = (Math_CosS(this->actor.yawTowardsPlayer) * 100.0f) + this->actor.world.pos.z;
-
             this->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
-            func_8002F71C(play, &this->actor, 5.0f, this->actor.yawTowardsPlayer, 0.0f);
+            // Co-op: this yanks the victim 100 units clear of the drum, then
+            // shoves them. Both act on the LOCAL Link, but AT_HIT can just as
+            // well come from the other player's puppet -- which teleported us
+            // across the arena whenever the peer got swatted. yawTowardsPlayer is
+            // retargeted at the nearest player too, so take the yaw toward the
+            // player actually being thrown.
+            if (this->colliderJntSph.base.at == &player->actor) {
+                s16 throwYaw = Anchor_LocalPlayerYaw(&this->actor);
+
+                player->actor.world.pos.x = (Math_SinS(throwYaw) * 100.0f) + this->actor.world.pos.x;
+                player->actor.world.pos.z = (Math_CosS(throwYaw) * 100.0f) + this->actor.world.pos.z;
+                func_8002F71C(play, &this->actor, 5.0f, throwYaw, 0.0f);
+            }
         }
 
         Math_ScaledStepToS(&this->actor.shape.rot.x, 0, 0x200);
@@ -1596,8 +1633,12 @@ void BossSst_HandSweep(BossSst* this, PlayState* play) {
     } else if (this->colliderJntSph.base.atFlags & AT_HIT) {
         this->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
         this->ready = true;
-        func_8002F71C(play, &this->actor, 5.0f, this->actor.shape.rot.y - (this->vParity * 0x3800), 0.0f);
-        Player_PlaySfx(&player->actor, NA_SE_PL_BODY_HIT);
+        // Co-op: only the player the hand actually swept gets shoved (see the
+        // head slam above).
+        if (this->colliderJntSph.base.at == &player->actor) {
+            func_8002F71C(play, &this->actor, 5.0f, this->actor.shape.rot.y - (this->vParity * 0x3800), 0.0f);
+            Player_PlaySfx(&player->actor, NA_SE_PL_BODY_HIT);
+        }
         newTargetYaw = this->actor.shape.rot.y - (this->vParity * 0x1400);
         if (((s16)(newTargetYaw - this->targetYaw) * this->vParity) > 0) {
             this->targetYaw = newTargetYaw;
@@ -1654,8 +1695,12 @@ void BossSst_HandPunch(BossSst* this, PlayState* play) {
     if (this->actor.bgCheckFlags & 8) {
         BossSst_HandSetupRetreat(this);
     } else if (this->colliderJntSph.base.atFlags & AT_HIT) {
-        Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
-        func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
+        // Co-op: the retreat is the hand's own business and happens either way;
+        // only the shove is the victim's (see the head slam above).
+        if (this->colliderJntSph.base.at == &GET_PLAYER(play)->actor) {
+            Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+            func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
+        }
         BossSst_HandSetupRetreat(this);
     }
 
@@ -2095,8 +2140,11 @@ void BossSst_HandReadyCharge(BossSst* this, PlayState* play) {
         this->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
         OTHER_HAND(this)->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
         sHead->colliderJntSph.base.atFlags &= ~(AT_ON | AT_HIT);
-        func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
-        Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        // Co-op: only the player caught in the clap gets shoved (see above).
+        if (this->colliderJntSph.base.at == &GET_PLAYER(play)->actor) {
+            func_8002F71C(play, &this->actor, 10.0f, this->actor.shape.rot.y, 5.0f);
+            Player_PlaySfx(&GET_PLAYER(play)->actor, NA_SE_PL_BODY_HIT);
+        }
     }
 }
 
@@ -3291,6 +3339,7 @@ void BossSst_Reset(void) {
     sHandYawOffsets[1] = 0;
 
     sCutsceneCamera = 0;
+    sCoopPendingDeath = false;
     sBodyStatic = false;
     // Reset death colors
     sBodyColor.a = 255;
@@ -3301,4 +3350,126 @@ void BossSst_Reset(void) {
     sStaticColor.r = 0;
     sStaticColor.g = 0;
     sStaticColor.b = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Co-op (Anchor/BossAdapters/BongoBongoAdapter.cpp)
+//
+// What the adapter cannot do from outside: everything here reads the overlay's
+// file statics (sHead, sHands) or its non-exported action functions.
+// ---------------------------------------------------------------------------
+
+u8 BossSst_CoopGetPhase(Actor* thisx) {
+    BossSst* head = sHead;
+
+    // A hand has no phase of its own: the whole fight is driven by the head.
+    if ((head == NULL) || (head->actor.update == NULL)) {
+        return BONGO_COOP_LURK;
+    }
+    if (head->actionFunc == BossSst_HeadLurk) {
+        return BONGO_COOP_LURK;
+    }
+    if (head->actionFunc == BossSst_HeadIntro) {
+        return BONGO_COOP_INTRO;
+    }
+    if ((head->actionFunc == BossSst_HeadDeath) || (head->actionFunc == BossSst_HeadThrash) ||
+        (head->actionFunc == BossSst_HeadDarken) || (head->actionFunc == BossSst_HeadFall) ||
+        (head->actionFunc == BossSst_HeadMelt) || (head->actionFunc == BossSst_HeadFinish)) {
+        return BONGO_COOP_DEATH;
+    }
+    return BONGO_COOP_FIGHT;
+}
+
+/**
+ * Mirror: the authority's head has entered its defeat sequence, so play ours.
+ *
+ * The generic lethal-hit handoff (EnemySync PrimeLethalHit) cannot reach it:
+ * vanilla only calls BossSst_HeadSetupDeath from inside BossSst_HeadVulnerable
+ * (BossSst_HeadCollisionCheck), and a mirrored head is frozen on whatever action
+ * it held when suppression began -- any other one sends the same hit to
+ * BossSst_HeadSetupStunned instead, and the fight would never end on this
+ * client: no defeat cutscene, no blue warp, no heart container.
+ */
+void BossSst_CoopMirrorSetupDeath(Actor* thisx, PlayState* play) {
+    BossSst* this = (BossSst*)thisx;
+    u8 phase = BossSst_CoopGetPhase(thisx);
+
+    if ((this->actor.params != BONGO_HEAD) || (phase == BONGO_COOP_DEATH)) {
+        return; // hands have nothing to play, and a defeat already running stays
+    }
+    // NOT from the ambush or the intro. Overwriting actionFunc there strands
+    // BossSst_HeadIntro, and :441 is the ONLY line in the whole repository that
+    // clears PLAYER_STATE1_INPUT_DISABLED -- which would hand this player exactly
+    // the dead controller the adapter exists to prevent, this time for good. It
+    // would also leak the intro's sub-camera, since BossSst_HeadSetupDeath
+    // overwrites sCutsceneCamera without clearing it. Wait for the intro to end
+    // on its own; its last frame fires this again.
+    if (phase != BONGO_COOP_FIGHT) {
+        sCoopPendingDeath = true;
+        return;
+    }
+    this->actor.colChkInfo.health = 0;
+    this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
+    Enemy_StartFinishingBlow(play, &this->actor);
+    BossSst_HeadSetupDeath(this, play);
+    // The two lines that follow the killing blow in vanilla, outside its if/else
+    // (BossSst_HeadCollisionCheck): without them the mirror's hands keep whatever
+    // action they were frozen on for the 60 frames BossSst_HeadDeath waits before
+    // BossSst_HandSetupThrash -- free to pick an attack and land it on a player
+    // whose inputs the defeat cutscene has just taken away.
+    BossSst_HandSetupDamage(sHands[LEFT]);
+    BossSst_HandSetupDamage(sHands[RIGHT]);
+    // Deliberately NOT GameInteractor_ExecuteOnBossDefeat: the authority fired it
+    // on its own side and Anchor replicates what follows from it (same rule as
+    // Phantom Ganon's defeat handoff).
+}
+
+/**
+ * Mirror: the two pieces of BossSst_UpdateHead / BossSst_UpdateHand that the
+ * Draw reads and that the suppressed update no longer produces.
+ *
+ * `vanish` is the head's streamed vVanish. The visibility decision itself is
+ * NOT streamed: the Lens of Truth is per player (actorCtx.lensActive is local
+ * and the magic is not shared), while ACTOR_FLAG_REACT_TO_LENS travels with the
+ * stream (EnemySync's STREAMED_ACTOR_FLAGS) -- so a mirrored Bongo appeared and
+ * disappeared with the AUTHORITY's lens: invisible to the player holding his
+ * own, plainly visible to the one who was not. Re-derive it from OUR lens, the
+ * same way BossSst_UpdateHead does, right after ApplyPose has written the
+ * authority's bit over ours.
+ */
+void BossSst_CoopMirrorTick(Actor* thisx, PlayState* play, s32 vanish) {
+    BossSst* this = (BossSst*)thisx;
+
+    if (this->actor.params == BONGO_HEAD) {
+        this->vVanish = vanish;
+        if (this->vVanish) {
+            if (!play->actorCtx.lensActive || (this->actor.colorFilterTimer != 0)) {
+                this->actor.flags &= ~ACTOR_FLAG_REACT_TO_LENS;
+            } else {
+                this->actor.flags |= ACTOR_FLAG_REACT_TO_LENS;
+            }
+        }
+    } else {
+        BossSstHandTrail* trail = &this->handTrails[this->trailIndex];
+        BossSstHandTrail* last = &this->handTrails[(this->trailIndex + 6) % 7];
+
+        // The trail arms on HAND_STATE, a file static the suppressed update never
+        // writes on this client, so drive it off the motion the stream carries
+        // instead -- which is what the states it tests (slam, sweep, punch, clap,
+        // grab) have in common. Below the threshold it retracts, exactly as the
+        // vanilla update does for WAIT / BEAT / FROZEN / DEATH.
+        if (Math3D_Vec3fDistSq(&last->world.pos, &this->actor.world.pos) > 100.0f) {
+            this->trailCount++;
+            this->trailCount = CLAMP_MAX(this->trailCount, 7);
+        } else {
+            this->trailCount--;
+            this->trailCount = CLAMP_MIN(this->trailCount, 0);
+        }
+
+        Math_Vec3f_Copy(&trail->world.pos, &this->actor.world.pos);
+        trail->world.rot = this->actor.shape.rot;
+        trail->zPosMod = this->handZPosMod;
+        trail->yRotMod = this->handYRotMod;
+        this->trailIndex = (this->trailIndex + 1) % 7;
+    }
 }

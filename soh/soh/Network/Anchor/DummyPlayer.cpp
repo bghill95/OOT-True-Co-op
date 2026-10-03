@@ -1,6 +1,10 @@
 #include "Anchor.h"
 #include "soh/Network/Anchor/EnemySync.h"
+#include "soh/Network/Anchor/FxSync.h"
 #include "soh/Enhancements/nametag.h"
+#include "soh/Enhancements/item-tables/ItemTableManager.h"
+#include "soh/Enhancements/randomizer/randomizer.h"
+#include <unordered_map>
 #include "soh/frame_interpolation.h"
 
 extern "C" {
@@ -11,7 +15,14 @@ extern PlayState* gPlayState;
 
 void Player_UseItem(PlayState* play, Player* player, s32 item);
 void Player_Draw(Actor* actor, PlayState* play);
+void func_8083AE40(Player* player, s16 objectId); // z_player.c: DMA the get-item object into giObjectSegment
 }
+
+// Get-item id last applied per puppet (the object DMA is only re-issued on change).
+static std::unordered_map<uint32_t, int16_t> sPuppetGi;
+// Model group last pushed through Player_SetModels for each puppet (see the
+// cutscene-item block in DummyPlayer_Update). -1 = never.
+static std::unordered_map<uint32_t, s32> sPuppetModelsGroup;
 
 // Hijacking player->zTargetActiveTimer (unused s32 for the dummy) to store the clientId for convenience
 #define DUMMY_CLIENT_ID player->zTargetActiveTimer
@@ -124,6 +135,7 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
     Math_Vec3s_Copy(&player->upperLimbRot, &client.upperLimbRot);
     Math_Vec3s_Copy(&actor->shape.rot, &client.posRot.rot);
     Math_Vec3f_Copy(&actor->world.pos, &client.posRot.pos);
+    actor->shape.yOffset = client.shapeYOffset; // ledge pull-up: see the field's note in Anchor.h
     player->skelAnime.jointTable = client.jointTable;
     player->currentBoots = client.currentBoots;
     player->currentShield = client.currentShield;
@@ -134,15 +146,97 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
     player->heldItemAction = client.heldItemAction;
     player->invincibilityTimer = client.invincibilityTimer;
     player->unk_862 = client.unk_862;
+    player->unk_85C = client.dekuStickLength;           // stick draw scale + weapon-tip reach (z_player_lib.c)
+    player->unk_858 = client.bowString;                 // bow string draw amount — stale value froze the bow drawn
+    player->currentMask = client.currentMask;           // mask is drawn from the Player struct by Player_Draw
+    player->meleeWeaponState = client.meleeWeaponState; // swing trail; the puppet got its own blure in Player_Init
+    // Get-item presentation (item held overhead, bottle catch, trade show-off):
+    // unk_862 was already streamed, but the entry + object were never set, so the
+    // puppet drew nothing. Player_Init gave it a giObjectSegment buffer; load the
+    // owner's object into it the same way Player does (func_8083AE40).
+    {
+        auto itg = sPuppetGi.find(client.clientId);
+        if (itg == sPuppetGi.end() || itg->second != client.giId) {
+            sPuppetGi[client.clientId] = client.giId;
+            if (client.giId < 0) {
+                player->getItemEntry = GetItemEntry GET_ITEM_NONE;
+            } else {
+                GetItemEntry entry =
+                    (client.giMod == MOD_RANDOMIZER)
+                        ? Rando::StaticData::RetrieveItem(static_cast<RandomizerGet>(client.giId)).GetGIEntry_Copy()
+                        : ItemTableManager::Instance->RetrieveItemEntry(MOD_NONE, client.giId);
+                player->getItemEntry = entry;
+                if (player->giObjectSegment != NULL) {
+                    func_8083AE40(player, entry.objectId);
+                }
+            }
+        }
+    }
     player->av1.actionVar1 = client.actionVar1;
 
-    if (player->modelGroup != client.modelGroup) {
+    // Burning deku stick: on the real player the flame is an effect spawned
+    // every UPDATE frame at the weapon tip (Player_UpdateBurningDekuStick) —
+    // the puppet never runs that, so its lit stick looked cold. The tip is
+    // valid here: the puppet's full player draw filled meleeWeaponInfo last
+    // frame. Constants match z_player.c's D_808547A4..C0.
+    if (client.dekuStickFlame != 0 && client.heldItemAction == PLAYER_IA_DEKU_STICK) {
+        static Vec3f flameVel = { 0.0f, 0.5f, 0.0f };
+        static Vec3f flameAccel = { 0.0f, 0.5f, 0.0f };
+        static Color_RGBA8 flamePrim = { 255, 255, 100, 255 };
+        static Color_RGBA8 flameEnv = { 255, 50, 0, 0 };
+        f32 intensity = 1.0f;
+        if (client.dekuStickFlame > 200) {
+            intensity = (210 - client.dekuStickFlame) / 10.0f;
+        } else if (client.dekuStickFlame < 20) {
+            intensity = client.dekuStickFlame / 20.0f;
+        }
+        func_8002836C(play, &player->meleeWeaponInfo[0].tip, &flameVel, &flameAccel, &flamePrim, &flameEnv,
+                      intensity * 200.0f, 0, 8);
+    }
+
+    // Boomerang in flight: the real EN_BOOM exists only on the thrower's game.
+    FxSync::TickPuppetBoomerang(client.clientId, client.boomActive, client.boomPos, client.boomYaw, client.boomPitch);
+    // Arrows (incl. elemental/nut/seed) and hookshot, same model.
+    FxSync::TickPuppetProjectiles(client.clientId, actor);
+    // Charged spin attack glow + release blast (EN_M_THUNDER), parented to us.
+    FxSync::TickPuppetSpinCharge(client.clientId, actor);
+    // Mount: the rider's horse, replicated from its streamed pose and gait.
+    FxSync::TickPuppetHorse(client.clientId, actor, client.horseActive, client.horseType, client.horsePos,
+                            client.horseRot, client.horseAnim, client.horseFrame, client.horseSpeed);
+
+    {
         // Hack to account for usage of gSaveContext
         s32 originalAge = gSaveContext.linkAge;
         gSaveContext.linkAge = client.linkAge;
         u8 originalButtonItem0 = gSaveContext.equips.buttonItems[0];
         gSaveContext.equips.buttonItems[0] = client.buttonItem0;
-        Player_SetModelGroup(player, client.modelGroup);
+
+        // "Cutscene items" -- bottle drink / pour / bug release, ocarina, spells
+        // -- go through Player_SetupActionPreserveItemAction, which swaps the
+        // hand + sheath models for itemAction via Player_SetModels WITHOUT
+        // touching modelGroup (itemAction != heldItemAction for the whole
+        // action, then Player_SetupAction restores both). Mirroring modelGroup
+        // alone left the puppet holding its previous item while the owner drank
+        // from a bottle or played the ocarina.
+        s32 modelsGroup = client.modelGroup;
+        // Bounded before use: Player_ActionToModelGroup indexes a table with it,
+        // and itemAction comes straight off the wire (a corrupt or version-
+        // skewed peer would read past sActionModelGroups into garbage model
+        // groups, which Player_SetModels then uses as further table indices).
+        if (client.itemAction >= PLAYER_IA_NONE && client.itemAction < PLAYER_IA_MAX &&
+            client.itemAction != client.heldItemAction) {
+            modelsGroup = Player_ActionToModelGroup(player, client.itemAction);
+        }
+        auto cur = sPuppetModelsGroup.try_emplace(client.clientId, -1).first;
+        if (player->modelGroup != client.modelGroup) {
+            Player_SetModelGroup(player, client.modelGroup);
+            cur->second = client.modelGroup;
+        }
+        if (cur->second != modelsGroup) {
+            Player_SetModels(player, modelsGroup);
+            cur->second = modelsGroup;
+        }
+
         gSaveContext.linkAge = originalAge;
         gSaveContext.equips.buttonItems[0] = originalButtonItem0;
     }
@@ -224,4 +318,201 @@ void DummyPlayer_Draw(Actor* actor, PlayState* play) {
 }
 
 void DummyPlayer_Destroy(Actor* actor, PlayState* play) {
+    uint32_t clientId = (uint32_t)((Player*)actor)->zTargetActiveTimer;
+    // Player_Init gave the puppet a sword-trail blure (Effect_Add); Player_Destroy
+    // is what frees it and never runs for a puppet. Each respawn (reconnect, room
+    // change, RefreshClientActors) leaked one of the scene's 25 blures; once the
+    // pool was empty the next puppet got TOTAL_EFFECT_COUNT and its first sword
+    // swing crashed in EffectBlure_ChangeType(NULL). Effect_Delete ignores the
+    // "none" index.
+    Effect_Delete(play, ((Player*)actor)->meleeWeaponEffectIndex);
+    ((Player*)actor)->meleeWeaponEffectIndex = TOTAL_EFFECT_COUNT;
+    sPuppetGi.erase(clientId);
+    sPuppetModelsGroup.erase(clientId);
+    // The projectile replicas (arrows, hookshot, boomerang) are parented to this
+    // puppet and only ticked from its update: reap them here, keyed by the id
+    // the puppet carries itself. Matching `client.player == actor` from the
+    // generic OnActorDestroy hook never fired: RefreshClientActors overwrites
+    // client.player with the NEW puppet (or erases the client altogether)
+    // before the old one reaches Actor_Delete. A hookshot in flight at the
+    // moment a peer dropped therefore survived, parented to a freed block the
+    // next puppet reused: a chain from the reconnected player's hand to a
+    // fixed point in the air.
+    FxSync::ReapClientProjectiles(clientId);
+}
+
+// z_map_exp.c draws one minimap arrow per remote player: the puppets alive in
+// our scene. Fills `out` (at most `max`) and returns the count.
+extern "C" s32 Anchor_GetPuppetActors(Actor** out, s32 max) {
+    s32 n = 0;
+    if (Anchor::Instance == nullptr || gPlayState == NULL || out == NULL) {
+        return 0;
+    }
+    for (auto& [cid, client] : Anchor::Instance->clients) {
+        if (n >= max) {
+            break;
+        }
+        if (client.self || !client.online || client.player == NULL || client.player->actor.update == NULL ||
+            client.sceneNum != gPlayState->sceneNum) {
+            continue;
+        }
+        out[n++] = &client.player->actor;
+    }
+    return n;
+}
+
+// z_player_lib.c asks whether a Player struct is one of our puppets with a
+// snapped Giant's Knife: 1/0 for a puppet, -1 for anything else (the local
+// player, Dark Link's Player struct...) so the caller falls back to the save.
+extern "C" s32 Anchor_PuppetBgsBroken(Player* p) {
+    if (Anchor::Instance == nullptr || gPlayState == NULL || p == NULL || p == GET_PLAYER(gPlayState)) {
+        return -1;
+    }
+    auto it = Anchor::Instance->clients.find((uint32_t)p->zTargetActiveTimer);
+    if (it == Anchor::Instance->clients.end() || it->second.player != p) {
+        return -1;
+    }
+    return it->second.bgsBroken ? 1 : 0;
+}
+
+// Client id behind a Player struct: our own id for the local Link, the puppet's
+// client for a puppet, 0 offline / unknown. Lets boss code stream "who I grabbed".
+extern "C" uint32_t Anchor_PlayerClientId(Player* p) {
+    if (Anchor::Instance == nullptr || gPlayState == NULL || p == NULL) {
+        return 0;
+    }
+    if (p == GET_PLAYER(gPlayState)) {
+        return Anchor::Instance->ownClientId;
+    }
+    auto it = Anchor::Instance->clients.find((uint32_t)p->zTargetActiveTimer);
+    if (it == Anchor::Instance->clients.end() || it->second.player != p) {
+        return 0;
+    }
+    return it->first;
+}
+
+extern "C" int32_t Anchor_IsOwnClientId(uint32_t clientId) {
+    return Anchor::Instance != nullptr && clientId != 0 && clientId == Anchor::Instance->ownClientId;
+}
+
+// Nearest live player (the local Link or a same-scene puppet) to a POINT, by 3D
+// distance. For boss code that reads player->actor.world.pos directly instead
+// of the engine's xzDistToPlayer / yawTowardsPlayer (which EnemySync's
+// OverridePlayerPerception already re-points at the nearest player) — with the
+// bare GET_PLAYER, Phantom Ganon only ever threw at the authority's own Link.
+// Offline, or with no puppet in range, this is exactly GET_PLAYER.
+//
+// Take the point form whenever the proximity question is about something that
+// is NOT the actor: a dropped item, a spawn point, a switch. Measured on the
+// bench, 2026-09-13: the Ganon fight asked "is a player standing on the Master Sword",
+// which lies wherever Ganon knocked it, and answered it with
+// Anchor_NearestPlayer(&this->actor) — so the game picked the Link nearest
+// GANON and then tested THAT Link's distance to the blade. Two different
+// criteria. P2 walked onto the sword and nothing happened, every time, because
+// P1 was the one closer to the boss. Whenever the answer must be about one
+// point, select on that same point.
+extern "C" Player* Anchor_NearestPlayerToPos(Vec3f* from) {
+    Player* best = GET_PLAYER(gPlayState);
+    if (Anchor::Instance == nullptr || gPlayState == NULL || from == NULL || best == NULL) {
+        return best;
+    }
+    f32 bestSq = Math3D_Vec3fDistSq(from, &best->actor.world.pos);
+    for (auto& [cid, client] : Anchor::Instance->clients) {
+        if (client.self || !client.online || !client.isSaveLoaded || client.player == NULL ||
+            client.player->actor.update == NULL || client.sceneNum != gPlayState->sceneNum ||
+            (client.stateFlags1 & PLAYER_STATE1_DEAD)) {
+            continue;
+        }
+        f32 sq = Math3D_Vec3fDistSq(from, &client.player->actor.world.pos);
+        if (sq < bestSq) {
+            bestSq = sq;
+            best = client.player;
+        }
+    }
+    return best;
+}
+
+extern "C" Player* Anchor_NearestPlayer(Actor* from) {
+    if (from == NULL) {
+        return GET_PLAYER(gPlayState);
+    }
+    return Anchor_NearestPlayerToPos(&from->world.pos);
+}
+
+// Enumerate every live player actor: index 0 is the local Link, then one entry
+// per same-scene puppet, NULL once past the end.
+//
+// For the handful of overlays that ask "is A player standing here?" rather than
+// "where is the nearest one?" — a trigger volume, an area test. Anchor_NearestPlayer
+// answers the wrong question there: the nearest player may be outside the volume
+// while the other one is inside it.
+extern "C" Actor* Anchor_PlayerActorAt(s32 index) {
+    if (gPlayState == NULL) {
+        return NULL;
+    }
+    if (index == 0) {
+        return &GET_PLAYER(gPlayState)->actor;
+    }
+    if (Anchor::Instance == nullptr) {
+        return NULL;
+    }
+    s32 seen = 0;
+    for (auto& [cid, client] : Anchor::Instance->clients) {
+        if (client.self || !client.online || !client.isSaveLoaded || client.player == nullptr ||
+            client.player->actor.update == NULL || client.sceneNum != gPlayState->sceneNum ||
+            (client.stateFlags1 & PLAYER_STATE1_DEAD)) {
+            continue;
+        }
+        if (++seen == index) {
+            return &client.player->actor;
+        }
+    }
+    return NULL;
+}
+
+// Is a co-op session live? For overlays that must drop a single-player-only
+// courtesy — pausing a hazard while the local Link is busy, for instance, which
+// with two independently simulated copies just makes them drift apart forever.
+extern "C" s32 Anchor_IsSessionActive(void) {
+    return (Anchor::Instance != nullptr && Anchor::Instance->isConnected) ? 1 : 0;
+}
+
+// Should THIS client play `actor`'s one-point camera cutscene?
+//
+// Scenery that polls a switch flag every frame (gates, grates, shutters) replays
+// its opening on both clients as soon as the flag replicates — which is exactly
+// right for the geometry, and exactly wrong for the camera: OnePointCutscene_Init
+// yanks the peer's view to the gate no matter where they are standing, mid-fight
+// or mid-jump. FlagReplay already dodges this by hand for Bg_Jya_Megami; this is
+// the reusable form. Offline it is always true, so single-player is untouched.
+extern "C" s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range) {
+    if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected || actor == NULL) {
+        return 1;
+    }
+    // xzDistToPlayer is the distance to the LOCAL Link for scenery actors: the
+    // perception override only rewrites it for tracked enemies on the authority.
+    return actor->xzDistToPlayer < range ? 1 : 0;
+}
+
+// Yaw from `from` toward the LOCAL Link, whatever actor->yawTowardsPlayer holds.
+//
+// The other half of the perception override. EnemySync::OverridePlayerPerception
+// re-points yawTowardsPlayer at the NEAREST player, which is what the AI should
+// read — but func_8002F698 / func_8002F6D4 / func_8002F71C, and the boss code
+// that writes player->actor.world.pos by hand, always act on GET_PLAYER. Feeding
+// them the retargeted yaw therefore shoves the local Link along the enemy->puppet
+// axis instead of the enemy->Link one: knocked into Barinade's electrified water
+// from the wrong side, or (Bongo Bongo) teleported to the wrong side of the drum.
+//
+// Use this at any site where the VICTIM is known to be the local Link and the
+// yaw only says which way to push them. Offline, or with no puppet nearer than
+// Link, it returns exactly what yawTowardsPlayer already held.
+extern "C" s16 Anchor_LocalPlayerYaw(Actor* from) {
+    if (from == NULL) {
+        return 0;
+    }
+    if (gPlayState == NULL || GET_PLAYER(gPlayState) == NULL) {
+        return from->yawTowardsPlayer;
+    }
+    return Actor_WorldYawTowardActor(from, &GET_PLAYER(gPlayState)->actor);
 }

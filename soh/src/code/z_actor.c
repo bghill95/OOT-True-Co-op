@@ -86,6 +86,11 @@
 static CollisionPoly* sCurCeilingPoly;
 static s32 sCurCeilingBgId;
 
+// Co-op (EnemySync): > 0 while an actor's Init runs. Actors spawned from inside
+// another actor's Init are deterministic on every client, so they must not be
+// keyed as runtime spawns / replicated.
+s32 gActorInitDepth = 0;
+
 // Used for animating the ice trap on the "Get Item" model.
 f32 iceTrapScale;
 
@@ -1258,7 +1263,9 @@ void Actor_Init(Actor* actor, PlayState* play) {
         Actor_SetObjectDependency(play, actor);
 
         if (GameInteractor_ShouldActorInit(actor)) {
+            gActorInitDepth++;
             actor->init(actor, play);
+            gActorInitDepth--;
             actor->init = NULL;
 
             GameInteractor_ExecuteOnActorInit(actor);
@@ -2256,7 +2263,12 @@ void Player_PlaySfx(Actor* actor, u16 sfxId) {
     }
 }
 
+// Co-op (Anchor/EnemySync.cpp): records the sound on the authority so mirrors,
+// whose copy of this enemy has its AI suppressed, can replay it. No-op offline.
+void Anchor_OnActorSfx(Actor* actor, u16 sfxId);
+
 void Audio_PlayActorSound2(Actor* actor, u16 sfxId) {
+    Anchor_OnActorSfx(actor, sfxId);
     Sfx_PlaySfxAtPos(&actor->projectedPos, sfxId);
 }
 
@@ -2636,7 +2648,9 @@ void Actor_UpdateAll(PlayState* play, ActorContext* actorCtx) {
                     Actor_SetObjectDependency(play, actor);
 
                     if (GameInteractor_ShouldActorInit(actor)) {
+                        gActorInitDepth++;
                         actor->init(actor, play);
+                        gActorInitDepth--;
                         actor->init = NULL;
 
                         GameInteractor_ExecuteOnActorInit(actor);

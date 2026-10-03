@@ -126,6 +126,7 @@ typedef enum {
 
 void BossVa_Init(Actor* thisx, PlayState* play);
 void BossVa_Destroy(Actor* thisx, PlayState* play);
+void BossVa_CoopPurgeEffects(BossVa* part);
 void BossVa_Update(Actor* thisx, PlayState* play);
 void BossVa_Draw(Actor* thisx, PlayState* play);
 void BossVa_Reset(void);
@@ -404,6 +405,11 @@ static u8 sPhase3StopMoving;
 static Vec3s sZapperRot;
 static u16 sPhase2Timer;
 static s8 sPhase4HP;
+
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
 
 void BossVa_SetupAction(BossVa* this, BossVaActionFunc func) {
     this->actionFunc = func;
@@ -771,6 +777,7 @@ void BossVa_Init(Actor* thisx, PlayState* play2) {
 void BossVa_Destroy(Actor* thisx, PlayState* play) {
     BossVa* this = (BossVa*)thisx;
 
+    BossVa_CoopPurgeEffects(this); // sparks/tethers anchored on this part must not outlive it
     SkelAnime_Free(&this->skelAnime, play);
     Collider_DestroyJntSph(play, &this->colliderSph);
     Collider_DestroyCylinder(play, &this->colliderBody);
@@ -1094,7 +1101,7 @@ void BossVa_BodyPhase1(BossVa* this, PlayState* play) {
     if (this->colliderBody.base.atFlags & AT_HIT) {
         this->colliderBody.base.atFlags &= ~AT_HIT;
         if (this->colliderBody.base.at == &player->actor) {
-            func_8002F71C(play, &this->actor, 8.0f, this->actor.yawTowardsPlayer, 8.0f);
+            func_8002F71C(play, &this->actor, 8.0f, Anchor_LocalPlayerYaw(&this->actor), 8.0f);
         }
     }
 
@@ -1161,7 +1168,7 @@ void BossVa_BodyPhase2(BossVa* this, PlayState* play) {
     if (this->colliderBody.base.acFlags & AC_HIT) {
         this->colliderBody.base.acFlags &= ~AC_HIT;
 
-        if (this->colliderBody.base.ac->id == ACTOR_EN_BOOM) {
+        if ((this->colliderBody.base.ac != NULL) && (this->colliderBody.base.ac->id == ACTOR_EN_BOOM)) {
             sPhase2Timer &= 0xFE00;
             Actor_SetColorFilter(&this->actor, 0, 255, 0, 160);
             this->colliderBody.info.bumper.dmgFlags = 0xFC00712;
@@ -1185,7 +1192,7 @@ void BossVa_BodyPhase2(BossVa* this, PlayState* play) {
 
         sPhase2Timer = (sPhase2Timer + 0x18) & 0xFFF0;
         if (this->colliderBody.base.at == &player->actor) {
-            func_8002F71C(play, &this->actor, 8.0f, this->actor.yawTowardsPlayer, 8.0f);
+            func_8002F71C(play, &this->actor, 8.0f, Anchor_LocalPlayerYaw(&this->actor), 8.0f);
             Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
         }
     }
@@ -1260,7 +1267,7 @@ void BossVa_BodyPhase3(BossVa* this, PlayState* play) {
     if (this->colliderBody.base.atFlags & AT_HIT) {
         this->colliderBody.base.atFlags &= ~AT_HIT;
         if (this->colliderBody.base.at == &player->actor) {
-            func_8002F71C(play, &this->actor, 8.0f, this->actor.yawTowardsPlayer, 8.0f);
+            func_8002F71C(play, &this->actor, 8.0f, Anchor_LocalPlayerYaw(&this->actor), 8.0f);
             this->actor.world.rot.y += (s16)Rand_CenteredFloat(0x2EE0) + 0x8000;
             Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
         }
@@ -1381,7 +1388,7 @@ void BossVa_BodyPhase4(BossVa* this, PlayState* play) {
     if (this->colliderBody.base.atFlags & AT_HIT) {
         this->colliderBody.base.atFlags &= ~AT_HIT;
         if (this->colliderBody.base.at == &player->actor) {
-            func_8002F71C(play, &this->actor, 8.0f, this->actor.yawTowardsPlayer, 8.0f);
+            func_8002F71C(play, &this->actor, 8.0f, Anchor_LocalPlayerYaw(&this->actor), 8.0f);
             this->actor.world.rot.y += (s16)Rand_CenteredFloat(0x2EE0) + 0x8000;
             Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
         }
@@ -1422,7 +1429,7 @@ void BossVa_BodyPhase4(BossVa* this, PlayState* play) {
                     Audio_PlayActorSound2(&this->actor, NA_SE_EN_BALINADE_FAINT);
                 }
             }
-        } else if (this->colliderBody.base.ac->id == ACTOR_EN_BOOM) {
+        } else if ((this->colliderBody.base.ac != NULL) && (this->colliderBody.base.ac->id == ACTOR_EN_BOOM)) {
             boomerang = (EnBoom*)this->colliderBody.base.ac;
             boomerang->returnTimer = 0;
             boomerang->moveTo = &player->actor;
@@ -2569,7 +2576,7 @@ void BossVa_BariPhase3Attack(BossVa* this, PlayState* play) {
     this->vaBariUnused.y += this->vaBariUnused.z;
     if ((this->colliderLightning.base.atFlags & AT_HIT) || (this->colliderSph.base.atFlags & AT_HIT)) {
         if ((this->colliderLightning.base.at == &player->actor) || (this->colliderSph.base.at == &player->actor)) {
-            func_8002F71C(play, &this->actor, 8.0f, GET_BODY(this)->actor.yawTowardsPlayer, 8.0f);
+            func_8002F71C(play, &this->actor, 8.0f, Anchor_LocalPlayerYaw(&GET_BODY(this)->actor), 8.0f);
             Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
             this->colliderSph.base.at = NULL;
             this->colliderLightning.base.at = NULL;
@@ -2581,7 +2588,7 @@ void BossVa_BariPhase3Attack(BossVa* this, PlayState* play) {
 
     if (this->colliderSph.base.acFlags & AC_HIT) {
         this->colliderSph.base.acFlags &= ~AC_HIT;
-        if ((this->colliderSph.base.ac->id == ACTOR_EN_BOOM) && (sp52 >= 128)) {
+        if ((this->colliderSph.base.ac != NULL) && (this->colliderSph.base.ac->id == ACTOR_EN_BOOM) && (sp52 >= 128)) {
             boomerang = (EnBoom*)this->colliderSph.base.ac;
             boomerang->returnTimer = 0;
             boomerang->moveTo = &player->actor;
@@ -2664,7 +2671,7 @@ void BossVa_BariPhase2Attack(BossVa* this, PlayState* play) {
 
     if ((this->colliderLightning.base.atFlags & AT_HIT) || (this->colliderSph.base.atFlags & AT_HIT)) {
         if ((this->colliderLightning.base.at == &player->actor) || (this->colliderSph.base.at == &player->actor)) {
-            func_8002F71C(play, &this->actor, 8.0f, GET_BODY(this)->actor.yawTowardsPlayer, 8.0f);
+            func_8002F71C(play, &this->actor, 8.0f, Anchor_LocalPlayerYaw(&GET_BODY(this)->actor), 8.0f);
             Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
             this->colliderSph.base.at = NULL;
             this->colliderLightning.base.at = NULL;
@@ -2695,7 +2702,8 @@ void BossVa_BariPhase2Attack(BossVa* this, PlayState* play) {
         if (this->colliderSph.base.acFlags & AC_HIT) {
             this->colliderSph.base.acFlags &= ~AC_HIT;
 
-            if ((this->colliderSph.base.ac->id == ACTOR_EN_BOOM) && (sp52 >= 64)) {
+            if ((this->colliderSph.base.ac != NULL) && (this->colliderSph.base.ac->id == ACTOR_EN_BOOM) &&
+                (sp52 >= 64)) {
                 boomerang = (EnBoom*)this->colliderSph.base.ac;
                 boomerang->returnTimer = 0;
                 boomerang->moveTo = &player->actor;
@@ -2837,7 +2845,7 @@ void BossVa_Update(Actor* thisx, PlayState* play2) {
         case BOSSVA_BODY:
             if (this->colliderBody.base.acFlags & AC_HIT) {
                 this->colliderBody.base.acFlags &= ~AC_HIT;
-                if (this->colliderBody.base.ac->id == ACTOR_EN_BOOM) {
+                if ((this->colliderBody.base.ac != NULL) && (this->colliderBody.base.ac->id == ACTOR_EN_BOOM)) {
                     boomerang = (EnBoom*)this->colliderBody.base.ac;
                     boomerang->returnTimer = 0;
                 }
@@ -3337,6 +3345,14 @@ void BossVa_UpdateEffects(PlayState* play) {
 
             if ((effect->type == VA_LARGE_SPARK) || (effect->type == VA_SMALL_SPARK)) {
                 refActor = effect->parent;
+                // Co-op: a part can be killed by the mirror's phase replay while
+                // its sparks (a tether lives ~120 frames) still point at it.
+                // BossVa_CoopPurgeEffects drops them at Destroy; this catches
+                // the kill -> delete window.
+                if (refActor == NULL || refActor->actor.update == NULL) {
+                    effect->type = VA_NONE;
+                    continue;
+                }
 
                 effect->rot.z += (s16)(Rand_ZeroOne() * 0x4E20) + 0x2000;
                 effect->rot.y += (s16)(Rand_ZeroOne() * 0x2710) + 0x2000;
@@ -4049,5 +4065,136 @@ void BossVa_Reset(void) {
     sPhase4HP = 0;
     for (u8 i = 0; i < ARRAY_SIZE(sBodyBari); i++) {
         sBodyBari[i] = 0;
+    }
+}
+
+// Co-op sync accessors (Network/Anchor/BossAdapters/BossVaAdapter.cpp): the
+// combat statics gate every part's draw and the door/stump local updates, so a
+// mirrored client must adopt the authority's values.
+s8* BossVa_CoopCsState(void) {
+    return &sCsState;
+}
+u8* BossVa_CoopFightPhase(void) {
+    return &sFightPhase;
+}
+s8* BossVa_CoopPhase4HP(void) {
+    return &sPhase4HP;
+}
+u8* BossVa_CoopBodyState(void) {
+    return &sBodyState;
+}
+u8* BossVa_CoopKillBari(void) {
+    return &sKillBari;
+}
+u8* BossVa_CoopBodyBari(void) {
+    return sBodyBari;
+}
+
+// Co-op mirror ambient FX: every visible arc/spark is pool-spawned by the
+// actionFuncs, which a mirrored (suppressed) part never runs — its draw only
+// refreshes the effectPos anchors. Called each applied frame by the adapter,
+// this replays the per-frame ambient spawns from streamed state (timer/timer2/
+// burst/unk_1F0/colorFilterTimer + sFightPhase). Attack-specific effects
+// (spark balls, blood, tumors) stay authority-only.
+// Co-op: forget every pooled effect anchored on a part that is going away, so
+// BossVa_UpdateEffects never follows a freed actor (called from BossVa_Destroy).
+void BossVa_CoopPurgeEffects(BossVa* part) {
+    s32 i;
+
+    for (i = 0; i < ARRAY_COUNT(sVaEffects); i++) {
+        if (sVaEffects[i].type != VA_NONE && sVaEffects[i].parent == part) {
+            sVaEffects[i].type = VA_NONE;
+        }
+    }
+}
+
+// `fresh` is false when the caller is re-applying a cached stream frame: the
+// spawns gated on a streamed value (the zapper's flash and charge ball) must
+// not fire twice for the same value. The rest is gated on OUR gameplayFrames.
+void BossVa_CoopMirrorAmbientFx(BossVa* this, PlayState* play, s32 fresh) {
+    s32 i;
+
+    switch (this->actor.params) {
+        case BOSSVA_BODY:
+            // The body's update decays the spark-flash room lighting every
+            // frame; suppressed, the last intro flash stays glued to envCtx.
+            for (i = 2; i >= 0; i--) {
+                if ((play->envCtx.adjAmbientColor[i] - 1) > 0) {
+                    play->envCtx.adjAmbientColor[i] -= 1;
+                } else {
+                    play->envCtx.adjAmbientColor[i] = 0;
+                }
+
+                if ((play->envCtx.adjLight1Color[i] - 10) > 0) {
+                    play->envCtx.adjLight1Color[i] -= 10;
+                } else {
+                    play->envCtx.adjLight1Color[i] = 0;
+                }
+
+                if ((play->envCtx.adjFogColor[i] - 10) > 0) {
+                    play->envCtx.adjFogColor[i] -= 10;
+                } else {
+                    play->envCtx.adjFogColor[i] = 0;
+                }
+            }
+            func_800F436C(&this->actor.projectedPos, NA_SE_EN_BALINADE_LEVEL - SFX_FLAG, 1.0f);
+            if (sFightPhase >= PHASE_4) {
+                if (this->timer != 0) {
+                    // charge/attack run: wide lightning burst (BodyPhase4)
+                    if ((play->gameplayFrames % 4) == 0) {
+                        BossVa_Spark(play, this, 2, 0x64, 220.0f, 5.0f, SPARK_BODY, 12.0f, true);
+                    }
+                } else if ((play->gameplayFrames % 2) == 0) {
+                    BossVa_Spark(play, this, 2, 125, 40.0f, 10.0f, SPARK_BODY, 10.0f, false);
+                    BossVa_Spark(play, this, 1, 100, 15.0f, 10.0f, SPARK_BARI, 11.0f, true);
+                }
+            } else if ((play->gameplayFrames % 4) == 0) {
+                BossVa_Spark(play, this, 1, 100, 50.0f, 10.0f, SPARK_BODY, 10.0f, false);
+            }
+            break;
+        case BOSSVA_SUPPORT_1:
+        case BOSSVA_SUPPORT_2:
+        case BOSSVA_SUPPORT_3:
+            if ((this->timer % 2) == 0) {
+                BossVa_Spark(play, this, 1, 100, 5.0f, 0.0f, SPARK_BODY, ((this->timer & 0x20) >> 5) + 1, true);
+            }
+            break;
+        case BOSSVA_ZAPPER_1:
+        case BOSSVA_ZAPPER_2:
+        case BOSSVA_ZAPPER_3:
+            if (this->burst) {
+                if (this->timer2 >= 32) {
+                    BossVa_Spark(play, this, 2, 110, 15.0f, 15.0f, SPARK_BLAST, 5.0f, true);
+                    BossVa_Spark(play, this, 2, 110, 15.0f, 15.0f, SPARK_BLAST, 6.0f, true);
+                    BossVa_Spark(play, this, 2, 110, 15.0f, 15.0f, SPARK_BLAST, 7.0f, true);
+                } else {
+                    BossVa_Spark(play, this, 2, 50, 15.0f, 0.0f, SPARK_BODY, (this->timer2 >> 3) + 1, true);
+                    // Room-wide flash and the charge ball at the zapper's head,
+                    // same frames as ZapperAttack/ZapperEnraged (timer2 and
+                    // headRot are streamed; zapHeadPos comes from PostLimbDraw).
+                    if (fresh && this->timer2 == 30) {
+                        BossVa_SetSparkEnv(play);
+                    }
+                    if (fresh && this->timer2 == 20) {
+                        Vec3f headPos = this->zapHeadPos;
+
+                        BossVa_SpawnZapperCharge(play, sVaEffects, this, &headPos, &this->headRot, 100, 0);
+                    }
+                }
+            }
+            break;
+        case BOSSVA_STUMP_1:
+        case BOSSVA_STUMP_2:
+        case BOSSVA_STUMP_3:
+        case BOSSVA_DOOR:
+            break;
+        default: // Bari: orbit sparks + lightning tether to the body
+            if ((play->gameplayFrames % 4) == 0) {
+                BossVa_Spark(play, this, 1, this->unk_1F0, 25.0f, 20.0f, SPARK_BARI, 2.0f, true);
+            }
+            if (this->actor.colorFilterTimer == 0) {
+                BossVa_Spark(play, this, 1, 125, 15.0f, 7.0f, SPARK_TETHER, 1.0f, true);
+            }
+            break;
     }
 }

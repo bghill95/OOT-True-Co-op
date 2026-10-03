@@ -6,7 +6,9 @@
 
 struct EnFd;
 
-typedef void (*EnFdActionFunc)(struct EnFd* this, PlayState* play);
+// Parameter renamed from `this`: harmless in C, but this header is included from
+// the C++ side (Anchor/BossAdapters/FrozenDrawAdapters.cpp) where it is a keyword.
+typedef void (*EnFdActionFunc)(struct EnFd* self, PlayState* play);
 
 typedef enum {
     FD_EFFECT_NONE,

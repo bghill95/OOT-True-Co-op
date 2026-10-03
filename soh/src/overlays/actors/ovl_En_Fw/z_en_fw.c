@@ -365,6 +365,18 @@ void EnFw_JumpToParentInitPos(EnFw* this, PlayState* play) {
 
 void EnFw_Update(Actor* thisx, PlayState* play) {
     EnFw* this = (EnFw*)thisx;
+
+    // Co-op: the core's whole life is written in terms of its Flare Dancer -- it
+    // reads parent->world.pos, jumps back to the parent's init position and writes
+    // the parent's health. Vanilla never checks, because only the Flare Dancer
+    // spawns it. A replica from the enemy sync has no parent when the spawn key
+    // could not resolve one, and a mirror resumes this update once the stream goes
+    // stale. Same shape as the En_Bb flame-trail crash.
+    if (this->actor.parent == NULL) {
+        Actor_Kill(&this->actor);
+        return;
+    }
+
     SkelAnime_Update(&this->skelAnime);
     if (!CHECK_FLAG_ALL(this->actor.flags, ACTOR_FLAG_HOOKSHOT_ATTACHED)) {
         // not attached to hookshot.

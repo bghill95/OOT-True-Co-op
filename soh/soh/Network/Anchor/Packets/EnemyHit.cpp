@@ -47,7 +47,7 @@ void Anchor::SendPacket_EnemyHit(Actor* actor, uint64_t enemyKey, uint8_t damage
             sent++;
         }
     }
-    ESYNC_LOG("[EnemySync] HIT tx id={} dmg={} n={}", actor->id, damage, sent);
+    ESYNC_LOG("[EnemySync] HIT tx id={} key={:#x} dmg={} n={}", actor->id, enemyKey, damage, sent);
 }
 
 void Anchor::HandlePacket_EnemyHit(nlohmann::json payload) {
@@ -57,7 +57,8 @@ void Anchor::HandlePacket_EnemyHit(nlohmann::json payload) {
     if (payload["sceneNum"].get<int16_t>() != gPlayState->sceneNum) {
         return;
     }
-    ESYNC_LOG("[EnemySync] HIT rx id={} dmg={}", payload["actorId"].get<int16_t>(), payload["damage"].get<uint8_t>());
+    ESYNC_LOG("[EnemySync] HIT rx id={} key={:#x} dmg={}", payload["actorId"].get<int16_t>(),
+              payload["key"].get<uint64_t>(), payload["damage"].get<uint8_t>());
 
     Actor* actor = EnemySync::FindActorForPacket(payload["key"].get<uint64_t>(), payload["actorId"].get<int16_t>(),
                                                  payload["homePos"].get<Vec3f>());

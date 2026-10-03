@@ -1,0 +1,221 @@
+#include "soh/Network/Anchor/Anchor.h"
+#include "soh/Network/Anchor/PuppetRef.h"
+#include <nlohmann/json.hpp>
+#include <libultraship/libultraship.h>
+#include <unordered_map>
+
+extern "C" {
+#include "macros.h"
+#include "functions.h"
+extern PlayState* gPlayState;
+}
+
+/**
+ * CAPTURE_PLAYER
+ *
+ * An enemy grabbed a player and is about to move them — a Wallmaster hauling
+ * them back to the room entrance, a Gerudo throwing them in a cell.
+ *
+ * Most of the game's grabbers do not need this. Of the seven actors that write
+ * nextEntranceIndex or call Play_TriggerRespawn from an enemy context, five are
+ * ACTORCAT_NPC (En_Ge1, En_Ge2, En_Heishi1/3/4): every client simulates its own
+ * copy against its own Link, so each capture already targets the right player.
+ * Only the two ACTORCAT_ENEMY ones are tracked and simulated by a single
+ * machine — En_Wallmas and En_GeldB — and there the grab has to be delivered
+ * across the wire or it lands on whoever happens to own the enemy.
+ *
+ * Deliberately a "dry" capture: we send the destination, not the grab animation.
+ * The victim sees the hand close on them (the enemy's pose is streamed like any
+ * other) and is then moved. Replicating the held-in-the-air part would mean
+ * driving the remote player's own state machine, which is a much bigger change
+ * for a second or two of animation.
+ */
+
+// Which player each tracked grabber closed on. Kept here rather than in the
+// actor structs so no overlay layout changes: the grab and the actual warp are
+// several frames apart (En_GeldB decides in SpinAttack and warps from Draw).
+//
+// An entry is recorded for OUR OWN Link too, under this sentinel. The presence
+// of an entry is then the answer to a third question the callers need: "did this
+// machine witness the grab at all?" Without it, a client that inherits authority
+// mid-grab — actionFunc is streamed, so it resumes straight into the carry —
+// would find no entry, read that as "the victim is mine", and haul its own Link
+// away. Absence of an entry now means exactly that: we did not see this grab.
+static constexpr uint32_t CAPTURE_VICTIM_IS_LOCAL = UINT32_MAX;
+static std::unordered_map<Actor*, uint32_t> sCaptureVictim;
+
+void Anchor::SendPacket_CapturePlayer(u32 clientId, u8 mode, s16 entrance) {
+    if (!IsSaveLoaded()) {
+        return;
+    }
+
+    nlohmann::json payload;
+    payload["type"] = CAPTURE_PLAYER;
+    payload["targetClientId"] = clientId;
+    payload["mode"] = mode;
+    payload["entrance"] = entrance;
+
+    SendJsonToRemote(payload);
+}
+
+void Anchor::HandlePacket_CapturePlayer(nlohmann::json payload) {
+    if (gPlayState == NULL) {
+        return;
+    }
+    Player* self = GET_PLAYER(gPlayState);
+    if (self == NULL || (self->stateFlags1 & PLAYER_STATE1_DEAD)) {
+        return;
+    }
+    // Already leaving: a second capture landing inside the same transition would
+    // stack two destinations and send us to the wrong one.
+    if (gPlayState->transitionTrigger != TRANS_TRIGGER_OFF) {
+        return;
+    }
+
+    u8 mode = payload.value("mode", (u8)0);
+    s16 entrance = payload.value("entrance", (s16)0);
+
+    if (mode == 0) {
+        Play_TriggerRespawn(gPlayState);
+    } else {
+        gPlayState->nextEntranceIndex = entrance;
+        gPlayState->transitionType = TRANS_TYPE_CIRCLE(TCA_STARBURST, TCC_BLACK, TCS_FAST);
+        gPlayState->transitionTrigger = TRANS_TRIGGER_START;
+    }
+    SPDLOG_DEBUG("[Anchor] captured by remote enemy: mode={} entrance={}", mode, entrance);
+}
+
+extern "C" {
+
+// Remember who this grabber closed on, so the warp — which may be several frames
+// later, and in En_GeldB's case inside Draw — knows where to send it.
+//
+// Returns 1 when `victim` is a player at all: our own Link, or another
+// player's puppet. Callers need that test and cannot do it themselves — a
+// puppet is an EN_OE2 in ACTORCAT_NPC, not ACTORCAT_PLAYER, so the obvious
+// category check silently excludes exactly the case this exists for.
+s32 Anchor_NoteCaptureVictim(Actor* enemy, Actor* victim) {
+    if (enemy == NULL || victim == NULL || gPlayState == NULL) {
+        return 0;
+    }
+    if (victim == &GET_PLAYER(gPlayState)->actor) {
+        // Offline the OnActorDestroy hook that prunes this table is not even
+        // registered (it is a COND_HOOK on isConnected), so entries would pile
+        // up forever, keyed by Actor* addresses the arena reuses. One grab is in
+        // flight at a time on a single machine, so drop the rest first: the
+        // table then holds exactly this one, and a later session cannot inherit
+        // a stale "the victim is mine" note.
+        if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected) {
+            sCaptureVictim.clear();
+        }
+        sCaptureVictim[enemy] = CAPTURE_VICTIM_IS_LOCAL; // ours: the caller warps itself
+        return 1;
+    }
+    if (Anchor::Instance != nullptr) {
+        for (auto& [cid, client] : Anchor::Instance->clients) {
+            if (!client.self && client.player != nullptr && &client.player->actor == victim) {
+                sCaptureVictim[enemy] = cid;
+                return 1;
+            }
+        }
+    }
+    sCaptureVictim.erase(enemy);
+    return 0; // not a player at all
+}
+
+// Did THIS machine witness this grabber closing on someone?
+//
+// 0 means we did not: either the grab happened before we took authority over the
+// enemy, or the note has already been consumed. A caller must never treat that
+// as "the victim is mine" — see the sentinel comment above.
+s32 Anchor_HasCaptureVictim(Actor* enemy) {
+    return (enemy != NULL && sCaptureVictim.find(enemy) != sCaptureVictim.end()) ? 1 : 0;
+}
+
+// Is the victim noted for this grabber somebody else's player?
+//
+// For grabs that play out over many frames: note the victim ONCE, when the enemy
+// closes on them, then ask this every frame instead of recomputing "who is
+// nearest" — which changes as the victim (who is not held on this machine) keeps
+// running, and would eventually name our own Link.
+s32 Anchor_CaptureVictimIsRemote(Actor* enemy) {
+    if (enemy == NULL) {
+        return 0;
+    }
+    auto it = sCaptureVictim.find(enemy);
+    return (it != sCaptureVictim.end() && it->second != CAPTURE_VICTIM_IS_LOCAL) ? 1 : 0;
+}
+
+// Deliver the capture noted above. Returns 1 when it was sent to a remote player
+// (the caller must NOT warp itself).
+//
+// CONTRACT WARNING: 0 folds together two different situations — "the victim is
+// our own Link" and "no note at all", the latter meaning this machine did not
+// witness the grab (authority inherited mid-grab). A caller that warps on 0
+// alone will therefore warp itself in the second case. Pair it with
+// Anchor_HasCaptureVictim, sampled BEFORE this call since a successful delivery
+// consumes the note.
+s32 Anchor_DeliverCapture(Actor* enemy, u8 mode, s16 entrance) {
+    if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected || enemy == NULL) {
+        return 0;
+    }
+    auto it = sCaptureVictim.find(enemy);
+    if (it == sCaptureVictim.end() || it->second == CAPTURE_VICTIM_IS_LOCAL) {
+        return 0; // nothing noted, or the victim is our own Link
+    }
+    uint32_t clientId = it->second;
+    sCaptureVictim.erase(it);
+    // The peer may have left between the grab and the warp.
+    if (PuppetRef::Resolve(clientId) == nullptr) {
+        return 1; // consumed: do not warp ourselves in their place
+    }
+    Anchor::Instance->SendPacket_CapturePlayer(clientId, mode, entrance);
+    return 1;
+}
+
+void Anchor_ForgetCaptureVictim(Actor* enemy) {
+    sCaptureVictim.erase(enemy);
+}
+
+// Hurt a player that an enemy hit by hand rather than through a collider.
+//
+// Boss code often writes damage straight onto the Player struct — Twinrova's
+// beams set bodyFlameTimers and bodyIsBurning, or drive a freeze state machine —
+// which only ever works on the local Link. Where the victim is the other player,
+// the effect has to be asked for across the wire instead.
+//
+// Returns 1 when it was sent (victim is a puppet), 0 when the victim is our own
+// Link and the caller should apply the effect itself.
+//
+// Split into two named entry points rather than one taking a response type:
+// DummyPlayerDamageResponseType lives inside Anchor.h's C++ half, so the actor
+// overlays that need this cannot name its values.
+static s32 HurtRemote(Actor* victim, u8 effect, u8 damage) {
+    if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected || victim == NULL || gPlayState == NULL) {
+        return 0;
+    }
+    if (victim == &GET_PLAYER(gPlayState)->actor) {
+        return 0;
+    }
+    for (auto& [cid, client] : Anchor::Instance->clients) {
+        if (!client.self && client.player != nullptr && &client.player->actor == victim) {
+            Anchor::Instance->SendPacket_DamagePlayer(cid, effect, damage);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// Freeze the other player. The receiving side stops them and tints them blue; it
+// is NOT the animated block of ice, which lives in the boss's own effect table
+// and cannot run on a client whose copy of that boss is suppressed. Deals no
+// damage, matching how the stun response is defined.
+s32 Anchor_FreezeRemotePlayer(Actor* victim) {
+    return HurtRemote(victim, DUMMY_PLAYER_HIT_RESPONSE_STUN, 0);
+}
+
+// Set the other player alight, then deal `damage` (multiplied by 8 on arrival).
+s32 Anchor_BurnRemotePlayer(Actor* victim, u8 damage) {
+    return HurtRemote(victim, DUMMY_PLAYER_HIT_RESPONSE_FIRE, damage);
+}
+}

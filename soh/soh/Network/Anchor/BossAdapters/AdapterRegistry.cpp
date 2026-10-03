@@ -4,6 +4,22 @@
 void RegisterGohmaAdapter();
 void RegisterEnGomaAdapter();
 void RegisterEnDekubabaAdapter();
+void RegisterEnVmAdapter();
+void RegisterEnGeldBAdapter();
+void RegisterEnRrAdapter();
+void RegisterFrozenDrawAdapters();
+void RegisterKingDodongoAdapter();
+void RegisterBossVaAdapter();
+void RegisterEnPohAdapter();
+void RegisterEnPoFieldAdapter();
+void RegisterEnPoDesertAdapter();
+void RegisterPhantomGanonAdapters();
+void RegisterVolvagiaAdapters();
+void RegisterMorphaAdapter();
+void RegisterBongoBongoAdapter();
+void RegisterBossTwAdapter();
+void RegisterBossGanonAdapter();
+void RegisterBossGanon2Adapter();
 
 namespace EnemySync {
 
@@ -27,6 +43,22 @@ void RegisterBuiltInAdapters() {
     RegisterGohmaAdapter();
     RegisterEnGomaAdapter();
     RegisterEnDekubabaAdapter();
+    RegisterEnVmAdapter();
+    RegisterEnGeldBAdapter();
+    RegisterEnRrAdapter();
+    RegisterFrozenDrawAdapters();
+    RegisterKingDodongoAdapter();
+    RegisterBossVaAdapter();
+    RegisterEnPohAdapter();
+    RegisterEnPoFieldAdapter();
+    RegisterEnPoDesertAdapter();
+    RegisterPhantomGanonAdapters();
+    RegisterVolvagiaAdapters();
+    RegisterMorphaAdapter();
+    RegisterBongoBongoAdapter();
+    RegisterBossTwAdapter();
+    RegisterBossGanonAdapter();
+    RegisterBossGanon2Adapter();
 }
 
 } // namespace EnemySync

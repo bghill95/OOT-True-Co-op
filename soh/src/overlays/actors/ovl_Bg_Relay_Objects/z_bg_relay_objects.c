@@ -46,7 +46,33 @@ static InitChainEntry sInitChain[] = {
     ICHAIN_VEC3F_DIV1000(scale, 100, ICHAIN_STOP),
 };
 
+// Co-op (Anchor/DummyPlayer.cpp)
+s32 Anchor_IsSessionActive(void);
+
 u32 D_808A9508 = 0;
+
+/**
+ * Co-op: clear a scene switch flag WITHOUT broadcasting it.
+ *
+ * Flags_UnsetSwitch fires GameInteractor_ExecuteOnSceneFlagUnset (z_actor.c:706) whenever
+ * the bit was actually on, and HookHandlers.cpp:148-149 turns that into an UNSET_FLAG
+ * packet. That is right for a world event and wrong for the housekeeping an *_Init does
+ * on a scene load: the peer did not load our scene, so our reset overwrites the state he
+ * is standing in. Same shape as the fix already in z_bg_mizu_shutter.c:97-109.
+ */
+static void BgRelayObjects_UnsetSwitchLocal(PlayState* play, s32 flag) {
+    if (!Anchor_IsSessionActive()) {
+        Flags_UnsetSwitch(play, flag);
+        return;
+    }
+
+    if (flag < 0x20) {
+        play->actorCtx.flags.swch &= ~(1 << flag);
+    } else {
+        play->actorCtx.flags.tempSwch &= ~(1 << (flag - 0x20));
+    }
+}
+
 void BgRelayObjects_Init(Actor* thisx, PlayState* play) {
     BgRelayObjects* this = (BgRelayObjects*)thisx;
     s32 pad;
@@ -90,7 +116,24 @@ void BgRelayObjects_Init(Actor* thisx, PlayState* play) {
                 this->actionFunc = BgRelayObjects_DoNothing;
             }
         } else if (this->unk_169 != 5) {
-            Flags_UnsetSwitch(play, this->switchFlag);
+            // Co-op: shut the three Dampe race doors on OUR side only.
+            //
+            // The three doors placed in hakasitarelay room 0 carry switch flags 0x35,
+            // 0x36 and 0x37 (params 0x0135/0x0136/0x0137), so unk_169 is 2, 3 and 4 and
+            // all three land here. Those are >= 0x20, i.e. tempSwch -- Play_SaveSceneFlags
+            // (z_play.c:2093-2100) never writes them to the save, but replication does not
+            // care: GameInteractor_RawAction::UnsetSceneFlag clears tempSwch on any client
+            // that is in the same scene (GameInteractor_RawAction.cpp:175-180). Both
+            // players in the windmill IS the whole point of this scene.
+            //
+            // So, before: P2 is running the race with a door already open behind him, P1
+            // walks into the windmill, D_808A9508 is clear on P1's fresh scene load, this
+            // reset runs -- and P2's door drops. The race is timed; he does not get it back.
+            //
+            // The reset itself must stay: func_808A90F4 waits on the flag to raise the
+            // door, so leaving a stale flag set would have the door already up when the
+            // race starts. It is a scene-load reset, local housekeeping, not a world event.
+            BgRelayObjects_UnsetSwitchLocal(play, this->switchFlag);
             if (D_808A9508 & (1 << this->unk_169)) {
                 Actor_Kill(thisx);
             } else {

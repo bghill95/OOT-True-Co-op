@@ -3,6 +3,9 @@
 #include "objects/object_jya_obj/object_jya_obj.h"
 #define FLAGS ACTOR_FLAG_ATTENTION_ENABLED
 
+s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
+s32 Anchor_IsSessionActive(void);
+
 void BgJyaBombchuiwa_Init(Actor* thisx, PlayState* play);
 void BgJyaBombchuiwa_Destroy(Actor* thisx, PlayState* play);
 void BgJyaBombchuiwa_Update(Actor* thisx, PlayState* play);
@@ -144,7 +147,13 @@ void BgJyaBombchuiwa_SetupWaitForExplosion(BgJyaBombchuiwa* this, PlayState* pla
 void BgJyaBombchuiwa_WaitForExplosion(BgJyaBombchuiwa* this, PlayState* play) {
     if ((this->collider.base.acFlags & AC_HIT) || (this->timer > 0)) {
         if (this->timer == 0) {
-            OnePointCutscene_Init(play, 3410, -99, &this->actor, MAIN_CAM);
+            // Co-op: now that the destruction replicates (see the flag set in
+            // CleanUpAfterExplosion), the peer reaches this branch too — from
+            // the replay hook posting AC_HIT — and would have its camera pulled
+            // here from wherever it stands.
+            if (Anchor_ShouldPlayCameraCutscene(&this->actor, 800.0f)) {
+                OnePointCutscene_Init(play, 3410, -99, &this->actor, MAIN_CAM);
+            }
         }
         this->timer++;
         if (this->timer > 10) {
@@ -159,6 +168,22 @@ void BgJyaBombchuiwa_WaitForExplosion(BgJyaBombchuiwa* this, PlayState* play) {
 }
 
 void BgJyaBombchuiwa_CleanUpAfterExplosion(BgJyaBombchuiwa* this, PlayState* play) {
+    // Init already reads this flag to decide whether the rock is gone and the
+    // light ray should be spawned outright, but vanilla never sets it: the rock
+    // comes back on every room reload. Harmless alone, fatal in co-op — the
+    // peer's replay hook (HookHandlers, ACTOR_BG_JYA_BOMBCHUIWA) waits on
+    // exactly this flag, so without it the destruction stays local and the peer
+    // never gets the MIR_RAY the rest of the puzzle needs. Setting it here also
+    // routes through GameInteractor_ExecuteOnSceneFlagSet, which replicates it.
+    // 0x3F is the "no flag" sentinel this actor family uses.
+    //
+    // Gated on an active session: this writes a switch flag the vanilla game
+    // never writes, which would otherwise make the rock stay destroyed across
+    // room reloads in single player — and would fire whatever else happens to
+    // share that flag index in the scene.
+    if (Anchor_IsSessionActive() && (this->actor.params & 0x3F) != 0x3F) {
+        Flags_SetSwitch(play, this->actor.params & 0x3F);
+    }
     this->actionFunc = func_808949B8;
     BgJyaBombchuiwa_SetDrawFlags(this, 4);
     this->lightRayIntensity = 0.3f;

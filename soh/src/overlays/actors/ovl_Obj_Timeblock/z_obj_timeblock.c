@@ -211,6 +211,73 @@ void ObjTimeblock_SetupNormal(ObjTimeblock* this) {
     this->actionFunc = ObjTimeblock_Normal;
 }
 
+s32 Anchor_IsSessionActive(void);
+s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
+
+// Co-op: the block's visibility is NOT read from the switch flag. It is read
+// from unk_174, a copy of that flag taken once at Init and refreshed only twelve
+// frames after THIS client played the Song of Time -- the window opened by
+// demoEffectFirstPartTimer. The flag itself replicates fine (FLAG_SCENE_SWITCH
+// travels through SetFlag/UnsetFlag), but on the client that did not play, the
+// timer is never armed, so unk_174 never moves, CalculateIsVisible keeps
+// returning the same answer, and the block neither appears nor swaps its
+// collider -- Update drives func_8003EC50/func_8003EBF8 from isVisible alone.
+//
+// Replay the transition here when the flag has diverged from the cached copy,
+// WITHOUT toggling it again: it already came from the other player, and
+// toggling would send it straight back. Arming demoEffectFirstPartTimer is
+// enough; the rest of the action function does the work it does for the player
+// who played the song.
+//
+// Covered: every placement that takes the switch-flag path (unk_177 != 0).
+// Excluded: unk_177 == 0. Careful with that exclusion -- it is exact only for
+// ObjTimeblock_Normal, the one action function that branches on unk_177 before
+// toggling. ObjTimeblock_AltBehaviorVisible toggles the switch flag unconditionally,
+// and CalculateIsVisible reads unk_174 whatever unk_177 holds, so a placement with
+// bit 10 AND bit 6 set would be entirely on the flag path with unk_177 == 0, and this
+// guard would skip it. Whether such a placement exists cannot be settled from the
+// repository: actor params live in the .otr, not in source. The note on
+// ObjTimeblock_Normal below calls that branch unreachable -- that claim predates this
+// one and is not demonstrable here either; treat both as unverified.
+// Offline this is inert -- the local toggle arms the timer in the same frame it
+// flips the flag, so the divergence test never fires, and the session guard
+// makes that structural rather than incidental.
+void ObjTimeblock_CoopReplayFlagChange(ObjTimeblock* this, PlayState* play, u8 playCameraCutscene) {
+    u8 switchFlagIsSet;
+
+    if (!Anchor_IsSessionActive() || this->unk_177 == 0) {
+        return;
+    }
+
+    // An effect already running is either ours or one we just started for this
+    // very change; either way unk_174 is about to be refreshed from the flag.
+    if (this->demoEffectTimer > 0 || this->demoEffectFirstPartTimer > 0) {
+        return;
+    }
+
+    switchFlagIsSet = (Flags_GetSwitch(play, this->dyna.actor.params & 0x3F)) ? true : false;
+    if (switchFlagIsSet == this->unk_174) {
+        return;
+    }
+
+    ObjTimeblock_SpawnDemoEffect(this, play);
+    this->demoEffectTimer = 160;
+    this->demoEffectFirstPartTimer = 12;
+
+    // Only pull the view of a player who is close enough to be looking at it.
+    if (playCameraCutscene && Anchor_ShouldPlayCameraCutscene(&this->dyna.actor, 800.0f)) {
+        OnePointCutscene_Attention(play, &this->dyna.actor);
+    }
+}
+
+// Co-op note: the `unk_177 == 0` branch below — the one that flips with a bare
+// `params ^= 0x8000` and no switch flag — was briefly given a replication
+// channel, on the belief that the Gerudo Training Ground blocks used it. They do
+// not. unk_177 is only 0 when bit 6 of params is set, and no placement in the
+// game sets it: the four GTG blocks carry 0xB838..0xB83B (bit 6 clear, low bits
+// 0x38..0x3B), so they land in the `else` and take unk_177 = 1 — the switch-flag
+// path, which already replicates on its own. Same for the other eight non-MQ
+// placements. The branch is unreachable in practice and needs nothing.
 void ObjTimeblock_Normal(ObjTimeblock* this, PlayState* play) {
     u32 newIsVisible;
 
@@ -231,6 +298,8 @@ void ObjTimeblock_Normal(ObjTimeblock* this, PlayState* play) {
             ObjTimeblock_ToggleSwitchFlag(play, this->dyna.actor.params & 0x3F);
         }
     }
+
+    ObjTimeblock_CoopReplayFlagChange(this, play, true);
 
     this->unk_172 = play->msgCtx.lastPlayedSong;
     if (this->demoEffectFirstPartTimer > 0) {
@@ -283,6 +352,8 @@ void ObjTimeblock_AltBehaviorVisible(ObjTimeblock* this, PlayState* play) {
         ObjTimeblock_ToggleSwitchFlag(play, this->dyna.actor.params & 0x3F);
     }
 
+    ObjTimeblock_CoopReplayFlagChange(this, play, true);
+
     func_80BA06AC(this, play);
 
     if (this->demoEffectTimer == 50) {
@@ -309,6 +380,16 @@ void ObjTimeblock_AltBehaviourNotVisible(ObjTimeblock* this, PlayState* play) {
         }
         this->demoEffectFirstPartTimer = 12;
     }
+
+    // No camera here: the vanilla branch has none either.
+    //
+    // Two reviewers disagreed on whether this call can ever fire. In this state
+    // isVisible == 0 == (bit15 ^ unk_174), so unk_174 == bit15, and the vanilla test
+    // above only misses a change when the flag equals bit15 -- which is exactly when
+    // switchFlagIsSet == unk_174 and the replay returns anyway. By that argument it is
+    // unreachable. Kept regardless: it costs one comparison, it cannot fire twice
+    // (the timer guard), and the argument rests on an invariant no test pins down.
+    ObjTimeblock_CoopReplayFlagChange(this, play, false);
 
     func_80BA06AC(this, play);
 

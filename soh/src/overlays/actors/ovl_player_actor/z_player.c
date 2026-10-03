@@ -17,6 +17,17 @@
 #include "overlays/actors/ovl_En_Fish/z_en_fish.h"
 #include "overlays/actors/ovl_En_Horse/z_en_horse.h"
 #include "overlays/effects/ovl_Effect_Ss_Fhg_Flash/z_eff_ss_fhg_flash.h"
+
+// Co-op (Anchor/FxSync.cpp): tell peers a door was just pushed open -- hinged
+// (En_Door) and sliding (Door_Shutter) travel on separate events because the two
+// overlays need very different treatment on the receiving side.
+// Declared up here because the call site sits ~3700 lines above the file's
+// function definitions, and an implicit declaration there clashes with it.
+void FxSync_OnDoorOpen(Actor* doorActor, u8 animStyle);
+void FxSync_OnShutterOpen(Actor* doorActor);
+// Our own Link is crossing this door: whatever replay was armed on it for the
+// other player is superseded, so the key, the camera and the room commit are ours.
+void Anchor_ForgetRemoteDoor(Actor* doorActor);
 #include "overlays/misc/ovl_kaleido_scope/z_kaleido_scope.h"
 #include "objects/gameplay_keep/gameplay_keep.h"
 #include "objects/object_link_child/object_link_child.h"
@@ -5369,6 +5380,21 @@ s32 Player_ActionHandler_1(Player* this, PlayState* play) {
                 this->unk_45C.z = this->actor.world.pos.z + ((doorDirection * -120.0f) * sp78);
 
                 doorShutter->unk_164 = 1;
+
+                // Co-op: this is the only place unk_164 is written as an OPEN
+                // trigger, and only ever by the local Link -- so the peer's copy of
+                // this slab never moves. Announce it. Clear first: if a replay was
+                // already running on our copy for HIM, this crossing is ours and
+                // must commit normally.
+                // Sliding doors only: Door_Gerudo also routes through this branch
+                // (z_door_gerudo.c sets PLAYER_DOORTYPE_SLIDING and the cast above
+                // is layout-compatible only up to unk_164), and its cell grates are
+                // already carried by the flag replay.
+                Anchor_ForgetRemoteDoor(&doorShutter->dyna.actor);
+                if (doorShutter->dyna.actor.id == ACTOR_DOOR_SHUTTER) {
+                    FxSync_OnShutterOpen(&doorShutter->dyna.actor);
+                }
+
                 func_80832224(this);
 
                 if (this->doorTimer != 0) {
@@ -5435,6 +5461,17 @@ s32 Player_ActionHandler_1(Player* this, PlayState* play) {
                 }
 
                 door->playerIsOpening = 1;
+
+                // Co-op: the peer's copy of this door has no idea we pushed it --
+                // playerIsOpening is only ever set right here, by the local Link. Tell it,
+                // with the swing side we just chose. Hinged doors only: doorActor may also
+                // be a DoorKiller, whose "opening" is an attack on whoever opened it.
+                // Clear first, as in the sliding branch above: our own crossing pays for
+                // its own small key, whatever was armed for the other player.
+                Anchor_ForgetRemoteDoor(doorActor);
+                if (doorActor->id == ACTOR_EN_DOOR) {
+                    FxSync_OnDoorOpen(doorActor, door->animStyle);
+                }
 
                 if (this->doorType != PLAYER_DOORTYPE_FAKE) {
                     this->stateFlags1 |= PLAYER_STATE1_IN_CUTSCENE;
@@ -14738,7 +14775,12 @@ void Player_Action_8084EED8(Player* this, PlayState* play) {
     }
 
     if (LinkAnimation_OnFrame(&this->skelAnime, 37.0f)) {
-        Player_SpawnFairy(play, this, &this->leftHandPos, &D_80854A1C, FAIRY_REVIVE_BOTTLE);
+        Actor* fairy = Player_SpawnFairy(play, this, &this->leftHandPos, &D_80854A1C, FAIRY_REVIVE_BOTTLE);
+        if (fairy != NULL) {
+            // Co-op: the peer only sees the bottle tip over; announce the release.
+            void FxSync_OnBottleDrop(int16_t aid, int16_t params, Vec3f * pos, Vec3s * rot, Actor * dropped);
+            FxSync_OnBottleDrop(ACTOR_EN_ELF, FAIRY_REVIVE_BOTTLE, &fairy->world.pos, NULL, fairy);
+        }
         Player_UpdateBottleHeld(play, this, ITEM_BOTTLE, PLAYER_IA_BOTTLE);
         Player_PlaySfx(this, NA_SE_EV_BOTTLE_CAP_OPEN);
         Player_PlaySfx(this, NA_SE_EV_FIATY_HEAL - SFX_FLAG);
@@ -14771,11 +14813,18 @@ void Player_Action_8084EFC0(Player* this, PlayState* play) {
 
     if (LinkAnimation_OnFrame(&this->skelAnime, 76.0f)) {
         BottleDropInfo* dropInfo = &D_80854A28[this->itemAction - PLAYER_IA_BOTTLE_FISH];
+        Vec3f dropPos = { (Math_SinS(this->actor.shape.rot.y) * 5.0f) + this->leftHandPos.x, this->leftHandPos.y,
+                          (Math_CosS(this->actor.shape.rot.y) * 5.0f) + this->leftHandPos.z };
+        Vec3s dropRot = { 0x4000, this->actor.shape.rot.y, 0 };
 
-        Actor_Spawn(&play->actorCtx, play, dropInfo->actorId,
-                    (Math_SinS(this->actor.shape.rot.y) * 5.0f) + this->leftHandPos.x, this->leftHandPos.y,
-                    (Math_CosS(this->actor.shape.rot.y) * 5.0f) + this->leftHandPos.z, 0x4000, this->actor.shape.rot.y,
-                    0, dropInfo->actorParams, true);
+        Actor* dropped = Actor_Spawn(&play->actorCtx, play, dropInfo->actorId, dropPos.x, dropPos.y, dropPos.z,
+                                     dropRot.x, dropRot.y, dropRot.z, dropInfo->actorParams, true);
+        {
+            // Co-op: the released fish / blue fire / bug exists on our side only.
+            // The actor is remembered so its death (re-bottled, swam off) reaches the peers.
+            void FxSync_OnBottleDrop(int16_t aid, int16_t params, Vec3f * pos, Vec3s * rot, Actor * dropped);
+            FxSync_OnBottleDrop(dropInfo->actorId, dropInfo->actorParams, &dropPos, &dropRot, dropped);
+        }
 
         Player_UpdateBottleHeld(play, this, ITEM_BOTTLE, PLAYER_IA_BOTTLE);
         return;
@@ -15312,6 +15361,11 @@ void Player_Action_808502D0(Player* this, PlayState* play) {
                     (sp2C > -40.0f) && (sp2C < 40.0f)) {
                     func_80842A28(play, this);
                     EffectSsBlast_SpawnWhiteShockwave(play, &shockwavePos, &zeroVec, &zeroVec);
+                    {
+                        // Co-op: replay the shockwave on same-scene peers (FxSync).
+                        void FxSync_OnHammerShockwave(Vec3f * pos);
+                        FxSync_OnHammerShockwave(&shockwavePos);
+                    }
                 }
             }
         }

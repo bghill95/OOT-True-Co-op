@@ -563,6 +563,39 @@ void EnGe2_UpdateAfterTalk(Actor* thisx, PlayState* play) {
     EnGe2_MoveAndBlink(this, play);
 }
 
+void FxSync_OnGerudoGuardKO(Actor* guard);
+
+/**
+ * Knock this guard out because the OTHER player did it.
+ *
+ * En_Ge2 is ACTORCAT_NPC, so it is outside EnemySync entirely and every client
+ * runs its own copy against its own Link. That is the right model for DETECTION
+ * — each player must be spotted according to where they themselves are standing,
+ * and one shared guard could not watch two people at once — but it is wrong for
+ * the knockout, which is a fact about the world: one player clubs a guard,
+ * believes the way is clear, and the other is seized by a guard who, on his
+ * screen, never went down.
+ *
+ * The patrol route itself is deliberately NOT replicated. Each copy walks its
+ * own path and, since detection is local, that costs nothing but a guard being
+ * in a different spot on each screen. Pinning the position would break the very
+ * thing that works: a guard pinned to the other client's route would watch the
+ * wrong corridor for whoever is here.
+ */
+void EnGe2_KnockOutFromPeer(Actor* thisx, PlayState* play) {
+    EnGe2* this = (EnGe2*)thisx;
+
+    // Already down, or mid-capture: vanilla lets neither be interrupted either.
+    if (this->stateFlags & (GE2_STATE_KO | GE2_STATE_CAPTURING)) {
+        return;
+    }
+    EnGe2_ChangeAction(this, GE2_ACTION_KNOCKEDOUT);
+    this->timer = 100;
+    this->stateFlags |= GE2_STATE_KO;
+    this->actor.speedXZ = 0.0f;
+    Audio_PlayActorSound2(&this->actor, NA_SE_VO_SK_CRASH);
+}
+
 void EnGe2_Update(Actor* thisx, PlayState* play) {
     EnGe2* this = (EnGe2*)thisx;
     s32 paramsType;
@@ -583,6 +616,7 @@ void EnGe2_Update(Actor* thisx, PlayState* play) {
         this->stateFlags |= GE2_STATE_KO;
         this->actor.speedXZ = 0.0f;
         Audio_PlayActorSound2(&this->actor, NA_SE_VO_SK_CRASH);
+        FxSync_OnGerudoGuardKO(&this->actor);
     } else {
         this->actionFunc(this, play);
 

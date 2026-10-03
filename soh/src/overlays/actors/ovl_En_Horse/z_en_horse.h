@@ -160,7 +160,8 @@ typedef struct EnHorse {
     /* 0x03D8 */ Vec3f frontLeftHoof;
     /* 0x03E4 */ Vec3f backRightHoof;
     /* 0x03F0 */ Vec3f backLeftHoof;
-} EnHorse; // size = 0x03FC
+    /* 0x03FC */ s8 coopMount; // co-op: a remote player's mount replica (FxSync), pose and gait streamed
+} EnHorse; // size = 0x0400
 
 #define EN_HORSE_CHECK_1(horseActor) \
     (((horseActor)->stateFlags & ENHORSE_FLAG_6)  \

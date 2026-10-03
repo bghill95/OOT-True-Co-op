@@ -14,4 +14,14 @@ typedef struct BgGndIceblock {
     /* 0x0168 */ Vec3f targetPos;
 } BgGndIceblock; // size = 0x0174
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+// Co-op: rebuild the file-static grid index from the streamed position. See the
+// definition in z_bg_gnd_iceblock.c; called from DynaSync's mirror step.
+void BgGndIceblock_CoopRebuildGridIndex(BgGndIceblock* self);
+#ifdef __cplusplus
+}
+#endif
+
 #endif

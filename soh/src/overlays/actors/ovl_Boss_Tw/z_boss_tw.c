@@ -13,17 +13,16 @@
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
      ACTOR_FLAG_DRAW_CULLING_DISABLED)
 
-typedef enum {
-    /* 0x00 */ TW_KOTAKE,
-    /* 0x01 */ TW_KOUME,
-    /* 0x02 */ TW_TWINROVA,
-    /* 0x64 */ TW_FIRE_BLAST = 0x64,
-    /* 0x65 */ TW_FIRE_BLAST_GROUND,
-    /* 0x66 */ TW_ICE_BLAST,
-    /* 0x67 */ TW_ICE_BLAST_GROUND,
-    /* 0x68 */ TW_DEATHBALL_KOTAKE,
-    /* 0x69 */ TW_DEATHBALL_KOUME
-} TwinrovaType;
+// The params enum moved to z_boss_tw.h as BossTwType: the co-op layer needs it
+// to tell the blasts (which run locally on each client) from the sisters.
+
+// Co-op: every live player actor, index 0 being our own Link (DummyPlayer.cpp).
+Actor* Anchor_PlayerActorAt(s32 index);
+// Co-op: ask the other player's client to apply an effect we cannot write onto
+// their puppet. Both return 0 when the victim is our own Link, so the caller
+// falls through to the vanilla path (Packets/CapturePlayer.cpp).
+s32 Anchor_FreezeRemotePlayer(Actor* victim);
+s32 Anchor_BurnRemotePlayer(Actor* victim, u8 damage);
 
 void BossTw_Init(Actor* thisx, PlayState* play);
 void BossTw_Destroy(Actor* thisx, PlayState* play);
@@ -762,39 +761,64 @@ void BossTw_SpawnGroundBlast(BossTw* this, PlayState* play, s16 blastType) {
 s32 BossTw_BeamHitPlayerCheck(BossTw* this, PlayState* play) {
     Vec3f offset;
     Vec3f beamDistFromPlayer;
-    Player* player = GET_PLAYER(play);
+    Player* localPlayer = GET_PLAYER(play);
+    Actor* playerActor;
+    s32 playerIndex;
     s16 i;
 
-    offset.x = player->actor.world.pos.x - this->beamOrigin.x;
-    offset.y = player->actor.world.pos.y - this->beamOrigin.y;
-    offset.z = player->actor.world.pos.z - this->beamOrigin.z;
+    // Co-op: the beam used to be tested against the authority's Link and nobody
+    // else, so it stopped on him wherever he stood — and passed straight through
+    // the other player. Walk every player and stop on the first one the beam
+    // actually crosses; the boss-side state (cooldown, beam length) updates for
+    // whoever that is, so the beam visibly stops on the right person.
+    for (playerIndex = 0; (playerActor = Anchor_PlayerActorAt(playerIndex)) != NULL; playerIndex++) {
+        offset.x = playerActor->world.pos.x - this->beamOrigin.x;
+        offset.y = playerActor->world.pos.y - this->beamOrigin.y;
+        offset.z = playerActor->world.pos.z - this->beamOrigin.z;
 
-    Matrix_RotateX(-this->beamPitch, MTXMODE_NEW);
-    Matrix_RotateY(-this->beamYaw, MTXMODE_APPLY);
-    Matrix_MultVec3f(&offset, &beamDistFromPlayer);
+        Matrix_RotateX(-this->beamPitch, MTXMODE_NEW);
+        Matrix_RotateY(-this->beamYaw, MTXMODE_APPLY);
+        Matrix_MultVec3f(&offset, &beamDistFromPlayer);
 
-    if (fabsf(beamDistFromPlayer.x) < 20.0f && fabsf(beamDistFromPlayer.y) < 50.0f && beamDistFromPlayer.z > 100.0f &&
-        beamDistFromPlayer.z <= this->beamDist) {
-        if (sTwinrovaPtr->timers[2] == 0) {
-            sTwinrovaPtr->timers[2] = 150;
-            this->beamDist = sqrtf(SQ(offset.x) + SQ(offset.y) + SQ(offset.z));
-            func_8002F6D4(play, &this->actor, 3.0f, this->actor.shape.rot.y, 0.0f, 0x20);
+        if (fabsf(beamDistFromPlayer.x) < 20.0f && fabsf(beamDistFromPlayer.y) < 50.0f &&
+            beamDistFromPlayer.z > 100.0f && beamDistFromPlayer.z <= this->beamDist) {
+            if (sTwinrovaPtr->timers[2] == 0) {
+                sTwinrovaPtr->timers[2] = 150;
+                this->beamDist = sqrtf(SQ(offset.x) + SQ(offset.y) + SQ(offset.z));
 
-            if (this->actor.params == 0) {
-                if (sFreezeState == 0) {
-                    sFreezeState = 1;
+                // Freezing and burning are written straight onto the Player
+                // struct, and the freeze runs through the boss's own effect
+                // table — none of which the other player's client can do, since
+                // its copy of the sisters is suppressed. Ask for the effect
+                // across the wire instead. 4 becomes 32 on the receiving side,
+                // matching the 0x20 the local path deals.
+                if (playerActor != &localPlayer->actor) {
+                    if (this->actor.params == 0) {
+                        Anchor_FreezeRemotePlayer(playerActor);
+                    } else {
+                        Anchor_BurnRemotePlayer(playerActor, 4);
+                    }
+                } else {
+                    func_8002F6D4(play, &this->actor, 3.0f, this->actor.shape.rot.y, 0.0f, 0x20);
+
+                    if (this->actor.params == 0) {
+                        if (sFreezeState == 0) {
+                            sFreezeState = 1;
+                        }
+                    } else if (!localPlayer->bodyIsBurning) {
+                        for (i = 0; i < ARRAY_COUNT(localPlayer->bodyFlameTimers); i++) {
+                            localPlayer->bodyFlameTimers[i] = Rand_S16Offset(0, 200);
+                        }
+
+                        localPlayer->bodyIsBurning = true;
+                        Player_PlaySfx(&localPlayer->actor,
+                                       localPlayer->ageProperties->unk_92 + NA_SE_VO_LI_DEMO_DAMAGE);
+                    }
                 }
-            } else if (!player->bodyIsBurning) {
-                for (i = 0; i < ARRAY_COUNT(player->bodyFlameTimers); i++) {
-                    player->bodyFlameTimers[i] = Rand_S16Offset(0, 200);
-                }
-
-                player->bodyIsBurning = true;
-                Player_PlaySfx(&player->actor, player->ageProperties->unk_92 + NA_SE_VO_LI_DEMO_DAMAGE);
             }
-        }
 
-        return true;
+            return true;
+        }
     }
     return false;
 }
@@ -1708,6 +1732,14 @@ void BossTw_SetupDeathCS(BossTw* this, PlayState* play) {
     Animation_MorphToLoop(&this->skelAnime, &gTwinrovaKotakeKoumeIdleLoopAnim, -3.0f);
     this->unk_5F8 = 0;
     this->work[CS_TIMER_2] = Rand_ZeroFloat(20.0f);
+}
+
+// Co-op: see coopInDeathCS in z_boss_tw.h. Both death cutscenes count -- the sisters
+// run BossTw_DeathCS, merged Twinrova runs BossTw_TwinrovaDeathCS.
+u8 BossTw_CoopInDeathCS(Actor* thisx) {
+    BossTw* this = (BossTw*)thisx;
+
+    return ((this->actionFunc == BossTw_DeathCS) || (this->actionFunc == BossTw_TwinrovaDeathCS)) ? 1 : 0;
 }
 
 void BossTw_DeathCS(BossTw* this, PlayState* play) {
@@ -3183,7 +3215,7 @@ s32 BossTw_OverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList, Vec3f* 
     }
 
     if (limbIndex == 14) {
-        if (this->actionFunc == BossTw_DeathCS) {
+        if ((this->actionFunc == BossTw_DeathCS) || this->coopInDeathCS) {
             *dList = NULL;
         } else if (this->scepterAlpha == 0.0f) {
             if (this->actor.params == 0) {
@@ -3477,6 +3509,10 @@ void BossTw_Draw(Actor* thisx, PlayState* play2) {
     OPEN_DISPS(play->state.gfxCtx);
 
     if (this->visible) {
+        // Same reason as EnWf_Draw: an eye index that reaches the GPU as a segment
+        // must be in range whatever wrote it, because a bad one poisons that segment
+        // for every texture drawn after it, not just this actor's.
+        this->eyeTexIdx = CLAMP(this->eyeTexIdx, 0, (s16)ARRAY_COUNT(sEyeTextures) - 1);
         gSPSegment(POLY_OPA_DISP++, 10, SEGMENTED_TO_VIRTUAL(sEyeTextures[this->eyeTexIdx]));
         gSPSegment(POLY_XLU_DISP++, 10, SEGMENTED_TO_VIRTUAL(sEyeTextures[this->eyeTexIdx]));
         gSPSegment(POLY_XLU_DISP++, 8,
@@ -3536,7 +3572,7 @@ void BossTw_Draw(Actor* thisx, PlayState* play2) {
     }
 
     if (this->visible) {
-        if (this->actionFunc == BossTw_DeathCS) {
+        if ((this->actionFunc == BossTw_DeathCS) || this->coopInDeathCS) {
             func_80943028(&this->actor, play);
         } else {
             func_809426F0(this, play);
@@ -3563,6 +3599,10 @@ s32 BossTw_TwinrovaOverrideLimbDraw(PlayState* play, s32 limbIndex, Gfx** dList,
         case 21:
             gSPSegment(POLY_OPA_DISP++, 0xC,
                        Gfx_TexScroll(play->state.gfxCtx, 0, (s16)(f32)this->work[CS_TIMER_1], 8, 8));
+            // Bounded here too: both indices can arrive off the wire, and they end up
+            // in segments 8 and 9 -- poisoning either one breaks every later texture.
+            this->eyeTexIdx = CLAMP(this->eyeTexIdx, 0, (s16)ARRAY_COUNT(D_8094A9B0) - 1);
+            this->leftEyeTexIdx = CLAMP(this->leftEyeTexIdx, 0, (s16)ARRAY_COUNT(D_8094A9B0) - 1);
             gSPSegment(POLY_OPA_DISP++, 8, SEGMENTED_TO_VIRTUAL(D_8094A9B0[this->eyeTexIdx]));
             gSPSegment(POLY_OPA_DISP++, 9, SEGMENTED_TO_VIRTUAL(D_8094A9B0[this->leftEyeTexIdx]));
             gDPSetEnvColor(POLY_OPA_DISP++, 255, 255, 255, this->work[UNK_S8]);

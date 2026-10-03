@@ -286,6 +286,11 @@ void ArmsHook_Shoot(ArmsHook* this, PlayState* play) {
                 CollisionCheck_SpawnShieldParticlesMetal(play, &this->actor.world.pos);
                 Audio_PlaySoundGeneral(NA_SE_IT_HOOKSHOT_REFLECT, &this->actor.projectedPos, 4,
                                        &gSfxDefaultFreqAndVolScale, &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
+                {
+                    // Co-op: replay the metal impact sparkle on peers (FxSync).
+                    void FxSync_OnHookSpark(Vec3f * pos);
+                    FxSync_OnHookSpark(&this->actor.world.pos);
+                }
             }
         } else if (CHECK_BTN_ANY(play->state.input[0].press.button, (buttonsToCheck))) {
             this->timer = 0;
@@ -304,13 +309,29 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play) {
     s32 pad;
     ArmsHook* this = (ArmsHook*)thisx;
     Player* player = GET_PLAYER(play);
+
+    s32 isPuppetOwned = 0;
     Vec3f sp78;
     Vec3f sp6C;
     Vec3f sp60;
     f32 sp5C;
     f32 sp58;
 
-    if ((player->actor.draw != NULL) && (player->rightHandType == PLAYER_MODELTYPE_RH_HOOKSHOT)) {
+    // Co-op: a networked replica is parented to its puppet (a custom actor id
+    // in this fork, not ACTOR_PLAYER) — any non-local parent means a puppet we
+    // attached. Draw the chain from its hand, and skip the local-only gate.
+    if ((this->actor.parent != NULL) && (this->actor.parent != &player->actor)) {
+        // The puppet died this frame (Actor_Kill clears update, the arena block
+        // is freed right after): reading its bodyPartsPos would be a use-after-
+        // free every draw frame. Drop the replica's draw instead.
+        if (this->actor.parent->update == NULL) {
+            return;
+        }
+        player = (Player*)this->actor.parent;
+        isPuppetOwned = 1;
+    }
+
+    if ((player->actor.draw != NULL) && (isPuppetOwned || (player->rightHandType == PLAYER_MODELTYPE_RH_HOOKSHOT))) {
         OPEN_DISPS(play->state.gfxCtx);
 
         if ((ArmsHook_Shoot != this->actionFunc) || (this->timer <= 0)) {
@@ -333,7 +354,8 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play) {
         gSPMatrix(POLY_OPA_DISP++, MATRIX_NEWMTX(play->state.gfxCtx), G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
         gSPDisplayList(POLY_OPA_DISP++, gLinkAdultHookshotTipDL);
         Matrix_Translate(this->actor.world.pos.x, this->actor.world.pos.y, this->actor.world.pos.z, MTXMODE_NEW);
-        Math_Vec3f_Diff(&player->unk_3C8, &this->actor.world.pos, &sp78);
+        Math_Vec3f_Diff(isPuppetOwned ? &player->bodyPartsPos[PLAYER_BODYPART_R_HAND] : &player->unk_3C8,
+                        &this->actor.world.pos, &sp78);
         sp58 = SQ(sp78.x) + SQ(sp78.z);
         sp5C = sqrtf(sp58);
         Matrix_RotateY(Math_FAtan2F(sp78.x, sp78.z), MTXMODE_APPLY);

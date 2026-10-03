@@ -4,6 +4,29 @@
 #include <libultraship/libultra.h>
 #include "global.h"
 
+// What a Boss_Tw instance is, from its params. One actor id covers the two
+// sisters, their merged form, the blasts they throw and the death-cutscene
+// balls. Lives here rather than in the .c so the co-op layer can tell a blast
+// (simulated locally by every client, so either player can shield it) from a
+// sister (streamed from the authority).
+//
+// Named BossTwType, not TwinrovaType: z_en_tr.h already defines a typedef by
+// that name for the sisters' cutscene actor. Nothing used either as a type name
+// while both lived in .c files, but this one is now in a header the co-op layer
+// includes, so the clash would surface the day one translation unit pulls in
+// both.
+typedef enum {
+    /* 0x00 */ TW_KOTAKE,
+    /* 0x01 */ TW_KOUME,
+    /* 0x02 */ TW_TWINROVA,
+    /* 0x64 */ TW_FIRE_BLAST = 0x64,
+    /* 0x65 */ TW_FIRE_BLAST_GROUND,
+    /* 0x66 */ TW_ICE_BLAST,
+    /* 0x67 */ TW_ICE_BLAST_GROUND,
+    /* 0x68 */ TW_DEATHBALL_KOTAKE,
+    /* 0x69 */ TW_DEATHBALL_KOUME
+} BossTwType;
+
 typedef enum {
     /*  0 */ TWEFF_NONE,
     /*  1 */ TWEFF_DOT,
@@ -175,6 +198,15 @@ typedef struct BossTw {
     /* 0x06A8 */ char unused_6A8[4];
     /* 0x06AC */ f32 subCamYaw;
     /* 0x06B0 */ f32 subCamYawStep;
+    // Co-op: the two draw paths below branch on `actionFunc == BossTw_DeathCS`, and a
+    // mirror's actionFunc is its own -- a function pointer is the one thing that must
+    // never travel. The authority sends this flag instead and the draws test it
+    // alongside the pointer. Appended after the vanilla fields so no offset moves.
+    u8 coopInDeathCS;
 } BossTw; // size = 0x06B4
+
+// Co-op: 1 while this actor is running either death cutscene. Lives here because
+// BossTw_DeathCS / BossTw_TwinrovaDeathCS are file-local to z_boss_tw.c.
+u8 BossTw_CoopInDeathCS(Actor* thisx);
 
 #endif

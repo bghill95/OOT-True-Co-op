@@ -3,6 +3,21 @@
 #ifdef __cplusplus
 
 #include <thread>
+#include <atomic>
+#include <spdlog/spdlog.h>
+
+// Anything logged from the RECEIVE THREAD must go through this. See the comment at
+// the top of Network.cpp: the SPDLOG_* macros read the default logger through an
+// unsynchronised .get(), and logger::should_log() dereferences that pointer before
+// it checks whether the level is even enabled -- so a log line that is filtered out
+// still crashes. Fetch the pointer once, check it, drop the line if it is gone.
+#define NET_LOG(MACRO, ...)                              \
+    do {                                                 \
+        auto* netLogger_ = spdlog::default_logger_raw(); \
+        if (netLogger_ != nullptr) {                     \
+            MACRO(netLogger_, __VA_ARGS__);              \
+        }                                                \
+    } while (0)
 #ifdef ENABLE_REMOTE_CONTROL
 #include <SDL2/SDL_net.h>
 #endif
@@ -22,8 +37,11 @@ class Network {
     void HandleRemoteJson(std::string payload);
 
   public:
-    bool isEnabled;
-    bool isConnected;
+    // Written by the receive thread (ReceiveFromServer) and read by the game thread
+    // on every frame that registers hooks or sends a packet: plain bools here were a
+    // data race with no happens-before edge at all.
+    std::atomic<bool> isEnabled;
+    std::atomic<bool> isConnected;
 
     void Enable(const char* host, uint16_t port);
     void Disable();

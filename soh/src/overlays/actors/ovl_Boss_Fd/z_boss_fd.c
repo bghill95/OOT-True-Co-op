@@ -152,6 +152,18 @@ void BossFd_SpawnFireBreath(BossFdEffect* effect, Vec3f* position, Vec3f* veloci
     }
 }
 
+// Co-op (Anchor/DummyPlayer.cpp): nearest live player, local Link or puppet.
+Player* Anchor_NearestPlayer(Actor* from);
+
+// Co-op: one-shot sounds the authority plays from its AI are recorded as an event
+// so the suppressed mirror copy can replay them (VolvagiaAdapter).
+static void BossFd_CoopSfx(BossFd* this, u16 sfxId) {
+    Audio_PlaySoundGeneral(sfxId, &this->actor.projectedPos, 4, &gSfxDefaultFreqAndVolScale,
+                           &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
+    this->coopSfxId = sfxId;
+    this->coopSfxSeq++;
+}
+
 void BossFd_SetCameraSpeed(BossFd* this, f32 speedMod) {
     this->camData.eyeVel.x = fabsf(this->camData.eye.x - this->camData.nextEye.x) * speedMod;
     this->camData.eyeVel.y = fabsf(this->camData.eye.y - this->camData.nextEye.y) * speedMod;
@@ -270,12 +282,13 @@ static Vec3f sCeilingTargets[] = {
     { 0.0f, 900.0f, 243.0f },  { -243.0f, 900.0f, 100.0f }, { -243.0, 900.0f, -100.0f },
 };
 
+void BossFd_UpdateBodySegs(BossFd* this, u8 armsFolded);
+
 void BossFd_Fly(BossFd* this, PlayState* play) {
     u8 sp1CF = false;
     u8 temp_rand;
     s16 i1;
     s16 i2;
-    s16 i3;
     f32 dx;
     f32 dy;
     f32 dz;
@@ -684,9 +697,7 @@ void BossFd_Fly(BossFd* this, PlayState* play) {
                 if (this->actor.bgCheckFlags & 0x10) {
                     this->fwork[BFD_CEILING_BOUNCE] = -18384.0f;
                     this->timers[1] = 10;
-                    Audio_PlaySoundGeneral(NA_SE_EV_EXPLOSION, &this->actor.projectedPos, 4,
-                                           &gSfxDefaultFreqAndVolScale, &gSfxDefaultFreqAndVolScale,
-                                           &gSfxDefaultReverb);
+                    BossFd_CoopSfx(this, NA_SE_EV_EXPLOSION);
                     func_80033E1C(play, 3, 0xA, 0x7530);
                     this->work[BFD_ROCK_TIMER] = 300;
                 }
@@ -700,12 +711,14 @@ void BossFd_Fly(BossFd* this, PlayState* play) {
                 this->work[BFD_START_ATTACK] = false;
             }
             break;
-        case BOSSFD_FLY_CHASE:
+        case BOSSFD_FLY_CHASE: {
+            Player* target = Anchor_NearestPlayer(&this->actor); // co-op: chase whoever is closest
+
             this->actor.flags |= ACTOR_FLAG_SFX_FOR_PLAYER_BODY_HIT;
             temp_y = Math_SinS(this->work[BFD_MOVE_TIMER] * 2396.0f) * 30.0f + this->fwork[BFD_TARGET_Y_OFFSET];
-            this->targetPosition.x = player->actor.world.pos.x;
-            this->targetPosition.y = player->actor.world.pos.y + temp_y + 30.0f;
-            this->targetPosition.z = player->actor.world.pos.z;
+            this->targetPosition.x = target->actor.world.pos.x;
+            this->targetPosition.y = target->actor.world.pos.y + temp_y + 30.0f;
+            this->targetPosition.z = target->actor.world.pos.z;
             this->fwork[BFD_FLY_WOBBLE_AMP] = 0.0f;
             if (((this->timers[0] % 64) == 0) && (this->timers[0] < 450)) {
                 this->work[BFD_ROAR_TIMER] = 40;
@@ -714,14 +727,14 @@ void BossFd_Fly(BossFd* this, PlayState* play) {
                 }
             }
             if ((this->work[BFD_DAMAGE_FLASH_TIMER] != 0) || (this->timers[0] == 0) ||
-                (player->actor.world.pos.y < 70.0f)) {
+                (target->actor.world.pos.y < 70.0f)) {
                 this->work[BFD_ACTION_STATE] = BOSSFD_FLY_MAIN;
                 this->timers[0] = 0;
                 this->work[BFD_START_ATTACK] = false;
             } else {
                 Math_ApproachF(&this->fwork[BFD_TARGET_Y_OFFSET], 50.0, 1.0f, 2.0f);
             }
-            break;
+        } break;
         case BOSSFD_DEATH_START:
             if (sqrtf(SQ(dx) + SQ(dz)) < 50.0f) {
                 this->timers[0] = 0;
@@ -958,6 +971,38 @@ void BossFd_Fly(BossFd* this, PlayState* play) {
         }
         Actor_UpdatePos(&this->actor);
 
+        if (this->work[BFD_ACTION_STATE] < BOSSFD_SKULL_FALL) {
+            if ((this->actor.prevPos.y < 90.0f) && (90.0f <= this->actor.world.pos.y)) {
+                this->timers[4] = 80;
+                func_80033E1C(play, 1, 80, 0x5000);
+                this->work[BFD_ROAR_TIMER] = 40;
+                this->work[BFD_MANE_EMBERS_TIMER] = 30;
+                this->work[BFD_SPLASH_TIMER] = 10;
+            }
+            if ((this->actor.prevPos.y > 90.0f) && (90.0f >= this->actor.world.pos.y)) {
+                this->timers[4] = 80;
+                func_80033E1C(play, 1, 80, 0x5000);
+                this->work[BFD_MANE_EMBERS_TIMER] = 30;
+                this->work[BFD_SPLASH_TIMER] = 10;
+            }
+        }
+
+        BossFd_UpdateBodySegs(this, sp1CF);
+    }
+}
+
+// The body / mane trail and the arm sway, split out of BossFd_Fly so the co-op
+// mirror (whose BossFd_Fly never runs) can push the streamed head pose into the
+// same rings. armsFolded is Fly's sp1CF (main flight / burrowing).
+void BossFd_UpdateBodySegs(BossFd* this, u8 armsFolded) {
+    s16 i2;
+    s16 i3;
+    s16 i4;
+    Vec3f spE0[3];
+    Vec3f spBC[3];
+    f32 phi_f20;
+
+    {
         this->work[BFD_LEAD_BODY_SEG]++;
         if (this->work[BFD_LEAD_BODY_SEG] >= 100) {
             this->work[BFD_LEAD_BODY_SEG] = 0;
@@ -991,23 +1036,7 @@ void BossFd_Fly(BossFd* this, PlayState* play) {
             Math_ApproachF(&this->flattenMane, 0.5f, 1.0f, 0.05f);
         }
 
-        if (this->work[BFD_ACTION_STATE] < BOSSFD_SKULL_FALL) {
-            if ((this->actor.prevPos.y < 90.0f) && (90.0f <= this->actor.world.pos.y)) {
-                this->timers[4] = 80;
-                func_80033E1C(play, 1, 80, 0x5000);
-                this->work[BFD_ROAR_TIMER] = 40;
-                this->work[BFD_MANE_EMBERS_TIMER] = 30;
-                this->work[BFD_SPLASH_TIMER] = 10;
-            }
-            if ((this->actor.prevPos.y > 90.0f) && (90.0f >= this->actor.world.pos.y)) {
-                this->timers[4] = 80;
-                func_80033E1C(play, 1, 80, 0x5000);
-                this->work[BFD_MANE_EMBERS_TIMER] = 30;
-                this->work[BFD_SPLASH_TIMER] = 10;
-            }
-        }
-
-        if (!sp1CF) {
+        if (!armsFolded) {
             spE0[0].x = spE0[0].y = Math_SinS(this->work[BFD_MOVE_TIMER] * 1500.0f) * 3000.0f;
             spE0[1].x = Math_SinS(this->work[BFD_MOVE_TIMER] * 2000.0f) * 4000.0f;
             spE0[1].y = Math_SinS(this->work[BFD_MOVE_TIMER] * 2200.0f) * 4000.0f;
@@ -1281,7 +1310,8 @@ void BossFd_Effects(BossFd* this, PlayState* play) {
         }
     }
 
-    if ((this->actor.world.pos.y < 90.0f) || (700.0f < this->actor.world.pos.y) || (this->actionFunc == BossFd_Wait)) {
+    if ((this->actor.world.pos.y < 90.0f) || (700.0f < this->actor.world.pos.y) ||
+        ((this->actionFunc == BossFd_Wait) && !this->coopVisible)) { // co-op: the mirror copy idles in Wait
         this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
     } else {
         this->actor.flags |= ACTOR_FLAG_ATTENTION_ENABLED;
@@ -1304,17 +1334,16 @@ void BossFd_CollisionCheck(BossFd* this, PlayState* play) {
         }
         this->work[BFD_DAMAGE_FLASH_TIMER] = 10;
         this->work[BFD_INVINC_TIMER] = 20;
-        Audio_PlaySoundGeneral(NA_SE_EN_VALVAISA_DAMAGE1, &this->actor.projectedPos, 4, &gSfxDefaultFreqAndVolScale,
-                               &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
+        BossFd_CoopSfx(this, NA_SE_EN_VALVAISA_DAMAGE1);
     }
 }
+
+void BossFd_UpdateGlow(BossFd* this);
+void BossFd_SpawnAmbientEmbers(BossFd* this);
 
 void BossFd_Update(Actor* thisx, PlayState* play) {
     s32 pad;
     BossFd* this = (BossFd*)thisx;
-    f32 headGlow;
-    f32 rManeGlow;
-    f32 lManeGlow;
     s16 i;
 
     osSyncPrintf("FD MOVE START \n");
@@ -1345,26 +1374,7 @@ void BossFd_Update(Actor* thisx, PlayState* play) {
     }
 
     BossFd_Effects(this, play);
-    this->fwork[BFD_TEX1_SCROLL_X] += 4.0f;
-    this->fwork[BFD_TEX1_SCROLL_Y] = 120.0f;
-    this->fwork[BFD_TEX2_SCROLL_X] += 3.0f;
-    this->fwork[BFD_TEX2_SCROLL_Y] -= 2.0f;
-
-    Math_ApproachF(&this->fwork[BFD_BODY_TEX2_ALPHA], (this->work[BFD_VAR_TIMER] & 0x10) ? 30.0f : 158.0f, 1.0f, 8.0f);
-    if (this->skinSegments == 0) {
-        this->fwork[BFD_HEAD_TEX2_ALPHA] = this->fwork[BFD_BODY_TEX2_ALPHA];
-    } else {
-        headGlow = (this->work[BFD_VAR_TIMER] & 4) ? 0.0f : 255.0f;
-        Math_ApproachF(&this->fwork[BFD_HEAD_TEX2_ALPHA], headGlow, 1.0f, 64.0f);
-    }
-
-    headGlow = (this->work[BFD_VAR_TIMER] & 8) ? 128.0f : 255.0f;
-    rManeGlow = ((this->work[BFD_VAR_TIMER] + 3) & 8) ? 128.0f : 255.0f;
-    lManeGlow = ((this->work[BFD_VAR_TIMER] + 6) & 8) ? 128.0f : 255.0f;
-
-    Math_ApproachF(&this->fwork[BFD_MANE_COLOR_CENTER], headGlow, 1.0f, 16.0f);
-    Math_ApproachF(&this->fwork[BFD_MANE_COLOR_RIGHT], rManeGlow, 1.0f, 16.0f);
-    Math_ApproachF(&this->fwork[BFD_MANE_COLOR_LEFT], lManeGlow, 1.0f, 16.0f);
+    BossFd_UpdateGlow(this);
 
     if (this->work[BFD_ROCK_TIMER] != 0) {
         this->work[BFD_ROCK_TIMER]--;
@@ -1390,7 +1400,45 @@ void BossFd_Update(Actor* thisx, PlayState* play) {
         }
     }
 
-    if (1) { // Needed for matching, and also to define new variables
+    BossFd_SpawnAmbientEmbers(this);
+    osSyncPrintf("FD MOVE END 1\n");
+    BossFd_UpdateEffects(this, play);
+    osSyncPrintf("FD MOVE END 2\n");
+}
+
+// Texture scroll, body / head glow and mane colour pulses (BossFd_Update).
+void BossFd_UpdateGlow(BossFd* this) {
+    f32 headGlow;
+    f32 rManeGlow;
+    f32 lManeGlow;
+
+    this->fwork[BFD_TEX1_SCROLL_X] += 4.0f;
+    this->fwork[BFD_TEX1_SCROLL_Y] = 120.0f;
+    this->fwork[BFD_TEX2_SCROLL_X] += 3.0f;
+    this->fwork[BFD_TEX2_SCROLL_Y] -= 2.0f;
+
+    Math_ApproachF(&this->fwork[BFD_BODY_TEX2_ALPHA], (this->work[BFD_VAR_TIMER] & 0x10) ? 30.0f : 158.0f, 1.0f, 8.0f);
+    if (this->skinSegments == 0) {
+        this->fwork[BFD_HEAD_TEX2_ALPHA] = this->fwork[BFD_BODY_TEX2_ALPHA];
+    } else {
+        headGlow = (this->work[BFD_VAR_TIMER] & 4) ? 0.0f : 255.0f;
+        Math_ApproachF(&this->fwork[BFD_HEAD_TEX2_ALPHA], headGlow, 1.0f, 64.0f);
+    }
+
+    headGlow = (this->work[BFD_VAR_TIMER] & 8) ? 128.0f : 255.0f;
+    rManeGlow = ((this->work[BFD_VAR_TIMER] + 3) & 8) ? 128.0f : 255.0f;
+    lManeGlow = ((this->work[BFD_VAR_TIMER] + 6) & 8) ? 128.0f : 255.0f;
+
+    Math_ApproachF(&this->fwork[BFD_MANE_COLOR_CENTER], headGlow, 1.0f, 16.0f);
+    Math_ApproachF(&this->fwork[BFD_MANE_COLOR_RIGHT], rManeGlow, 1.0f, 16.0f);
+    Math_ApproachF(&this->fwork[BFD_MANE_COLOR_LEFT], lManeGlow, 1.0f, 16.0f);
+}
+
+// Embers rising from the lava holes and off the burning mane (BossFd_Update).
+void BossFd_SpawnAmbientEmbers(BossFd* this) {
+    s16 i;
+
+    { // Needed for matching, and also to define new variables
         Vec3f emberVel = { 0.0f, 0.0f, 0.0f };
         Vec3f emberAccel = { 0.0f, 0.0f, 0.0f };
         Vec3f emberPos;
@@ -1432,9 +1480,44 @@ void BossFd_Update(Actor* thisx, PlayState* play) {
             }
         }
     }
-    osSyncPrintf("FD MOVE END 1\n");
+}
+
+// Co-op mirror side. BossFd_Update is suppressed on the mirror (the authority
+// streams the head pose, work[], timers and draw params), so everything the
+// update does besides the AI / physics, collision and rock spawning is
+// replayed here from the streamed fields: the body / mane trail (fed the
+// streamed head pose at the streamed ring index), the ambient effects and
+// glow, the fire breath, the effect pool (which is also what burns THIS
+// machine's Link). Called by the Volvagia adapter once per streamed frame.
+void BossFd_CoopMirrorTick(BossFd* this, PlayState* play) {
+    u8 armsFolded =
+        (this->work[BFD_ACTION_STATE] == BOSSFD_FLY_MAIN) || (this->work[BFD_ACTION_STATE] == BOSSFD_BURROW);
+
+    // The fire-breath burn cooldown (BossFd_UpdateEffects) is a local timer the
+    // suppressed update never decrements.
+    if (this->timers[3] != 0) {
+        this->timers[3]--;
+    }
+    if (!this->work[BFD_STOP_FLAG]) {
+        // UpdateBodySegs pre-increments the ring indices: rewind them so the
+        // streamed head pose lands in the authority's slot, not the one after.
+        this->work[BFD_LEAD_BODY_SEG] = (this->work[BFD_LEAD_BODY_SEG] + 99) % 100;
+        this->work[BFD_LEAD_MANE_SEG] = (this->work[BFD_LEAD_MANE_SEG] + 29) % 30;
+        BossFd_UpdateBodySegs(this, armsFolded);
+    }
+    BossFd_Effects(this, play);
+    BossFd_UpdateGlow(this);
+    BossFd_SpawnAmbientEmbers(this);
     BossFd_UpdateEffects(this, play);
-    osSyncPrintf("FD MOVE END 2\n");
+}
+
+// Co-op mirror: replay a streamed one-shot sound event (BossFd_CoopSfx).
+void BossFd_CoopMirrorSfx(BossFd* this) {
+    if (this->coopMirrorSfxSeq != this->coopSfxSeq) {
+        this->coopMirrorSfxSeq = this->coopSfxSeq;
+        Audio_PlaySoundGeneral(this->coopSfxId, &this->actor.projectedPos, 4, &gSfxDefaultFreqAndVolScale,
+                               &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
+    }
 }
 
 void BossFd_UpdateEffects(BossFd* this, PlayState* play) {
@@ -1651,7 +1734,7 @@ void BossFd_Draw(Actor* thisx, PlayState* play) {
     BossFd* this = (BossFd*)thisx;
 
     osSyncPrintf("FD DRAW START\n");
-    if (this->actionFunc != BossFd_Wait) {
+    if ((this->actionFunc != BossFd_Wait) || this->coopVisible) { // co-op: the mirror copy idles in Wait
         OPEN_DISPS(play->state.gfxCtx);
         Gfx_SetupDL_25Opa(play->state.gfxCtx);
         if (this->work[BFD_DAMAGE_FLASH_TIMER] & 2) {

@@ -1,19 +1,30 @@
 #include "Anchor.h"
 #include "EnemySync.h"
+#include "DynaSync.h"
+#include "BombfSync.h"
+#include "BombSync.h"
+#include "BreakSync.h"
+#include "FxSync.h"
+#include "CarrySync.h"
+#include "FlagReplay.h"
 #include "PuppetFairy.h"
 #include "CoopWarp.h"
 #include "CoopLifeSync.h"
 #include "BossEntry.h"
 #include "CutsceneSync.h"
 #include "BgmSync.h"
+#include "TimeSync.h"
 #include <libultraship/libultraship.h>
 #include "soh/Enhancements/game-interactor/GameInteractor.h"
 
 extern "C" {
 #include "variables.h"
 #include "functions.h"
+extern EffectSsInfo sEffectSsInfo;             // z_effect_soft_sprite.c (no header declares it)
+void Anchor_ForgetCaptureVictim(Actor* enemy); // Packets/CapturePlayer.cpp
 #include "src/overlays/actors/ovl_Bg_Bombwall/z_bg_bombwall.h"
 #include "src/overlays/actors/ovl_Bg_Breakwall/z_bg_breakwall.h"
+#include "src/overlays/actors/ovl_Bg_Gnd_Soulmeiro/z_bg_gnd_soulmeiro.h"
 #include "src/overlays/actors/ovl_Bg_Haka_Zou/z_bg_haka_zou.h"
 #include "src/overlays/actors/ovl_Bg_Hidan_Hamstep/z_bg_hidan_hamstep.h"
 #include "src/overlays/actors/ovl_Bg_Hidan_Hrock/z_bg_hidan_hrock.h"
@@ -26,6 +37,7 @@ extern "C" {
 #include "src/overlays/actors/ovl_Bg_Spot17_Bakudankabe/z_bg_spot17_bakudankabe.h"
 #include "src/overlays/actors/ovl_Bg_Ydan_Maruta/z_bg_ydan_maruta.h"
 #include "src/overlays/actors/ovl_Bg_Ydan_Sp/z_bg_ydan_sp.h"
+#include "src/overlays/actors/ovl_Demo_Kekkai/z_demo_kekkai.h"
 #include "src/overlays/actors/ovl_Door_Shutter/z_door_shutter.h"
 #include "src/overlays/actors/ovl_En_Door/z_en_door.h"
 #include "src/overlays/actors/ovl_En_Si/z_en_si.h"
@@ -40,6 +52,9 @@ extern PlayState* gPlayState;
 
 void func_8086ED70(BgBombwall* bgBombwall, PlayState* play);
 void BgBreakwall_Wait(BgBreakwall* bgBreakwall, PlayState* play);
+void func_8087B284(BgGndSoulmeiro* bgGndSoulmeiro, PlayState* play);
+s32 DemoKekkai_CheckEventFlag(s32 params);
+void DemoKekkai_TrialBarrierDispel(Actor* thisx, PlayState* play);
 void func_80883000(BgHakaZou* bgHakaZou, PlayState* play);
 void func_808887C4(BgHidanHamstep* bgHidanHamstep, PlayState* play);
 void func_808896B8(BgHidanHrock* bgHidanHrock, PlayState* play);
@@ -56,6 +71,10 @@ void BgYdanSp_WallWebIdle(BgYdanSp* bgYdanSp, PlayState* play);
 void BgYdanSp_BurnWeb(BgYdanSp* bgYdanSp, PlayState* play);
 void EnDoor_Idle(EnDoor* enDoor, PlayState* play);
 }
+
+// Defined in Packets/SetFlag.cpp. C++ linkage on purpose, like its definition --
+// declaring it inside the extern "C" block above would not link.
+void Anchor_RecomputeGsTokensFromFlags();
 
 void Anchor::RegisterHooks() {
 
@@ -112,8 +131,18 @@ void Anchor::RegisterHooks() {
         }
     });
 
-    COND_HOOK(OnFlagSet, isConnected,
-              [&](s16 flagType, s16 flag) { SendPacket_SetFlag(SCENE_ID_MAX, flagType, flag); });
+    COND_HOOK(OnFlagSet, isConnected, [&](s16 flagType, s16 flag) {
+        SendPacket_SetFlag(SCENE_ID_MAX, flagType, flag);
+        // A derived count has to be derived on BOTH sides, or the local pickup is the
+        // one that gets lost. En_Si increments at pickup (z_en_si.c:126) but only sets
+        // the bit when the textbox closes (:144); a peer's SET_FLAG for a DIFFERENT
+        // Skulltula landing inside that window recomputes from bits that do not yet
+        // include ours, and silently drops it. Recomputing here too closes the loop:
+        // when our own bit finally lands, the count catches up with it.
+        if (flagType == FLAG_GS_TOKEN) {
+            Anchor_RecomputeGsTokensFromFlags();
+        }
+    });
 
     COND_HOOK(OnFlagUnset, isConnected,
               [&](s16 flagType, s16 flag) { SendPacket_UnsetFlag(SCENE_ID_MAX, flagType, flag); });
@@ -145,7 +174,11 @@ void Anchor::RegisterHooks() {
         // Handle vanilla dungeon items a bit differently
         if (itemEntry.modIndex == MOD_NONE &&
             (itemEntry.itemId >= ITEM_KEY_BOSS && itemEntry.itemId <= ITEM_KEY_SMALL)) {
-            SendPacket_UpdateDungeonItems();
+            // The range is boss key / compass / map / small key. Only the last is a
+            // count; the other three are bits and merge on their own (see the
+            // packet). Sending the delta is what lets two simultaneous key events
+            // commute instead of one erasing the other.
+            SendPacket_UpdateDungeonItems(itemEntry.itemId == ITEM_KEY_SMALL ? 1 : 0);
             return;
         }
 
@@ -163,12 +196,42 @@ void Anchor::RegisterHooks() {
             return;
         }
 
+        // Channel exclusivity, same shape as the rupees above: a Gold Skulltula token's
+        // count is DERIVED from its GS bits rather than carried at all -- see
+        // Anchor_RecomputeGsTokensFromFlags (Packets/SetFlag.cpp), which runs both when a
+        // peer's flag arrives and when we set one of our own, just above.
+        //
+        // It has to leave this channel because the gold Skulltula is NOT tracked --
+        // EnSw_Init re-categorises only type 0 to ACTORCAT_ENEMY and the gold ones are
+        // types 1..4, so they stay ACTORCAT_NPC and each client runs its own copy. Both
+        // players can kill and collect the same one; through GIVE_ITEM that counted twice
+        // on both saves, while the flag is a bit and cannot be set twice.
+        //
+        // Vanilla only. Under the randomizer this exclusion would LOSE tokens: with
+        // tokensanity on, RG_GOLD_SKULLTULA_TOKEN is itemId ITEM_SKULL_TOKEN / MOD_NONE
+        // (item_list.cpp:60) but can be placed in a chest or bought from a shop, where no
+        // GS flag is ever set -- so taking it off the item channel would leave nothing to
+        // carry it. And with tokensanity OFF the count could not be rebuilt either:
+        // RSK_STARTING_SKULLTULA_TOKEN grants tokens with no bits behind them, so the
+        // popcount the receiving side uses would erase them.
+        //
+        // The randomizer therefore keeps the pre-branch behaviour in full, including its
+        // own double-count when both players collect the same Skulltula under tokensanity
+        // OFF. That is pre-existing, not introduced here, and closing it needs a count
+        // that can survive tokens without bits -- a third rule, which is what this whole
+        // correction was about removing.
+        if (!IS_RANDO && itemEntry.modIndex == MOD_NONE && itemEntry.itemId == ITEM_SKULL_TOKEN) {
+            return;
+        }
+
         SendPacket_GiveItem(itemEntry.tableId, itemEntry.getItemId);
     });
 
     COND_HOOK(OnDungeonKeyUsed, isConnected, [&](uint16_t mapIndex) {
-        // Handle vanilla dungeon items a bit differently
-        SendPacket_UpdateDungeonItems();
+        // One key spent. The peer applies -1 rather than our absolute count, so two
+        // players unlocking two different doors at once each lose exactly one key
+        // instead of one of the two spends going missing.
+        SendPacket_UpdateDungeonItems(-1);
     });
 
     // #endregion
@@ -199,6 +262,36 @@ void Anchor::RegisterHooks() {
         }
     });
 
+    // Ganon's Castle, Spirit trial (ganontika room 18: params 0x0A00 / 0x0A01 / 0x0A02,
+    // switch flag 10). The web reads its flag at Init (z_bg_gnd_soulmeiro.c:74) and
+    // then only inside func_8087B284, whose whole body is behind `if (!Flags_GetSwitch
+    // (...))` (:163) -- so a flag arriving from the other client is never seen: the web
+    // P1 burned stayed drawn and kept its AC cylinder up for P2, and P2 never got the
+    // Mir_Ray beam that the burn spawns, which is what lights the room below. Re-read
+    // the flag every frame and take the same branch Init would have taken. Same shape
+    // as the Bg_Ice_Shelter hook further down, and the same shape the Demo_Kekkai hook
+    // below uses -- one class of defect, "flag read once at Init", two actors.
+    //
+    // The other two thirds of this puzzle need nothing: params 1 and 2 (light source
+    // and lit floor) run func_8087B350, which already re-reads the flag every frame
+    // and just swaps `draw` (:178).
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_BG_GND_SOULMEIRO, isConnected, [&](void* refActor, bool* should) {
+        BgGndSoulmeiro* actor = static_cast<BgGndSoulmeiro*>(refActor);
+
+        // The actionFunc test is what keeps this off the client that lit it: a copy
+        // already burning runs func_8087AF38, which sets the flag itself at the
+        // halfway point of its own effect (:116) and kills itself 20 frames later
+        // (:121). Firing here on that flag would cut the effect the player triggered.
+        if ((actor->actor.params & 0xFF) == 0 && actor->actionFunc == func_8087B284 &&
+            Flags_GetSwitch(gPlayState, (actor->actor.params >> 8) & 0x3F)) {
+            Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_MIR_RAY, actor->actor.world.pos.x,
+                        actor->actor.world.pos.y, actor->actor.world.pos.z, 0, 0, 0, 9, true);
+            actor->actor.draw = NULL;
+            Actor_Kill(&actor->actor);
+            *should = false;
+        }
+    });
+
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_BG_HAKA_ZOU, isConnected, [&](void* refActor, bool* should) {
         BgHakaZou* actor = static_cast<BgHakaZou*>(refActor);
 
@@ -226,7 +319,13 @@ void Anchor::RegisterHooks() {
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_BG_ICE_SHELTER, isConnected, [&](void* refActor, bool* should) {
         BgIceShelter* actor = static_cast<BgIceShelter*>(refActor);
 
-        if (actor->actionFunc == func_8089107C && Flags_GetSwitch(gPlayState, actor->dyna.actor.params & 0x3F)) {
+        // Bit 6 says "this red ice sets no flag": for those instances params & 0x3F is
+        // not a flag index at all but an unrelated field, and reading it melted the ice
+        // as soon as some other actor happened to set that flag. Both vanilla sites
+        // carry the guard (z_bg_ice_shelter.c:202 in Init, :425 when the melt ends);
+        // the replay copied only half of it.
+        if (actor->actionFunc == func_8089107C && !((actor->dyna.actor.params >> 6) & 1) &&
+            Flags_GetSwitch(gPlayState, actor->dyna.actor.params & 0x3F)) {
             func_808911BC(actor);
             Audio_PlayActorSound2(&actor->dyna.actor, NA_SE_EV_ICE_MELT);
         }
@@ -303,6 +402,38 @@ void Anchor::RegisterHooks() {
         }
     });
 
+    // Ganon's Castle barriers -- seven instances, all in ganontika: params 0 is the
+    // tower barrier (room 1), params 1..6 the six trial barriers (rooms 4, 11, 15, 13,
+    // 19, 7). The EVENTCHKINF behind each one replicates already, but the actor only
+    // consults it at Init (z_demo_kekkai.c:126). A trial P1 dispelled therefore stayed
+    // whole for P2, who was still inside the room: the trial barriers run
+    // DemoKekkai_TrialBarrierIdle as their update and submit AT and OC every single
+    // frame with no state test at all (:255-271), so P2 stayed walled in AND took
+    // contact damage from a barrier that no longer exists on P1's screen. Same defect
+    // class and same remedy as the Bg_Gnd_Soulmeiro hook above: re-read each frame and
+    // take the branch Init would have taken.
+    COND_ID_HOOK(ShouldActorUpdate, ACTOR_DEMO_KEKKAI, isConnected, [&](void* refActor, bool* should) {
+        DemoKekkai* actor = static_cast<DemoKekkai*>(refActor);
+
+        // Never interrupt a dispel this client is already playing: the trial barrier
+        // swaps its update to DemoKekkai_TrialBarrierDispel for the sage cutscene
+        // (:265), and the tower barrier latches sfxFlag bit 0 when its own sequence
+        // starts (:172) and sets the EVENTCHKINF itself 100 frames later (:179).
+        // Without this guard the flag would land mid-animation and kill the actor that
+        // is playing it.
+        if ((actor->actor.update == DemoKekkai_TrialBarrierDispel) || (actor->sfxFlag & 1)) {
+            return;
+        }
+
+        if (DemoKekkai_CheckEventFlag(actor->actor.params)) {
+            if (actor->actor.params == KEKKAI_TOWER) {
+                gPlayState->envCtx.unk_BF = 1;
+            }
+            Actor_Kill(&actor->actor);
+            *should = false;
+        }
+    });
+
     COND_ID_HOOK(ShouldActorUpdate, ACTOR_DOOR_SHUTTER, isConnected, [&](void* refActor, bool* should) {
         DoorShutter* actor = static_cast<DoorShutter*>(refActor);
 
@@ -371,7 +502,23 @@ void Anchor::RegisterHooks() {
     COND_VB_SHOULD(VB_HAMMER_TOTEM_BREAK, isConnected, {
         BgHidanDalm* actor = va_arg(args, BgHidanDalm*);
 
-        if (Flags_GetSwitch(gPlayState, actor->switchFlag)) {
+        // switchFlag is (params >> 8) & 0xFF, and the file's own comment records
+        // that the Gerudo Training Ground placements all carry 0xFF -- outside the
+        // 0x00-0x3F switch range. Flags_GetSwitch then evaluates
+        // tempSwch & (1 << (0xFF - 0x20)): a shift of 223, which the hardware masks
+        // to 5 bits and turns into bit 31. Flags_SetSwitch(0xFF) in the vanilla
+        // break path sets that very bit, so the FIRST 0xFF totem broken anywhere in
+        // the scene made every other 0xFF totem read "already broken" and collapse
+        // on its own -- each one dragging the player into a halted-actor cutscene.
+        // Nobody read that bit before this hook existed; the hook created the link.
+        //
+        // Still `*should = true` rather than BgHidanDalm_BreakFromPeer: this hook is
+        // consulted from inside the actor's own update, and BreakFromPeer rewrites
+        // that actor's state, so calling it here would be re-entrant. Behind the
+        // range guard the fallback now only fires for a totem whose flag really did
+        // replicate, which is the case the vanilla branch is right for. FX_EV_TOTEM
+        // normally arrives first and disarms it anyway.
+        if (actor->switchFlag <= 0x3F && Flags_GetSwitch(gPlayState, actor->switchFlag)) {
             *should = true;
         }
     });
@@ -386,6 +533,29 @@ void Anchor::RegisterHooks() {
 
     // #endregion
 
+    // A dying actor can leave particle effects behind that still point at it:
+    // EffectSs entries keep a raw owner Actor* that several updates dereference
+    // with no liveness guard (EffectSsGSpk reads actor->category before its
+    // update != NULL check). Networked kills (EnemySync despawns/handoffs,
+    // Bombf/Carry replicas) free actors at moments vanilla never does, which
+    // turns that latent read-after-free into a real 0xc0000005 in
+    // EffectSs_Update. NULL is handled by every effect type; sweep is ~100 slots.
+    COND_HOOK(OnActorDestroy, isConnected, [](void* actorRef) {
+        // Pending capture (CapturePlayer.cpp) keyed by the grabber's address:
+        // drop it here or a dead Wallmaster leaves a dangling key that the next
+        // actor allocated at the same address would inherit as its own victim.
+        Anchor_ForgetCaptureVictim((Actor*)actorRef);
+
+        if (sEffectSsInfo.table == NULL) {
+            return;
+        }
+        for (s32 i = 0; i < sEffectSsInfo.tableSize; i++) {
+            if (sEffectSsInfo.table[i].actor == (Actor*)actorRef) {
+                sEffectSsInfo.table[i].actor = NULL;
+            }
+        }
+    });
+
     // Each module below registers its NON-per-frame hooks (OnSceneInit, VBs, actor
     // hooks, ...) and does its connect/disconnect Reset. Their per-frame ticks are NOT
     // self-registered on OnGameFrameUpdate — they are invoked in an explicit, documented
@@ -398,6 +568,27 @@ void Anchor::RegisterHooks() {
 
     // Shared enemy/boss HP + synced deaths (see EnemySync.cpp)
     EnemySync::RegisterHooks(isConnected);
+
+    // Mirrored motion for whitelisted DynaPoly platforms/elevators (see DynaSync.cpp)
+    DynaSync::RegisterHooks(isConnected);
+
+    // Bomb Flower throw/pluck replication (see BombfSync.cpp)
+    BombfSync::RegisterHooks(isConnected);
+
+    // Player-placed bomb replication (see BombSync.cpp)
+    BombSync::RegisterHooks(isConnected);
+
+    // Breakable scenery: pots, crates, grass, rocks, beehives, tree bonks (see BreakSync.cpp)
+    BreakSync::RegisterHooks(isConnected);
+
+    // Magic-spell replicas + timed-torch lighting (see FxSync.cpp)
+    FxSync::RegisterHooks(isConnected);
+
+    // Scene-placed carryable props: rocks, pots (see CarrySync.cpp)
+    CarrySync::RegisterHooks(isConnected);
+
+    // Init-only flag readers reacting to a REMOTE flag (see FlagReplay.cpp)
+    FlagReplay::RegisterHooks(isConnected);
 
     // Cosmetic companion fairy per remote-player puppet (see PuppetFairy.cpp)
     RegisterPuppetFairyHooks(isConnected);
@@ -434,10 +625,13 @@ void Anchor::RegisterHooks() {
         ProcessIncomingPacketQueue(); // drain: apply peer lifeState / wallet / warps
         CoopLifeSyncTick();           // SETS myLifeState
         EnemySync::PerFrameTick();    // authority election READS myLifeState
+        DynaSync::PerFrameTick();     // platform streaming READS EnemySync's election
+        FlagReplay::PerFrameTick();   // BG_JYA_BLOCK re-spawn once its flag arrives
         PuppetFairyTick();            // companion-fairy spawn/reap lifecycle
         CoopWarpTick();               // drain queued, gated system warps
         BossEntryTick();              // reconcile boss echo-latch (Fix A)
         CutsceneSyncTick();           // reconcile cutscene pull-replay
         BgmSyncTick();                // spectate restore READS myLifeState
+        TimeSyncTick();               // world-clock broadcast/follow (see Packets/TimeSync.cpp)
     });
 }

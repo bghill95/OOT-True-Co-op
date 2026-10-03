@@ -167,6 +167,11 @@ static DamageTable sDamageTable = {
     /* Unknown 2     */ DMG_ENTRY(0, 0x0),
 };
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void EnIk_Destroy(Actor* thisx, PlayState* play) {
     EnIk* this = (EnIk*)thisx;
 
@@ -789,7 +794,7 @@ void func_80A75FA0(Actor* thisx, PlayState* play) {
                     this->unk_2FE = 0;
                 }
             }
-            func_8002F71C(play, &this->actor, 8.0f, this->actor.yawTowardsPlayer, 8.0f);
+            func_8002F71C(play, &this->actor, 8.0f, Anchor_LocalPlayerYaw(&this->actor), 8.0f);
             player->invincibilityTimer = prevInvincibilityTimer;
         }
     }

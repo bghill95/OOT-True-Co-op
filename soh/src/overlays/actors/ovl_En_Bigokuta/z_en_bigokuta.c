@@ -159,6 +159,11 @@ static InitChainEntry sInitChain[] = {
 // possibly color data
 static s32 sUnused[] = { 0xFFFFFFFF, 0x969696FF };
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void EnBigokuta_Init(Actor* thisx, PlayState* play) {
     EnBigokuta* this = (EnBigokuta*)thisx;
     s32 i;
@@ -729,7 +734,11 @@ void func_809BE798(EnBigokuta* this, PlayState* play) {
         this->cylinder[0].base.atFlags &= ~AT_HIT;
         this->cylinder[1].base.atFlags &= ~AT_HIT;
         this->collider.base.atFlags &= ~AT_HIT;
-        yawDiff = this->actor.yawTowardsPlayer - this->actor.world.rot.y;
+        // Co-op: yawTowardsPlayer is retargeted at the NEAREST player, and
+        // effectRot -- which decides which side the slap throws from -- feeds both
+        // the shove and the Octo's own recoil below. Read the yaw toward the local
+        // Link so the two agree with the shove func_8002F71C actually applies.
+        yawDiff = Anchor_LocalPlayerYaw(&this->actor) - this->actor.world.rot.y;
         if (yawDiff > 0x4000) {
             effectRot = 0x4000;
         } else if (yawDiff > 0) {
@@ -739,7 +748,15 @@ void func_809BE798(EnBigokuta* this, PlayState* play) {
         } else {
             effectRot = -0x6000;
         }
-        func_8002F71C(play, &this->actor, 10.0f, this->actor.world.rot.y + effectRot, 5.0f);
+        // A puppet carries its own AC cylinder, so AT_HIT fires for whichever
+        // player was slapped, while func_8002F71C always shoves the LOCAL Link.
+        // The Octo's own recoil below is its business either way, so only the
+        // shove is gated.
+        if (this->cylinder[0].base.at == &GET_PLAYER(play)->actor ||
+            this->cylinder[1].base.at == &GET_PLAYER(play)->actor ||
+            this->collider.base.at == &GET_PLAYER(play)->actor) {
+            func_8002F71C(play, &this->actor, 10.0f, this->actor.world.rot.y + effectRot, 5.0f);
+        }
         if (this->actionFunc == func_809BDC08) {
             func_809BD4A4(this);
             this->unk_196 = 40;
@@ -752,6 +769,36 @@ void func_809BE798(EnBigokuta* this, PlayState* play) {
     }
 }
 
+// Co-op: is the thing that just hit us behind us?
+//
+// Vanilla asks Actor_IsFacingPlayer, which reads yawTowardsPlayer. EN_BIGOKUTA is one
+// of the four ids in the perception-override exception list, so that field points at
+// the NEAREST player -- not at whoever landed the hit. With two players, a sword blow
+// correctly landed on the back was rejected whenever the partner happened to stand in
+// front, and the miniboss became invulnerable for as long as they stayed there.
+//
+// The boomerang never reaches this test: sDamageTable gives it damageEffect 1, which
+// UpdateDamage routes to the stun two branches earlier. What does reach it is melee --
+// Deku stick, Kokiri sword, spin and jump attacks -- and those are the only non-zero
+// entries left once effects 1 and 0xF are taken out.
+//
+// ac holds the actor that hit us (z_collision_check.c:1757). For every entry that can
+// reach this branch that actor IS the player's own melee collider, so solo the value is
+// identical to yawTowardsPlayer, which z_actor.c recomputes from the same positions
+// earlier in the same Actor_UpdateAll iteration. Falls back to the vanilla test if the
+// hit carries no source.
+static s32 EnBigokuta_IsFacingAttacker(EnBigokuta* this, s16 maxAngle) {
+    Actor* attacker = this->collider.base.ac;
+    s16 yawDiff;
+
+    if (attacker == NULL) {
+        return Actor_IsFacingPlayer(&this->actor, maxAngle);
+    }
+
+    yawDiff = Actor_WorldYawTowardActor(&this->actor, attacker) - this->actor.shape.rot.y;
+    return ABS(yawDiff) < maxAngle;
+}
+
 void EnBigokuta_UpdateDamage(EnBigokuta* this, PlayState* play) {
     if (this->collider.base.acFlags & AC_HIT) {
         this->collider.base.acFlags &= ~AC_HIT;
@@ -762,7 +809,7 @@ void EnBigokuta_UpdateDamage(EnBigokuta* this, PlayState* play) {
                 }
             } else if (this->actor.colChkInfo.damageEffect == 0xF) {
                 func_809BD47C(this);
-            } else if (!Actor_IsFacingPlayer(&this->actor, 0x4000)) {
+            } else if (!EnBigokuta_IsFacingAttacker(this, 0x4000)) {
                 if (Actor_ApplyDamage(&this->actor) == 0) { // Dead
                     Audio_PlayActorSound2(&this->actor, NA_SE_EN_DAIOCTA_DEAD);
                     Enemy_StartFinishingBlow(play, &this->actor);

@@ -12,6 +12,33 @@ extern "C" {
 
 using json = nlohmann::json;
 
+// Reads a flag that may have been put on the wire as either `true` or `1`.
+//
+// nlohmann refuses both number -> bool and bool -> number outright
+// (type_error.302), and every adapter wraps its whole extras block in ONE
+// try/catch -- so a single mismatched field aborts every field that follows it,
+// silently. Morpha shipped exactly that: `x["draw"]` was written from a u8 and
+// read with get<bool>(), which threw on the FIRST frame of the fight and took
+// the tentacle's rot/str/cut/alpha and the core's water level and hitCount down
+// with it. 9697 of those parse errors in one evening's log.
+// Reading every flag through this means the two sides cannot disagree on the
+// encoding, now or after a field changes type.
+inline bool JsonBool(const json& v, bool fallback = false) {
+    if (v.is_boolean()) {
+        return v.get<bool>();
+    }
+    if (v.is_number()) {
+        return v.get<double>() != 0.0;
+    }
+    return fallback;
+}
+
+// Same, keyed: absent means `fallback`, never a throw.
+inline bool JsonBool(const json& x, const char* key, bool fallback = false) {
+    auto it = x.find(key);
+    return (it == x.end()) ? fallback : JsonBool(*it, fallback);
+}
+
 inline void from_json(const json& j, Color_RGB8& color) {
     j.at("r").get_to(color.r);
     j.at("g").get_to(color.g);

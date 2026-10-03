@@ -18,6 +18,9 @@ void DoorAna_Update(Actor* thisx, PlayState* play);
 void DoorAna_Draw(Actor* thisx, PlayState* play);
 
 void DoorAna_WaitClosed(DoorAna* this, PlayState* play);
+
+// Co-op (Anchor/FxSync.cpp): announce that this grotto just opened.
+void FxSync_OnGrottoOpen(Actor* actor);
 void DoorAna_WaitOpen(DoorAna* this, PlayState* play);
 void DoorAna_GrabPlayer(DoorAna* this, PlayState* play);
 
@@ -118,6 +121,11 @@ void DoorAna_WaitClosed(DoorAna* this, PlayState* play) {
     }
     // open the grotto
     if (openGrotto) {
+        // Co-op: the opened state lives only in these params bits -- no switch
+        // flag, nothing saved -- and a peer's bomb cannot reach this collider
+        // (BombSync neuters every replica collider). Announce it, or the peer's
+        // copy of this grotto stays shut for good.
+        FxSync_OnGrottoOpen(&this->actor);
         this->actor.params &= ~0x0300;
         DoorAna_SetupAction(this, DoorAna_WaitOpen);
         Audio_PlaySoundGeneral(NA_SE_SY_CORRECT_CHIME, &gSfxDefaultPos, 4, &gSfxDefaultFreqAndVolScale,

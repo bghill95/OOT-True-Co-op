@@ -7,6 +7,8 @@
 #include "z_bg_mizu_water.h"
 #include "objects/object_mizu_objects/object_mizu_objects.h"
 
+s32 Anchor_IsSessionActive(void);
+
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED)
 
 void BgMizuWater_Init(Actor* thisx, PlayState* play);
@@ -89,6 +91,43 @@ void BgMizuWater_SetWaterBoxesHeight(WaterBox* waterBoxes, s16 height) {
     }
 }
 
+/**
+ * Co-op: write a scene switch flag WITHOUT broadcasting it.
+ *
+ * Flags_SetSwitch / Flags_UnsetSwitch fire GameInteractor_ExecuteOnSceneFlag{Set,Unset}
+ * (z_actor.c:690, :706) whenever the bit actually changes, and HookHandlers.cpp:145-149
+ * turns every one of those into a SET_FLAG / UNSET_FLAG packet. That is right for a
+ * world event and wrong for the housekeeping an *_Init does on a room load: the peer
+ * did not load our room, so our reset overwrites the state HE is standing in.
+ *
+ * Same shape as the fix already in z_bg_mizu_shutter.c:97-109. Kept local to each
+ * overlay for the same reason Anchor_IsSessionActive is re-declared in each of them.
+ */
+static void BgMizuWater_WriteSwitchLocal(PlayState* play, s32 flag, s32 value) {
+    if (!Anchor_IsSessionActive()) {
+        if (value) {
+            Flags_SetSwitch(play, flag);
+        } else {
+            Flags_UnsetSwitch(play, flag);
+        }
+        return;
+    }
+
+    if (flag < 0x20) {
+        if (value) {
+            play->actorCtx.flags.swch |= (1 << flag);
+        } else {
+            play->actorCtx.flags.swch &= ~(1 << flag);
+        }
+    } else {
+        if (value) {
+            play->actorCtx.flags.tempSwch |= (1 << (flag - 0x20));
+        } else {
+            play->actorCtx.flags.tempSwch &= ~(1 << (flag - 0x20));
+        }
+    }
+}
+
 void BgMizuWater_Init(Actor* thisx, PlayState* play) {
     BgMizuWater* this = (BgMizuWater*)thisx;
     f32 initialActorY;
@@ -114,20 +153,45 @@ void BgMizuWater_Init(Actor* thisx, PlayState* play) {
             this->actor.world.pos.y = sWaterLevels[waterLevelActionIndex].yDiff + this->baseY;
             BgMizuWater_SetWaterBoxesHeight(waterBoxes, this->actor.world.pos.y);
             this->actor.params = sWaterLevels[waterLevelActionIndex].switchFlag;
-            Flags_UnsetSwitch(play, WATER_TEMPLE_WATER_F1_FLAG);
-            Flags_UnsetSwitch(play, WATER_TEMPLE_WATER_F2_FLAG);
-            Flags_UnsetSwitch(play, WATER_TEMPLE_WATER_F3_FLAG);
+            // Co-op: this whole block is a NORMALISATION, not a decision. It reads the
+            // three level flags (GetWaterLevelActionIndex, :56-84), clears all three and
+            // re-sets exactly the one it just read -- so locally its net effect is the
+            // identity, except on a virgin save where all three are clear and it picks F1.
+            // Nothing here is news, and every bit of it used to go on the wire.
+            //
+            // Two ways that hurt. (1) Transient: the peer gets UNSET 0x1C, and until the
+            // SET 0x1C lands one frame later he stands with no level flag at all. His
+            // WaitForAction then takes the action-index-0 branch, which since the co-op
+            // ocarina fix calls Message_CloseTextbox (:197-213) -- a peer paused on the
+            // ocarina has his textbox shut by our room load. (2) Stale write: if our copy
+            // of the level is behind his (we were out of the scene, or a packet is in
+            // flight), the pair drags HIS water to OUR level. Absolute-value sync, last
+            // writer wins: the later action is simply lost.
+            //
+            // The unsets cannot be made local on their own. Unset locally + set on the
+            // wire would send the SET unpaired (Flags_SetSwitch broadcasts because we just
+            // cleared the bit ourselves, so previouslyOff is true), leaving the peer with
+            // TWO level flags at once -- and GetWaterLevelActionIndex prefers F1 > F2 > F3,
+            // so his water jumps. Strictly worse than the defect. The block is atomic: all
+            // of it stays local, or none of it does.
+            //
+            // The water level itself keeps replicating -- see SetFlag.cpp:117-126. Only
+            // this room-load echo of it stops. Both clients derive the same value from the
+            // same flags anyway, so nothing is lost by keeping it at home.
+            BgMizuWater_WriteSwitchLocal(play, WATER_TEMPLE_WATER_F1_FLAG, false);
+            BgMizuWater_WriteSwitchLocal(play, WATER_TEMPLE_WATER_F2_FLAG, false);
+            BgMizuWater_WriteSwitchLocal(play, WATER_TEMPLE_WATER_F3_FLAG, false);
 
             switch (this->actor.params) {
                 case 0x1E:
-                    Flags_SetSwitch(play, WATER_TEMPLE_WATER_F3_FLAG);
+                    BgMizuWater_WriteSwitchLocal(play, WATER_TEMPLE_WATER_F3_FLAG, true);
                     break;
                 case 0x1D:
-                    Flags_SetSwitch(play, WATER_TEMPLE_WATER_F2_FLAG);
+                    BgMizuWater_WriteSwitchLocal(play, WATER_TEMPLE_WATER_F2_FLAG, true);
                     break;
                 case 0x1C:
                 default:
-                    Flags_SetSwitch(play, WATER_TEMPLE_WATER_F1_FLAG);
+                    BgMizuWater_WriteSwitchLocal(play, WATER_TEMPLE_WATER_F1_FLAG, true);
                     break;
             }
             this->targetY = this->actor.world.pos.y;
@@ -173,10 +237,42 @@ void BgMizuWater_WaitForAction(BgMizuWater* this, PlayState* play) {
             waterLevelActionIndex = BgMizuWater_GetWaterLevelActionIndex(this->actor.params, play);
             if (waterLevelActionIndex != 0) {
                 if (prevSwitchFlag != sWaterLevels[waterLevelActionIndex].switchFlag) {
-                    OnePointCutscene_Init(play, 3120, -100 - waterLevelActionIndex, NULL, MAIN_CAM);
+                    // Co-op: the three water level flags replicate now, so this branch
+                    // runs on BOTH clients. Cutscene 3120 is not just a camera move --
+                    // z_onepointdemo.c does Player_SetCsActionWithHaltedActors(NULL, 8)
+                    // with a 100-frame timer, so the peer would be FROZEN for a hundred
+                    // frames, wherever they stand in the temple, every time the other
+                    // one plays the song.
+                    //
+                    // A distance test is the wrong tool here (the plane spans the whole
+                    // dungeon). MSGMODE_PAUSED is exact instead: En_Okarina_Tag sets it
+                    // on the client that played, and nothing clears it until the
+                    // Message_CloseTextbox at the end of ChangeWaterLevel -- so it holds
+                    // for precisely the client this cutscene belongs to, and for the
+                    // whole window. Offline the guard is skipped and vanilla is intact.
+                    if (!Anchor_IsSessionActive() || play->msgCtx.msgMode == MSGMODE_PAUSED) {
+                        OnePointCutscene_Init(play, 3120, -100 - waterLevelActionIndex, NULL, MAIN_CAM);
+                    }
                     this->actor.params = sWaterLevels[waterLevelActionIndex].switchFlag;
                     this->targetY = sWaterLevels[waterLevelActionIndex].yDiff + this->baseY;
                 }
+            } else if (Anchor_IsSessionActive() && (play->msgCtx.msgMode == MSGMODE_PAUSED)) {
+                // Co-op: release the ocarina pause when the song turned out to change
+                // nothing. En_Okarina_Tag sets MSGMODE_PAUSED unconditionally on a
+                // completed song in this scene (z_en_okarina_tag.c:157), and the ONLY
+                // thing that lifts it is the Message_CloseTextbox at the end of
+                // ChangeWaterLevel -- which never runs when the water is already at the
+                // level being asked for, because GetWaterLevelActionIndex returns 0 for
+                // the flag we already hold.
+                //
+                // Vanilla can reach that too, by playing the song at the socket of the
+                // level already active, but a solo player has no reason to. Replicating
+                // the flags makes it ordinary: the moment one player sets a level, the
+                // other playing at that same socket gets a song that does nothing, and
+                // the message system stays inert until some other textbox opens.
+                // Guarded on the session, so single-player keeps its exact vanilla
+                // behaviour, quirk included.
+                Message_CloseTextbox(play);
             }
             if ((prevSwitchFlag != this->actor.params) && (prevSwitchFlag != 0)) {
                 Flags_UnsetSwitch(play, prevSwitchFlag);
@@ -236,7 +332,15 @@ void BgMizuWater_ChangeWaterLevel(BgMizuWater* this, PlayState* play) {
             if (Math_StepToF(&this->actor.world.pos.y, this->targetY, 5.0f)) {
                 play->roomCtx.unk_74[0] = 0;
                 this->actionFunc = BgMizuWater_WaitForAction;
-                Message_CloseTextbox(play);
+                // Co-op: this closes the textbox En_Okarina_Tag left paused on the
+                // client that played the song. Now that the level change runs on both,
+                // the peer would have whatever textbox they happen to have open torn
+                // down instead. MSGMODE_PAUSED is precisely the state the ocarina tag
+                // set, so it identifies the right client; offline the guard is skipped
+                // entirely and vanilla is untouched.
+                if (!Anchor_IsSessionActive() || play->msgCtx.msgMode == MSGMODE_PAUSED) {
+                    Message_CloseTextbox(play);
+                }
             }
             BgMizuWater_SetWaterBoxesHeight(play->colCtx.colHeader->waterBoxes, this->actor.world.pos.y);
             break;

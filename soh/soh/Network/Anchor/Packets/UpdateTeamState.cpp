@@ -13,6 +13,9 @@ extern "C" {
 extern PlayState* gPlayState;
 }
 
+// Defined in Packets/SetFlag.cpp, next to the other half of the Gold Skulltula path.
+void Anchor_RecomputeGsTokensFromFlags();
+
 /**
  * UPDATE_TEAM_STATE
  *
@@ -125,7 +128,19 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
         return;
     }
 
-    isHandlingUpdateTeamState = true;
+    // Scoped: an exception anywhere below (a mistyped field from a peer on
+    // another build) used to leave this latched true, and HookHandlers /
+    // RupeeChange read it as "a team-state apply is in progress" forever —
+    // every local rupee and flag broadcast silently stopped for the session.
+    struct HandlingGuard {
+        bool& flag;
+        explicit HandlingGuard(bool& f) : flag(f) {
+            flag = true;
+        }
+        ~HandlingGuard() {
+            flag = false;
+        }
+    } handlingGuard(isHandlingUpdateTeamState);
     // This can happen in between file select and the game starting, so we cant use this check, but we need to ensure we
     // be careful to wrap PlayState usage in this check
     // if (!IsSaveLoaded()) {
@@ -145,13 +160,11 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
         gSaveContext.swordHealth = loadedData.swordHealth;
         gSaveContext.ship.quest = loadedData.ship.quest;
 
-        for (int i = 0; i < 124; i++) {
-            if (i == SCENE_WATER_TEMPLE) {
-                // Keep water temple water level flags
-                u32 mask = (1 << 0x1C) | (1 << 0x1D) | (1 << 0x1E);
-                loadedData.sceneFlags[i].swch =
-                    (loadedData.sceneFlags[i].swch & ~mask) | (gSaveContext.sceneFlags[i].swch & mask);
-            }
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.sceneFlags); i++) {
+            // The water temple water level used to be preserved from the local save
+            // here. It is replicated now (see SetFlag.cpp), so the team state must be
+            // allowed to carry it like any other switch flag -- otherwise a resync
+            // silently pushes each client back to its own level.
 
             if (i == SCENE_FOREST_TEMPLE) {
                 // Keep forest temple elevator flag
@@ -169,25 +182,39 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
             }
         }
 
-        for (int i = 0; i < 14; i++) {
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.eventChkInf); i++) {
             gSaveContext.eventChkInf[i] = loadedData.eventChkInf[i];
         }
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.itemGetInf); i++) {
             gSaveContext.itemGetInf[i] = loadedData.itemGetInf[i];
         }
 
         // Skip last row of infTable, don't want to sync swordless flag
-        for (int i = 0; i < 29; i++) {
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.infTable) - 1; i++) {
             gSaveContext.infTable[i] = loadedData.infTable[i];
         }
 
-        for (int i = 0; i < ceil((RAND_INF_MAX + 15) / 16); i++) {
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.ship.randomizerInf); i++) {
             gSaveContext.ship.randomizerInf[i] = loadedData.ship.randomizerInf[i];
         }
 
-        for (int i = 0; i < 6; i++) {
-            gSaveContext.gsFlags[i] = loadedData.gsFlags[i];
+        // Gold Skulltulas MERGE, they do not overwrite.
+        //
+        // This packet is sent on every save (OnSaveFile) and on every REQUEST_TEAM_STATE,
+        // so it lands mid-session, not just at connect. Assigning made the sender's set
+        // the truth: a token the RECEIVER had picked up, and whose SET_FLAG was still in
+        // flight (or landed after the sender built this payload), was erased -- so the
+        // player watched their total go down. Same shape the dungeon items were fixed
+        // for, and the same fix: OR, which commutes, so two simultaneous pickups both
+        // survive whichever order they arrive in.
+        //
+        // Safe because the GS bits are purely cumulative. Outside of file creation
+        // (SaveManager.cpp:618) and the debug save editor, nothing in the game ever
+        // clears one -- RawAction::UnsetFlag has no FLAG_GS_TOKEN case at all, so no
+        // network path can retract one either. There is no "unset" for the OR to swallow.
+        for (int i = 0; i < ARRAY_COUNT(gSaveContext.gsFlags); i++) {
+            gSaveContext.gsFlags[i] |= loadedData.gsFlags[i];
         }
 
         gSaveContext.ship.stats.fileCreatedAt = loadedData.ship.stats.fileCreatedAt;
@@ -216,7 +243,26 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
             }
         }
 
+        // Randomizer only: keep the count from being pulled DOWN by the assignment
+        // below. There the token still travels on the item channel, so a GIVE_ITEM in
+        // flight while the peer saves would be undone by the sender's older total, and
+        // the merged bit means that Skulltula never comes back. Highest wins is the
+        // best available rule when the count cannot be derived -- and it cannot be here,
+        // because RSK_STARTING_SKULLTULA_TOKEN grants tokens with no bits behind them.
+        // Vanilla does not take this path: it derives instead, just below.
+        if (IS_RANDO && gSaveContext.inventory.gsTokens > loadedData.inventory.gsTokens) {
+            loadedData.inventory.gsTokens = gSaveContext.inventory.gsTokens;
+        }
+
         gSaveContext.inventory = loadedData.inventory;
+
+        // The Gold Skulltula count belongs to the bits merged above, not to whichever
+        // inventory just won. It has to run AFTER the wholesale assignment, which would
+        // otherwise pull the count back to the sender's while our flags kept the union.
+        // Derived rather than merged: see Anchor_RecomputeGsTokensFromFlags (SetFlag.cpp)
+        // for why no merge rule on the count itself can be made to hold. No-op in rando,
+        // which is why the guarded max() above exists.
+        Anchor_RecomputeGsTokensFromFlags();
 
         // Shared wallet — initial reconciliation ("the running session's wallet wins").
         // Applied AFTER inventory so CUR_CAPACITY(UPG_WALLET) reflects the just-synced
@@ -240,7 +286,7 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
                 OTRGlobals::Instance->gRandoContext->GetItemLocation(i)->SetCheckStatus(
                     payload["state"]["rando"]["itemLocations"][i][0].get<RandomizerCheckStatus>());
                 OTRGlobals::Instance->gRandoContext->GetItemLocation(i)->SetIsSkipped(
-                    payload["state"]["rando"]["itemLocations"][i][0].get<u8>());
+                    payload["state"]["rando"]["itemLocations"][i][1].get<u8>());
 
                 // if (payload["state"]["rando"]["itemLocations"][i].contains("fakeRgID")) {
                 //     randoContext->overrides.emplace(static_cast<RandomizerCheck>(i),
@@ -305,8 +351,7 @@ void Anchor::HandlePacket_UpdateTeamState(nlohmann::json payload) {
     if (payload.contains("queue")) {
         for (auto& item : payload["queue"]) {
             nlohmann::json itemPayload = nlohmann::json::parse(item.get<std::string>());
-            incomingPacketQueue.push(itemPayload);
+            EnqueuePacket(std::move(itemPayload));
         }
     }
-    isHandlingUpdateTeamState = false;
 }

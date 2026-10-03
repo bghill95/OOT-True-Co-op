@@ -23,6 +23,8 @@ typedef enum {
     /* 4 */ DOOR_KILLER_RUBBLE_PIECE_4
 } DoorKillerBehaviour;
 
+void FxSync_OnFalseDoorBroken(Actor* door);
+
 void DoorKiller_Init(Actor* thisx, PlayState* play);
 void DoorKiller_Destroy(Actor* thisx, PlayState* play);
 void DoorKiller_Update(Actor* thisx, PlayState* play);
@@ -270,6 +272,12 @@ void DoorKiller_Die(DoorKiller* this, PlayState* play) {
     // Can set a switch flag on death based on params
     if (switchFlag != 0x3F) {
         Flags_SetSwitch(play, switchFlag);
+    } else {
+        // Co-op: 0x3F means "no flag", which is what every Gerudo Training
+        // Ground placement carries — so nothing replicable leaves here and the
+        // false door one player smashed stays standing on the other screen,
+        // hiding the passage behind it. Announce it directly instead.
+        FxSync_OnFalseDoorBroken(&this->actor);
     }
     Actor_Kill(&this->actor);
     GameInteractor_ExecuteOnEnemyDefeat(&this->actor);

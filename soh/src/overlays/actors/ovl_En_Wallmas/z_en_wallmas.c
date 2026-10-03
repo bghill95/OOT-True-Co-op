@@ -42,6 +42,12 @@ void EnWallmas_WaitForSwitchFlag(EnWallmas* this, PlayState* play);
 void EnWallmas_Stun(EnWallmas* this, PlayState* play);
 void EnWallmas_Walk(EnWallmas* this, PlayState* play);
 
+Player* Anchor_NearestPlayer(Actor* from);
+s32 Anchor_NoteCaptureVictim(Actor* enemy, Actor* victim);
+s32 Anchor_HasCaptureVictim(Actor* enemy);
+s32 Anchor_CaptureVictimIsRemote(Actor* enemy);
+s32 Anchor_DeliverCapture(Actor* enemy, u8 mode, s16 entrance);
+
 const ActorInit En_Wallmas_InitVars = {
     ACTOR_EN_WALLMAS,
     ACTORCAT_ENEMY,
@@ -264,6 +270,8 @@ void EnWallmas_SetupDie(EnWallmas* this, PlayState* play) {
 }
 
 void EnWallmas_SetupTakePlayer(EnWallmas* this, PlayState* play) {
+    Player* victim = Anchor_NearestPlayer(&this->actor);
+
     Animation_MorphToPlayOnce(&this->skelAnime, &gWallmasterHoverAnim, -5.0f);
     this->timer = -0x1E;
     this->actionFunc = EnWallmas_TakePlayer;
@@ -271,8 +279,24 @@ void EnWallmas_SetupTakePlayer(EnWallmas* this, PlayState* play) {
     this->actor.velocity.y = 0.0f;
 
     this->yTarget = this->actor.yDistToPlayer;
-    func_8002DF38(play, &this->actor, 0x25);
-    OnePointCutscene_Init(play, 9500, 9999, &this->actor, MAIN_CAM);
+
+    // Co-op: lock the victim HERE, at the moment the hand closes, and only here.
+    // TakePlayer runs for some thirty frames; asking "who is nearest" again on
+    // each of them would drift, because a victim on the other machine is not
+    // held by us and keeps running — the local Link would eventually become the
+    // nearest and inherit the capture. Same shape as EnGeldB, which notes its
+    // victim once from the blade's AT_HIT.
+    Anchor_NoteCaptureVictim(&this->actor, &victim->actor);
+
+    // The grab pose and the camera lock belong to the player actually caught.
+    // The drop now aims at whoever is nearest, so on the authority these used to
+    // freeze the OTHER player into a "carried away" cutscene, staring at a hand
+    // that had seized someone else — and nothing local ever ends it, since the
+    // respawn that normally would leaves by packet.
+    if (!Anchor_CaptureVictimIsRemote(&this->actor)) {
+        func_8002DF38(play, &this->actor, 0x25);
+        OnePointCutscene_Init(play, 9500, 9999, &this->actor, MAIN_CAM);
+    }
 }
 
 void EnWallmas_ProximityOrSwitchInit(EnWallmas* this) {
@@ -302,7 +326,16 @@ void EnWallmas_SetupStun(EnWallmas* this) {
 }
 
 void EnWallmas_WaitToDrop(EnWallmas* this, PlayState* play) {
-    Player* player = GET_PLAYER(play);
+    // Co-op: the shadow tracks its victim by reading world.pos straight off the
+    // player, and EnemySync's perception override only rewrites the distance and
+    // yaw fields — not world.pos. The hand therefore always lined itself up over
+    // the AUTHORITY's Link, so the other player could stand under a Wallmaster
+    // indefinitely while his partner got grabbed across the room.
+    //
+    // Once the hand closes, the grab itself IS delivered across the wire (see
+    // the CAPTURE_PLAYER handoff at the end of TakePlayer). Only the carried-in-
+    // the-air animation stays local to the machine simulating the enemy.
+    Player* player = Anchor_NearestPlayer(&this->actor);
     Vec3f* playerPos = &player->actor.world.pos;
 
     this->actor.world.pos = *playerPos;
@@ -453,7 +486,19 @@ void EnWallmas_Die(EnWallmas* this, PlayState* play) {
 }
 
 void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
-    Player* player = GET_PLAYER(play);
+    // The victim was locked in SetupTakePlayer, at the moment the hand closed.
+    // Do NOT recompute it here: this function runs for some thirty frames, and a
+    // victim on the other machine is not held by us, so they keep running — ask
+    // again each frame and the local Link eventually becomes the nearest and
+    // inherits a capture that was never his.
+    //
+    // "Ours" requires that we actually SAW the grab, not merely that no remote
+    // victim is on file. actionFunc is streamed, so a client can inherit
+    // authority in the middle of a carry and resume straight into this function
+    // having never run SetupTakePlayer; reading its empty note as "the victim is
+    // mine" would make it haul its own Link away.
+    s32 victimIsLocal = Anchor_HasCaptureVictim(&this->actor) && !Anchor_CaptureVictimIsRemote(&this->actor);
+    Player* player = victimIsLocal ? GET_PLAYER(play) : Anchor_NearestPlayer(&this->actor);
 
     if (Animation_OnFrame(&this->skelAnime, 1.0f) != 0) {
         if (!LINK_IS_ADULT) {
@@ -465,8 +510,10 @@ void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
         Audio_PlayActorSound2(&this->actor, NA_SE_EN_FALL_CATCH);
     }
     if (SkelAnime_Update(&this->skelAnime) != 0) {
-        player->actor.world.pos.x = this->actor.world.pos.x;
-        player->actor.world.pos.z = this->actor.world.pos.z;
+        if (victimIsLocal) {
+            player->actor.world.pos.x = this->actor.world.pos.x;
+            player->actor.world.pos.z = this->actor.world.pos.z;
+        }
 
         if (this->timer < 0) {
             this->actor.world.pos.y = this->actor.world.pos.y + 2.0f;
@@ -474,10 +521,8 @@ void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
             this->actor.world.pos.y = this->actor.world.pos.y + 10.0f;
         }
 
-        if (!LINK_IS_ADULT) {
-            player->actor.world.pos.y = this->actor.world.pos.y - 30.0f;
-        } else {
-            player->actor.world.pos.y = this->actor.world.pos.y - 50.0f;
+        if (victimIsLocal) {
+            player->actor.world.pos.y = this->actor.world.pos.y - (!LINK_IS_ADULT ? 30.0f : 50.0f);
         }
 
         if (this->timer == -0x1E) {
@@ -500,8 +545,29 @@ void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
     Math_StepToF(&this->actor.world.pos.z, player->actor.world.pos.z, 3.0f);
 
     if (this->timer == 0x1E) {
-        Sfx_PlaySfxCentered(NA_SE_OC_ABYSS);
-        Play_TriggerRespawn(play);
+        // mode 0 = respawn at the last entrance, which is what vanilla does here.
+        // Anchor_DeliverCapture sends the order to the other player and returns
+        // 1, in which case we must not take the trip ourselves.
+        Anchor_DeliverCapture(&this->actor, 0, 0);
+
+        if (victimIsLocal) {
+            Sfx_PlaySfxCentered(NA_SE_OC_ABYSS);
+            Play_TriggerRespawn(play);
+        } else {
+            // Anything else, we must let this hand GO — and letting go is the
+            // DEFAULT, not the "packet sent" case. Vanilla has exactly one way
+            // out of TakePlayer, the respawn, which reloads the scene and takes
+            // the actor with it. Leave without another exit and the Wallmaster
+            // stays in TakePlayer forever, climbing ten units a frame:
+            // EnWallmas_Update returns early in this state, so it is never
+            // killed and never leaves ACTORCAT_ENEMY, and Flags_SetTempClear
+            // needs that list empty — every door, chest and room timer gated on
+            // clearing the room would stay shut on this client, in every dungeon
+            // that has a Wallmaster. Keying the exit on the packet alone left two
+            // ways to fall through it: the session dropping mid-grab, and
+            // inheriting authority from a client that did the grabbing.
+            EnWallmas_SetupReturnToCeiling(this);
+        }
     }
 }
 

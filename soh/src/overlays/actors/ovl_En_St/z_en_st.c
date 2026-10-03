@@ -131,6 +131,11 @@ static AnimationInfo sAnimationInfo[] = {
     { &object_st_Anim_005B98, 2.0f, 0.0f, -1.0f, ANIMMODE_LOOP_INTERP, -8.0f },
 };
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void EnSt_SetupAction(EnSt* this, EnStActionFunc actionFunc) {
     this->actionFunc = actionFunc;
 }
@@ -403,7 +408,7 @@ s32 EnSt_CheckHitLink(EnSt* this, PlayState* play) {
     this->gaveDamageSpinTimer = 30;
     play->damagePlayer(play, -8);
     Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
-    func_8002F71C(play, &this->actor, 4.0f, this->actor.yawTowardsPlayer, 6.0f);
+    func_8002F71C(play, &this->actor, 4.0f, Anchor_LocalPlayerYaw(&this->actor), 6.0f);
     return true;
 }
 

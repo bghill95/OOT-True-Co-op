@@ -33,8 +33,7 @@ void Anchor::SendPacket_RupeeChange(s16 delta) {
     // IsSaveLoaded guarantees gPlayState != NULL. isProcessingIncomingPacket blocks
     // the echo from a remote-applied delta; isHandlingUpdateTeamState blocks the
     // initial-reconciliation write (which is a direct assignment anyway).
-    if (!IsSaveLoaded() || isProcessingIncomingPacket || isHandlingUpdateTeamState ||
-        !roomState.syncItemsAndFlags) {
+    if (!IsSaveLoaded() || isProcessingIncomingPacket || isHandlingUpdateTeamState || !roomState.syncItemsAndFlags) {
         return;
     }
 

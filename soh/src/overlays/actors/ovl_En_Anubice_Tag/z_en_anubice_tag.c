@@ -59,6 +59,9 @@ void EnAnubiceTag_SpawnAnubis(EnAnubiceTag* this, PlayState* play) {
     }
 }
 
+s32 Anchor_IsMirroredActor(Actor* actor);
+Player* Anchor_NearestPlayer(Actor* from);
+
 void EnAnubiceTag_ManageAnubis(EnAnubiceTag* this, PlayState* play) {
     EnAnubice* anubis;
     Vec3f offset;
@@ -66,6 +69,15 @@ void EnAnubiceTag_ManageAnubis(EnAnubiceTag* this, PlayState* play) {
     if (this->anubis != NULL) {
         anubis = this->anubis;
         if (anubis->actor.update == NULL) {
+            return;
+        }
+        // This tag is ACTORCAT_SWITCH, so it runs on BOTH clients — but the
+        // Anubis it steers is a tracked enemy that only the authority simulates.
+        // On a mirror, everything below writes world.pos and the Anubis's own
+        // isMirroringLink / isLinkOutOfRange straight over the streamed state,
+        // once per frame, using the LOCAL player's distance and yaw. Let the
+        // authority's tag do the steering and just watch here.
+        if (Anchor_IsMirroredActor(&anubis->actor)) {
             return;
         }
     } else {
@@ -76,6 +88,23 @@ void EnAnubiceTag_ManageAnubis(EnAnubiceTag* this, PlayState* play) {
     if (anubis->deathTimer != 0) {
         Actor_Kill(&this->actor);
         return;
+    }
+
+    // Co-op: this tag is what wakes the Anubis and makes it shadow a player, and
+    // it decides on its OWN xzDistToPlayer / yawTowardsPlayer — the distance to
+    // the LOCAL Link. Being ACTORCAT_SWITCH it is not a tracked actor, so
+    // EnemySync's perception override never rewrites those fields for it, and
+    // the guard above leaves only the authority's tag in charge. The result was
+    // that the other player could stand in front of an Anubis and it would never
+    // emerge, whatever they did — aiming the fireball at the nearest player (see
+    // En_Anubice) fixed where it shoots, not whether it wakes at all.
+    {
+        Player* nearest = Anchor_NearestPlayer(&this->actor);
+        f32 dx = nearest->actor.world.pos.x - this->actor.world.pos.x;
+        f32 dz = nearest->actor.world.pos.z - this->actor.world.pos.z;
+
+        this->actor.xzDistToPlayer = sqrtf(SQ(dx) + SQ(dz));
+        this->actor.yawTowardsPlayer = Math_FAtan2F(dx, dz) * (0x8000 / M_PI);
     }
 
     if (this->actor.xzDistToPlayer < (200.0f + this->triggerRange)) {

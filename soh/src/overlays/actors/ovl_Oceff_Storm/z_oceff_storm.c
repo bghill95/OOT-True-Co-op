@@ -11,6 +11,9 @@
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_DRAW_CULLING_DISABLED | ACTOR_FLAG_UPDATE_DURING_OCARINA)
 
 void OceffStorm_Init(Actor* thisx, PlayState* play);
+
+// Co-op (Anchor/FxSync.cpp): replicate the Song of Storms manager.
+void FxSync_OnStormSong(Actor* okarinaEffect);
 void OceffStorm_Destroy(Actor* thisx, PlayState* play);
 void OceffStorm_Update(Actor* thisx, PlayState* play);
 void OceffStorm_Draw(Actor* thisx, PlayState* play);
@@ -53,8 +56,17 @@ void OceffStorm_Init(Actor* thisx, PlayState* play) {
         OceffStorm_SetupAction(this, OceffStorm_UnkAction);
         this->actor.draw = OceffStorm_Draw2;
     } else {
-        Actor_Spawn(&play->actorCtx, play, ACTOR_EN_OKARINA_EFFECT, this->actor.world.pos.x,
-                    this->actor.world.pos.y - 30.0f, this->actor.world.pos.z, 0, 0, 0, 1, true);
+        Actor* storm = Actor_Spawn(&play->actorCtx, play, ACTOR_EN_OKARINA_EFFECT, this->actor.world.pos.x,
+                                   this->actor.world.pos.y - 30.0f, this->actor.world.pos.z, 0, 0, 0, 1, true);
+
+        // Co-op: the storm manager owns env flag 5, and the peer has no copy of it
+        // -- so the windmill, the oasis, the storm grottos and the bean sprout all
+        // stayed inert on their side. Announce it; only this branch reaches here,
+        // and a peer applies it by spawning the manager directly, never Oceff_Storm,
+        // so there is no echo.
+        if (storm != NULL) {
+            FxSync_OnStormSong(storm);
+        }
     }
 }
 

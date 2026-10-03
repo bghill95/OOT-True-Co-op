@@ -354,10 +354,36 @@ void EnDaiku_TentIdle(EnDaiku* this, PlayState* play) {
 /**
  * The carpenter is jailed in a Gerudo fortress cell, talking to him starts a fight against a gerudo guard
  */
+s32 Anchor_IsSessionActive(void);
+
+/**
+ * Has THIS carpenter already been freed? Same test Init uses to decide whether
+ * to keep him at all — see EnDaiku_Init.
+ */
+static s32 EnDaiku_IsFreed(EnDaiku* this) {
+    s32 which = this->actor.params & 3;
+
+    return (which == 0 && GET_EVENTCHKINF(EVENTCHKINF_CARPENTERS_FREE(0))) ||
+           (which == 1 && GET_EVENTCHKINF(EVENTCHKINF_CARPENTERS_FREE(1))) ||
+           (which == 2 && GET_EVENTCHKINF(EVENTCHKINF_CARPENTERS_FREE(2))) ||
+           (which == 3 && GET_EVENTCHKINF(EVENTCHKINF_CARPENTERS_FREE(3)));
+}
+
 void EnDaiku_Jailed(EnDaiku* this, PlayState* play) {
     EnGeldB* gerudo;
     s32 temp_t9;
     s32 temp_v1;
+
+    // Co-op: Init reads the freed flag once, so when the OTHER player talks him
+    // out, our copy stays sitting in his cell — still interactible, and talking
+    // to him again replays the whole escape, fanfare and sub-camera included,
+    // wherever we happen to be. The progress flag itself already replicates;
+    // catch up with it here and leave the way Init would have. We do not play
+    // the escape: that belongs to the player who actually freed him.
+    if (Anchor_IsSessionActive() && EnDaiku_IsFreed(this) && play->sceneNum == SCENE_THIEVES_HIDEOUT) {
+        Actor_Kill(&this->actor);
+        return;
+    }
 
     if (!(this->stateFlags & ENDAIKU_STATEFLAG_GERUDOFIGHTING)) {
         EnDaiku_UpdateText(this, play);

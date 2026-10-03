@@ -78,6 +78,11 @@ static ColliderJntSphInit sJntSphInit = {
     sJntSphElementInit,
 };
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void EnBa_SetupAction(EnBa* this, EnBaActionFunc actionFunc) {
     this->actionFunc = actionFunc;
 }
@@ -307,7 +312,7 @@ void EnBa_SwingAtPlayer(EnBa* this, PlayState* play) {
         if (this->collider.base.atFlags & 2) {
             this->collider.base.atFlags &= ~2;
             if (this->collider.base.at == &player->actor) {
-                func_8002F71C(play, &this->actor, 8.0f, this->actor.yawTowardsPlayer, 8.0f);
+                func_8002F71C(play, &this->actor, 8.0f, Anchor_LocalPlayerYaw(&this->actor), 8.0f);
             }
         }
         CollisionCheck_SetAT(play, &play->colChkCtx, &this->collider.base);

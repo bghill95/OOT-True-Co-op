@@ -5,6 +5,13 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ResourceManagerHelpers.h"
 
+// Co-op (Anchor/DummyPlayer.cpp): the player nearest this actor, which is the
+// local Link when playing alone.
+Player* Anchor_NearestPlayer(Actor* from);
+// Same, but nearest to a POINT -- use it when the distance tested is not measured
+// from this actor.
+Player* Anchor_NearestPlayerToPos(Vec3f* from);
+
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
 typedef enum {
@@ -564,7 +571,19 @@ void EnDodongo_Walk(EnDodongo* this, PlayState* play) {
         }
     }
 
-    if (Math_Vec3f_DistXZ(&this->actor.home.pos, &player->actor.world.pos) < 400.0f) {
+    // Co-op: the inner tests below (xzDistToPlayer, yawTowardsPlayer) are already
+    // redirected to the nearest player, but this outer gate was not -- it measured
+    // the authority's own Link. A Dodongo whose home sits more than 400 units from
+    // that one never woke, never turned and never breathed, however close the other
+    // player stood. Offline Anchor_NearestPlayer is the local Link, so unchanged.
+    //
+    // The POINT form, because the distance below is measured from home.pos, not
+    // from the Dodongo. Selecting on the actor and testing against home is two
+    // criteria: a Dodongo that has walked away from its home can pick the player
+    // nearest ITSELF and then measure that player against a point it is no longer
+    // standing on. Same defect cost the Master Sword pickup a bench session.
+    if (Math_Vec3f_DistXZ(&this->actor.home.pos, &Anchor_NearestPlayerToPos(&this->actor.home.pos)->actor.world.pos) <
+        400.0f) {
         Math_SmoothStepToS(&this->actor.world.rot.y, this->actor.yawTowardsPlayer, 1, 0x1F4, 0);
         this->actor.flags |= ACTOR_FLAG_ATTENTION_ENABLED;
         if ((this->actor.xzDistToPlayer < 100.0f) && (yawDiff < 0x1388) && (this->actor.yDistToPlayer < 60.0f)) {

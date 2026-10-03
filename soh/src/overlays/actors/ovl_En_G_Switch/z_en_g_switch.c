@@ -41,6 +41,12 @@ void EnGSwitch_DrawEffects(EnGSwitch* this, PlayState* play);
 
 static s16 sCollectedCount = 0;
 
+// Co-op accessor: the room's silver-rupee tally is a file static and each
+// client only counts its own pickups; the peer's pickups are replayed into it.
+s16* EnGSwitch_CoopCollectedCount(void) {
+    return &sCollectedCount;
+}
+
 static ColliderCylinderInit sCylinderInit = {
     {
         COLTYPE_NONE,

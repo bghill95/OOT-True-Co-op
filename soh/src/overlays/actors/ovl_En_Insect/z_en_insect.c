@@ -785,7 +785,12 @@ void EnInsect_Update(Actor* thisx, PlayState* play) {
                 CollisionCheck_SetOC(play, &play->colChkCtx, &this->collider.base);
             }
 
-            if (!(this->unk_314 & 8) && D_80A7DEB4 < 4 && EnInsect_InBottleRange(this, play) &&
+            // Co-op: a bug released from a PEER's bottle is replicated here for
+            // show only — never re-bottleable (see z_en_fish.c).
+            s32 FxSync_IsBottleDropReplica(Actor * actor);
+
+            if (!(this->unk_314 & 8) && D_80A7DEB4 < 4 && !FxSync_IsBottleDropReplica(&this->actor) &&
+                EnInsect_InBottleRange(this, play) &&
                 // GI_MAX in this case allows the player to catch the actor in a bottle
                 Actor_OfferGetItem(&this->actor, play, GI_MAX, 60.0f, 30.0f)) {
                 D_80A7DEB4++;

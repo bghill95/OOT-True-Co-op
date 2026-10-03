@@ -212,6 +212,16 @@ void EnFdFire_Update(Actor* thisx, PlayState* play) {
     EnFdFire* this = (EnFdFire*)thisx;
     s32 pad;
 
+    // Co-op: vanilla can dereference parent freely -- the Flare Dancer spawns these
+    // and wires the pointer at once. A replica built by the enemy sync arrives from
+    // Actor_Spawn alone, so parent is NULL whenever the spawn key failed to resolve
+    // its owner; and a mirror does run this update again after the stream goes
+    // stale. Same shape as the En_Bb flame-trail crash. Nothing to follow: die.
+    if (this->actor.parent == NULL) {
+        Actor_Kill(&this->actor);
+        return;
+    }
+
     if (this->actionFunc != EnFdFire_Disappear) {
         if ((this->actor.parent->update == NULL) || EnFdFire_CheckCollider(this, play)) {
             this->actionFunc = EnFdFire_Disappear;

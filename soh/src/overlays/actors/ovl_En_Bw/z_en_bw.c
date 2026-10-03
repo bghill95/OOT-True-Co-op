@@ -10,6 +10,21 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ResourceManagerHelpers.h"
 
+// Co-op (Anchor/FxSync.cpp): where the last hammer shockwave landed, ours or the
+// peer's, or NULL when none is on record. actorCtx.unk_02 only says that SOMEONE
+// struck, and xzDistToPlayer is redirected to the nearest player -- so the vanilla
+// pairing fires for a strike made across the room and misses one made right here.
+Vec3f* Anchor_HammerShockwavePos(void);
+
+static f32 EnBw_HammerDistXZ(EnBw* this) {
+    Vec3f* hammerPos = Anchor_HammerShockwavePos();
+
+    if (hammerPos == NULL) {
+        return this->actor.xzDistToPlayer;
+    }
+    return Math_Vec3f_DistXZ(&this->actor.world.pos, hammerPos);
+}
+
 #define FLAGS (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED)
 
 void EnBw_Init(Actor* thisx, PlayState* play);
@@ -729,7 +744,7 @@ void func_809D0584(EnBw* this, PlayState* play) {
                 this->unk_248 = 0.0f;
             }
         }
-        if ((play->actorCtx.unk_02 != 0) && (this->actor.xzDistToPlayer <= 400.0f) && (this->actor.bgCheckFlags & 1)) {
+        if ((play->actorCtx.unk_02 != 0) && (EnBw_HammerDistXZ(this) <= 400.0f) && (this->actor.bgCheckFlags & 1)) {
             if (this->unk_220 == 5) {
                 this->unk_23C = 0;
                 func_809CFF10(this);

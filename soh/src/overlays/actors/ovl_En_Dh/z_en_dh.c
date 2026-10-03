@@ -336,7 +336,12 @@ void EnDh_Attack(EnDh* this, PlayState* play) {
                 this->actionState++;
             } else if (this->collider2.base.atFlags & AT_HIT) {
                 this->collider2.base.atFlags &= ~AT_HIT;
-                func_8002F71C(play, &this->actor, 8.0f, this->actor.shape.rot.y, 8.0f);
+                // Co-op: a puppet carries its own AC cylinder, so AT_HIT fires for
+                // whichever player the hand grabbed -- func_8002F71C always shoves
+                // the LOCAL Link.
+                if (this->collider2.base.at == &GET_PLAYER(play)->actor) {
+                    func_8002F71C(play, &this->actor, 8.0f, this->actor.shape.rot.y, 8.0f);
+                }
             }
             break;
         case 3:

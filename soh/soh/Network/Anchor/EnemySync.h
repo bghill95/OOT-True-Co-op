@@ -13,11 +13,11 @@ extern "C" {
 // Verbose sync tracing for the two-instance test rig: INFO-level, flushed
 // immediately (log-grep assertions read files while the game runs). Desync
 // canaries stay unconditional SPDLOG_WARN — never route those through this.
-#define ESYNC_LOG(...)                    \
-    do {                                  \
-        if (EnemySync::VerboseSync()) {   \
-            SPDLOG_INFO(__VA_ARGS__);     \
-        }                                 \
+#define ESYNC_LOG(...)                  \
+    do {                                \
+        if (EnemySync::VerboseSync()) { \
+            SPDLOG_INFO(__VA_ARGS__);   \
+        }                               \
     } while (0)
 
 /**
@@ -111,12 +111,23 @@ Actor* FindActorForPacket(uint64_t key, int16_t actorId, Vec3f homePos);
 void ApplyRemoteHit(Actor* actor, uint8_t damage, uint32_t dmgFlags, Vec3s hitPos, uint8_t remoteHealth,
                     Actor* attacker);
 
+// Registers a collider on an already-tracked actor. Mirror copies that never
+// submitted colliders locally (suppressed before their first CollisionCheck
+// call) have an empty tracked list, so SubmitColliders exposes nothing — an
+// adapter can hand the colliders over explicitly. Idempotent.
+void NoteActorCollider(Actor* actor, Collider* col);
+
+// Returns a zeroed dummy actor wearing the given actor id, for replaying hits
+// whose real attacker (the mirror's weapon actor) doesn't exist on this client.
+// Big enough for enemies that write through the pointer (EnBoom::returnTimer).
+Actor* FakeAttacker(int16_t actorId, Vec3s hitPos);
+
 // Handles a remote death: lethal synthetic hit so the death plays naturally.
 // permanent (Actor_Kill deaths) adds a force-kill fallback after a grace period;
 // defeat-hook deaths (regrowers) skip it — a copy that can't consume the hit
 // must not be despawned one-sidedly. Engages the dying latch itself, only for
 // deaths it actually applies.
-void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent);
+void ApplyRemoteDeath(Actor* actor, Actor* attacker, bool permanent, uint32_t dmgFlags);
 
 } // namespace EnemySync
 

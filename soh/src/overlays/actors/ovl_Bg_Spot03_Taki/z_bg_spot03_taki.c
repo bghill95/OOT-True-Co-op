@@ -69,12 +69,21 @@ void BgSpot03Taki_Destroy(Actor* thisx, PlayState* play) {
     DynaPoly_DeleteBgActor(play, &play->colCtx.dyna, this->dyna.bgId);
 }
 
+s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
+
 void BgSpot03Taki_HandleWaterfallState(BgSpot03Taki* this, PlayState* play) {
     if (this->state == WATERFALL_CLOSED) {
         if (Flags_GetSwitch(play, this->switchFlag)) {
             this->state = WATERFALL_OPENING_ANIMATED;
             this->timer = 40;
-            OnePointCutscene_Init(play, 4100, -99, NULL, MAIN_CAM);
+            // Co-op: the waterfall polls its flag every frame, so it opens on both
+            // clients as soon as the peer plays Zelda's Lullaby — right for the
+            // geometry, wrong for the camera, which would be yanked to the falls from
+            // anywhere on Zora's River. Vanilla passes NULL as the actor; the guard
+            // needs one to measure a distance, so pass ours.
+            if (Anchor_ShouldPlayCameraCutscene(&this->dyna.actor, 800.0f)) {
+                OnePointCutscene_Init(play, 4100, -99, NULL, MAIN_CAM);
+            }
         }
     } else if (this->state == WATERFALL_OPENING_IDLE) {
         this->timer--;

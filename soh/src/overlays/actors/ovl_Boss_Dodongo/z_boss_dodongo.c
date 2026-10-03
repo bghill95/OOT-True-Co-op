@@ -46,6 +46,7 @@ f32 func_808C4F6C(BossDodongo* this, PlayState* play);
 f32 func_808C50A8(BossDodongo* this, PlayState* play);
 void BossDodongo_DrawEffects(PlayState* play);
 void BossDodongo_UpdateEffects(PlayState* play);
+void BossDodongo_UpdateLava(BossDodongo* this, PlayState* play);
 
 const ActorInit Boss_Dodongo_InitVars = {
     ACTOR_BOSS_DODONGO,
@@ -1100,149 +1101,9 @@ void BossDodongo_Update(Actor* thisx, PlayState* play2) {
         Math_SmoothStepToF(&this->colorFilterMax, 1000.0f, 1, 5.0f, 0.0);
     }
 
-    if (player->actor.world.pos.y < -1000.0f) {
-        s16 phi_s0_3;
-        s16 sp90;
-        s16 magma2DrawMode;
-        s16 magmaScale = 0;
-
-        if (this->unk_224 > 1.9f) {
-            phi_s0_3 = 1;
-            magma2DrawMode = 0;
-            sp90 = 0;
-        } else if (this->unk_224 > 1.7f) {
-            phi_s0_3 = 3;
-            sp90 = 1;
-            if (play) {}
-            magma2DrawMode = 0;
-        } else if (this->unk_224 > 1.4f) {
-            phi_s0_3 = 7;
-            sp90 = 3;
-            magma2DrawMode = Rand_ZeroOne() * 1.9f;
-        } else if (this->unk_224 > 1.1f) {
-            phi_s0_3 = 7;
-            sp90 = 4095;
-            magma2DrawMode = Rand_ZeroOne() * 1.9f;
-        } else {
-            phi_s0_3 = 1;
-            sp90 = -1;
-            magma2DrawMode = 1;
-            magmaScale = ((s16)(Rand_ZeroOne() * 50)) - 50;
-        }
-
-        if (player2->csAction >= 10) {
-            phi_s0_3 = -1;
-        }
-
-        if ((this->unk_19E & phi_s0_3) == 0) {
-            static Color_RGBA8 magmaPrimColor[] = { { 255, 255, 0, 255 }, { 0, 0, 0, 150 } };
-            static Color_RGBA8 magmaEnvColor[] = { { 255, 0, 0, 255 }, { 0, 0, 0, 0 } };
-            Vec3f sp84;
-            f32 temp_f12;
-            f32 temp_f10;
-
-            temp_f12 = Rand_ZeroOne() * 330.0f;
-            temp_f10 = Rand_ZeroOne() * 6.28f;
-            sp84.x = (sinf(temp_f10) * temp_f12) + (-890.0f);
-            sp84.y = -1523.76f;
-            sp84.z = (cosf(temp_f10) * temp_f12) + (-3304.0f);
-            EffectSsGMagma2_Spawn(play, &sp84, &magmaPrimColor[magma2DrawMode], &magmaEnvColor[magma2DrawMode],
-                                  10 - (magma2DrawMode * 5), magma2DrawMode, magmaScale + 100);
-        }
-
-        if ((this->unk_19E & sp90) == 0) {
-            Vec3f sp6C = { 0.0f, 0.0f, 0.0f };
-            Vec3f sp60 = { 0.0f, 0.0f, 0.0f };
-            Vec3f sp54;
-            f32 sp50 = Rand_ZeroOne() * 330.0f;
-            f32 sp4C = Rand_ZeroOne() * 6.28f;
-
-            sp54.x = sinf(sp4C) * sp50 + (-890.0f);
-            sp54.y = -1523.76f;
-            sp54.z = cosf(sp4C) * sp50 + (-3304.0f);
-            EffectSsGMagma_Spawn(play, &sp54);
-            for (i = 0; i < 4; i++) {
-                sp60.y = 0.4f;
-                sp60.x = Rand_CenteredFloat(0.5f);
-                sp60.z = Rand_CenteredFloat(0.5f);
-                sp50 = Rand_ZeroOne() * 330.0f;
-                sp4C = Rand_ZeroOne() * 6.28f;
-                sp54.x = sinf(sp4C) * sp50 + (-890.0f);
-                sp54.y = -1513.76f;
-                sp54.z = cosf(sp4C) * sp50 + (-3304.0f);
-                func_808C17C8(play, &sp54, &sp6C, &sp60, ((s16)Rand_ZeroFloat(2.0f)) + 6, 0x50);
-            }
-        }
-
-        // The lava bubbles with a wavy effect as a CPU modified texture
-        // This has been done by maintaining copied/modified texture values in the actor code
-        // The "cooling off" effect for the lava is pre-applied to the lava texture before applying
-        // the wavy effect. Since this is two effects and closely related to the actor, I've opted
-        // to handle them here rather than as a shader effect.
-        //
-        // Apply the corresponding wavy effect based on the texture being raw or not
-        if (ResourceMgr_TexIsRaw(gDodongosCavernBossLavaFloorTex)) {
-            func_808C1554_Raw(gDodongosCavernBossLavaFloorTex, sLavaFloorLavaTex, this->unk_19E, this->unk_224);
-        } else {
-            func_808C1554(gDodongosCavernBossLavaFloorTex, sLavaFloorLavaTex, this->unk_19E, this->unk_224);
-        }
-    }
-
-    // Apply the "cooling off" effect for the lava
-    if (this->unk_1C6 != 0) {
-        // Similar to above, the cooling off effect is a CPU modified texture effect
-        // Apply corresponding to the texture being raw or not
-        if (ResourceMgr_TexIsRaw(sLavaFloorRockTex)) {
-            u32* ptr1 = sLavaFloorModifiedTexRaw;
-            u32* ptr2 = ResourceGetDataByName(sLavaFloorRockTex);
-            u16 width = ResourceGetTexWidthByName(sLavaFloorRockTex);
-            u16 height = ResourceGetTexHeightByName(sLavaFloorRockTex);
-            s16 i2;
-
-            // Get the scale based on the original texture size
-            u16 widthScale = width / LAVA_TEX_WIDTH;
-            u16 heightScale = height / LAVA_TEX_HEIGHT;
-            u32 size = width * height;
-
-            for (i2 = 0; i2 < 20; i2++) {
-                s16 new_var = this->unk_1C2 & (LAVA_TEX_SIZE - 1);
-
-                // Raw lava must be registered, otherwise skip the effect for incompatible texture pack
-                // and instead set the mask to simulate the lava disappearing by turning black
-                if (sLavaFloorModifiedTexRaw != NULL) {
-                    // Compute the index to a scaled position (scaling pseudo x,y as a 1D value)
-                    s32 indexStart =
-                        ((new_var % LAVA_TEX_WIDTH) * widthScale) + ((new_var / LAVA_TEX_WIDTH) * width * heightScale);
-
-                    // From the starting index, apply extra pixels right/down based on the scale
-                    for (size_t j = 0; j < heightScale; j++) {
-                        for (size_t i3 = 0; i3 < widthScale; i3++) {
-                            s32 scaledIndex = (indexStart + i3 + (j * width)) & (size - 1);
-                            ptr1[scaledIndex] = ptr2[scaledIndex];
-                        }
-                    }
-                } else {
-                    sMaskTexLava[new_var] = 1;
-                    Gfx_TextureCacheDelete(sMaskTexLava);
-                }
-
-                this->unk_1C2 += 37;
-            }
-        } else {
-            u16* ptr1 = sLavaFloorModifiedTex;
-            u16* ptr2 = ResourceGetDataByName(sLavaFloorRockTex);
-            s16 i2;
-
-            for (i2 = 0; i2 < 20; i2++) {
-                s16 new_var = this->unk_1C2 & 0x7FF;
-
-                ptr1[new_var] = ptr2[new_var];
-                this->unk_1C2 += 37;
-            }
-        }
-
-        Math_SmoothStepToF(&this->unk_224, 0.0f, 1.0f, 0.01f, 0.0f);
-    }
+    // Lava splashes / magma bubbles / wavy + cooling lava texture. Shared with
+    // the co-op mirror replay (BossDodongo_CoopMirrorAmbientFx).
+    BossDodongo_UpdateLava(this, play);
 
     if (this->unk_1BC == 0) {
         if (this->actionFunc != BossDodongo_DeathCutscene) {
@@ -1958,4 +1819,209 @@ void BossDodongo_DrawEffects(PlayState* play) {
     }
 
     CLOSE_DISPS(gfxCtx);
+}
+
+// Lava floor ambience, pulled out of BossDodongo_Update so the co-op mirror
+// (update suppressed) can replay it from streamed state: unk_19E (frame
+// counter), unk_224 (lava level), unk_1C6 (cooling off after the defeat).
+void BossDodongo_UpdateLava(BossDodongo* this, PlayState* play) {
+    Player* player = GET_PLAYER(play);
+    Player* player2 = GET_PLAYER(play);
+    s16 i;
+
+    if (player->actor.world.pos.y < -1000.0f) {
+        s16 phi_s0_3;
+        s16 sp90;
+        s16 magma2DrawMode;
+        s16 magmaScale = 0;
+
+        if (this->unk_224 > 1.9f) {
+            phi_s0_3 = 1;
+            magma2DrawMode = 0;
+            sp90 = 0;
+        } else if (this->unk_224 > 1.7f) {
+            phi_s0_3 = 3;
+            sp90 = 1;
+            if (play) {}
+            magma2DrawMode = 0;
+        } else if (this->unk_224 > 1.4f) {
+            phi_s0_3 = 7;
+            sp90 = 3;
+            magma2DrawMode = Rand_ZeroOne() * 1.9f;
+        } else if (this->unk_224 > 1.1f) {
+            phi_s0_3 = 7;
+            sp90 = 4095;
+            magma2DrawMode = Rand_ZeroOne() * 1.9f;
+        } else {
+            phi_s0_3 = 1;
+            sp90 = -1;
+            magma2DrawMode = 1;
+            magmaScale = ((s16)(Rand_ZeroOne() * 50)) - 50;
+        }
+
+        if (player2->csAction >= 10) {
+            phi_s0_3 = -1;
+        }
+
+        if ((this->unk_19E & phi_s0_3) == 0) {
+            static Color_RGBA8 magmaPrimColor[] = { { 255, 255, 0, 255 }, { 0, 0, 0, 150 } };
+            static Color_RGBA8 magmaEnvColor[] = { { 255, 0, 0, 255 }, { 0, 0, 0, 0 } };
+            Vec3f sp84;
+            f32 temp_f12;
+            f32 temp_f10;
+
+            temp_f12 = Rand_ZeroOne() * 330.0f;
+            temp_f10 = Rand_ZeroOne() * 6.28f;
+            sp84.x = (sinf(temp_f10) * temp_f12) + (-890.0f);
+            sp84.y = -1523.76f;
+            sp84.z = (cosf(temp_f10) * temp_f12) + (-3304.0f);
+            EffectSsGMagma2_Spawn(play, &sp84, &magmaPrimColor[magma2DrawMode], &magmaEnvColor[magma2DrawMode],
+                                  10 - (magma2DrawMode * 5), magma2DrawMode, magmaScale + 100);
+        }
+
+        if ((this->unk_19E & sp90) == 0) {
+            Vec3f sp6C = { 0.0f, 0.0f, 0.0f };
+            Vec3f sp60 = { 0.0f, 0.0f, 0.0f };
+            Vec3f sp54;
+            f32 sp50 = Rand_ZeroOne() * 330.0f;
+            f32 sp4C = Rand_ZeroOne() * 6.28f;
+
+            sp54.x = sinf(sp4C) * sp50 + (-890.0f);
+            sp54.y = -1523.76f;
+            sp54.z = cosf(sp4C) * sp50 + (-3304.0f);
+            EffectSsGMagma_Spawn(play, &sp54);
+            for (i = 0; i < 4; i++) {
+                sp60.y = 0.4f;
+                sp60.x = Rand_CenteredFloat(0.5f);
+                sp60.z = Rand_CenteredFloat(0.5f);
+                sp50 = Rand_ZeroOne() * 330.0f;
+                sp4C = Rand_ZeroOne() * 6.28f;
+                sp54.x = sinf(sp4C) * sp50 + (-890.0f);
+                sp54.y = -1513.76f;
+                sp54.z = cosf(sp4C) * sp50 + (-3304.0f);
+                func_808C17C8(play, &sp54, &sp6C, &sp60, ((s16)Rand_ZeroFloat(2.0f)) + 6, 0x50);
+            }
+        }
+
+        // The lava bubbles with a wavy effect as a CPU modified texture
+        // This has been done by maintaining copied/modified texture values in the actor code
+        // The "cooling off" effect for the lava is pre-applied to the lava texture before applying
+        // the wavy effect. Since this is two effects and closely related to the actor, I've opted
+        // to handle them here rather than as a shader effect.
+        //
+        // Apply the corresponding wavy effect based on the texture being raw or not
+        if (ResourceMgr_TexIsRaw(gDodongosCavernBossLavaFloorTex)) {
+            func_808C1554_Raw(gDodongosCavernBossLavaFloorTex, sLavaFloorLavaTex, this->unk_19E, this->unk_224);
+        } else {
+            func_808C1554(gDodongosCavernBossLavaFloorTex, sLavaFloorLavaTex, this->unk_19E, this->unk_224);
+        }
+    }
+
+    // Apply the "cooling off" effect for the lava
+    if (this->unk_1C6 != 0) {
+        // Similar to above, the cooling off effect is a CPU modified texture effect
+        // Apply corresponding to the texture being raw or not
+        if (ResourceMgr_TexIsRaw(sLavaFloorRockTex)) {
+            u32* ptr1 = sLavaFloorModifiedTexRaw;
+            u32* ptr2 = ResourceGetDataByName(sLavaFloorRockTex);
+            u16 width = ResourceGetTexWidthByName(sLavaFloorRockTex);
+            u16 height = ResourceGetTexHeightByName(sLavaFloorRockTex);
+            s16 i2;
+
+            // Get the scale based on the original texture size
+            u16 widthScale = width / LAVA_TEX_WIDTH;
+            u16 heightScale = height / LAVA_TEX_HEIGHT;
+            u32 size = width * height;
+
+            for (i2 = 0; i2 < 20; i2++) {
+                s16 new_var = this->unk_1C2 & (LAVA_TEX_SIZE - 1);
+
+                // Raw lava must be registered, otherwise skip the effect for incompatible texture pack
+                // and instead set the mask to simulate the lava disappearing by turning black
+                if (sLavaFloorModifiedTexRaw != NULL) {
+                    // Compute the index to a scaled position (scaling pseudo x,y as a 1D value)
+                    s32 indexStart =
+                        ((new_var % LAVA_TEX_WIDTH) * widthScale) + ((new_var / LAVA_TEX_WIDTH) * width * heightScale);
+
+                    // From the starting index, apply extra pixels right/down based on the scale
+                    for (size_t j = 0; j < heightScale; j++) {
+                        for (size_t i3 = 0; i3 < widthScale; i3++) {
+                            s32 scaledIndex = (indexStart + i3 + (j * width)) & (size - 1);
+                            ptr1[scaledIndex] = ptr2[scaledIndex];
+                        }
+                    }
+                } else {
+                    sMaskTexLava[new_var] = 1;
+                    Gfx_TextureCacheDelete(sMaskTexLava);
+                }
+
+                this->unk_1C2 += 37;
+            }
+        } else {
+            u16* ptr1 = sLavaFloorModifiedTex;
+            u16* ptr2 = ResourceGetDataByName(sLavaFloorRockTex);
+            s16 i2;
+
+            for (i2 = 0; i2 < 20; i2++) {
+                s16 new_var = this->unk_1C2 & 0x7FF;
+
+                ptr1[new_var] = ptr2[new_var];
+                this->unk_1C2 += 37;
+            }
+        }
+
+        Math_SmoothStepToF(&this->unk_224, 0.0f, 1.0f, 0.01f, 0.0f);
+    }
+}
+
+// Co-op mirror: EnemySync suppresses this copy's Update (pose, animation and
+// the adapter's extras come from the authority), so everything the Update
+// spawns outside the draw pass was missing on the mirror: lava splashes and
+// magma, the lava texture waves and cooling, the fire-breath room flash, the
+// walk dust rings, the roll quake and dust, and the lava effect pool never
+// decayed (splashes froze on screen). The fire breath itself is an EN_BDFIRE
+// child, replicated as an announced spawn. Called from KingDodongoAdapter's
+// DeserializeExtras, once per applied stream frame, with unk_19E, unk_224,
+// unk_1C6, unk_1C8 and the animation frame already copied from the stream.
+void BossDodongo_CoopMirrorAmbientFx(BossDodongo* this, PlayState* play) {
+    BossDodongo_UpdateLava(this, play);
+
+    // Fire-breath light flash: BlowFire arms unk_1C8 = 28, Update decays it and
+    // tints the room from unk_240 (both the counter and the tint come streamed
+    // / smoothed here exactly as in Update).
+    if (this->unk_1C8 != 0) {
+        if (this->unk_1C8 >= 11) {
+            Math_SmoothStepToF(&this->unk_240, (this->unk_1C8 & 1) ? (40.0f) : (60.0f), 1.0f, 50.0f, 0.0f);
+        } else {
+            Math_SmoothStepToF(&this->unk_240, 0.0f, 1, 10.0f, 0.0);
+        }
+
+        if ((play->envCtx.adjLight1Color[2] == 0) && (play->envCtx.adjAmbientColor[2] == 0)) {
+            play->envCtx.adjLight1Color[0] = (u8)this->unk_240;
+            play->envCtx.adjLight1Color[1] = (u8)(this->unk_240 * 0.1f);
+            play->envCtx.adjAmbientColor[0] = (u8)this->unk_240;
+            play->envCtx.adjAmbientColor[1] = (u8)(this->unk_240 * 0.1f);
+        }
+    }
+
+    if (this->actionFunc == BossDodongo_Roll) {
+        // Rolling on the floor: quake + dust ring (the mirror's bgCheckFlags are
+        // never refreshed; the roll only leaves the floor on a wall bounce).
+        if ((this->unk_19E & 7) == 0) {
+            Camera_AddQuake(&play->mainCamera, 2, 1, 8);
+        }
+        if (!(this->unk_19E & 1)) {
+            Actor_SpawnFloorDustRing(play, &this->actor, &this->actor.world.pos, 40.0f, 3, 8.0f, 500, 10, false);
+        }
+    } else if (this->actionFunc == BossDodongo_Walk && this->unk_1BC != 2) {
+        // Footsteps: the foot positions (unk_404 / unk_410) are written by
+        // PostLimbDraw, which still runs on the mirror.
+        if ((s32)this->skelAnime.curFrame == 1) {
+            Actor_SpawnFloorDustRing(play, &this->actor, &this->unk_410, 25.0f, 10, 8.0f, 500, 10, false);
+        } else if ((s32)this->skelAnime.curFrame == 31) {
+            Actor_SpawnFloorDustRing(play, &this->actor, &this->unk_404, 25.0f, 10, 8.0f, 500, 10, false);
+        }
+    }
+
+    BossDodongo_UpdateEffects(play); // keep the 80-slot lava pool decaying
 }

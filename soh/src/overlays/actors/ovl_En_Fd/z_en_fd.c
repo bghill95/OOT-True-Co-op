@@ -11,6 +11,29 @@
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 #include "soh/ResourceManagerHelpers.h"
 
+// Co-op (Anchor/EnemySync.cpp): true when this copy is a mirror, i.e. its Update
+// is suppressed and only Draw runs.
+s32 Anchor_IsMirroredActor(Actor* actor);
+// Co-op (Anchor/FxSync.cpp): where the last hammer shockwave landed, ours or the
+// peer's, or NULL when none is on record.
+Vec3f* Anchor_HammerShockwavePos(void);
+
+// How far the hammer strike that armed actorCtx.unk_02 landed from this actor.
+//
+// unk_02 is scene-wide and now armed by BOTH players, while xzDistToPlayer is
+// redirected to the NEAREST player -- so the vanilla pairing answers "someone
+// struck and the nearest player is close", which fires for a strike made across
+// the room and misses one made right here. Measure from the strike instead.
+// Falls back to the vanilla measure when no shockwave is on record.
+static f32 EnFd_HammerDistXZ(EnFd* this) {
+    Vec3f* hammerPos = Anchor_HammerShockwavePos();
+
+    if (hammerPos == NULL) {
+        return this->actor.xzDistToPlayer;
+    }
+    return Math_Vec3f_DistXZ(&this->actor.world.pos, hammerPos);
+}
+
 #define FLAGS                                                                                 \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
      ACTOR_FLAG_HOOKSHOT_PULLS_ACTOR)
@@ -239,6 +262,11 @@ s32 EnFd_SpawnCore(EnFd* this, PlayState* play) {
     return true;
 }
 
+// Co-op (Anchor/DummyPlayer.cpp): yaw toward the LOCAL Link, whatever the
+// retargeted actor->yawTowardsPlayer holds. Use it wherever the yaw only says
+// which way to shove a victim already known to be the local player.
+s16 Anchor_LocalPlayerYaw(Actor* from);
+
 void EnFd_SpawnChildFire(EnFd* this, PlayState* play, s16 fireCnt, s16 color) {
     s32 i;
 
@@ -272,7 +300,7 @@ s32 EnFd_CheckHammer(EnFd* this, PlayState* play) {
     if (this->actionFunc == EnFd_Reappear || this->actionFunc == EnFd_SpinAndGrow ||
         this->actionFunc == EnFd_JumpToGround || this->actionFunc == EnFd_WaitForCore) {
         return false;
-    } else if (play->actorCtx.unk_02 != 0 && this->actor.xzDistToPlayer < 300.0f && this->actor.yDistToPlayer < 60.0f) {
+    } else if (play->actorCtx.unk_02 != 0 && EnFd_HammerDistXZ(this) < 300.0f && this->actor.yDistToPlayer < 60.0f) {
         return true;
     } else {
         return false;
@@ -311,8 +339,14 @@ s32 EnFd_ColliderCheck(EnFd* this, PlayState* play) {
             return false;
         }
         this->attackTimer = 30;
-        Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
-        func_8002F71C(play, &this->actor, this->actor.speedXZ + 2.0f, this->actor.yawTowardsPlayer, 6.0f);
+        // Co-op: a puppet carries its own AC cylinder, so AT_HIT fires for
+        // whichever player was burned -- while the sfx and func_8002F71C both act
+        // on the LOCAL Link, and yawTowardsPlayer is retargeted at the nearest
+        // player. Only shove the player actually hit, away from us.
+        if (this->collider.base.at == &player->actor) {
+            Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
+            func_8002F71C(play, &this->actor, this->actor.speedXZ + 2.0f, Anchor_LocalPlayerYaw(&this->actor), 6.0f);
+        }
     }
     return false;
 }
@@ -477,6 +511,33 @@ void EnFd_Destroy(Actor* thisx, PlayState* play) {
     Collider_DestroyJntSph(play, &this->collider);
 
     ResourceMgr_UnregisterSkeleton(&this->skelAnime);
+}
+
+// Co-op (Anchor/BossAdapters/FrozenDrawAdapters.cpp): arm the skeleton before an
+// actionFunc restored from the network is allowed to run.
+//
+// EnFd_Init passes NULL as the animation to SkelAnime_InitFlex, so skelAnime.update
+// stays NULL and every field below limbCount/skeleton reads zero. Vanilla is safe
+// because EnFd_Update guards the call --
+//     if (this->actionFunc != EnFd_Reappear) { SkelAnime_Update(...); }
+// -- and EnFd_Reappear, the only function that calls Animation_ChangeByInfo for the
+// first time, is where Init leaves actionFunc. The pointer and the armed skeleton
+// are set in the same breath, so the guard never sees one without the other.
+//
+// The adapter breaks that pairing: it writes actionFunc from a packet, and a copy
+// that has not yet run its own EnFd_Reappear then leaves the guard with a NULL
+// skelAnime.update. The next update dereferences it -- SkelAnime_Update reads
+// skelAnime->update and calls it, so the crash is a jump to address 0 inside
+// EnFd_Update, not a readable null-pointer read. Observed in the Fire Temple on an
+// authority handoff.
+//
+// Posting the animation here rather than refusing the actionFunc keeps what the
+// adapter was written for: the body draw is gated on actionFunc != EnFd_Reappear,
+// so holding the mirror on Reappear would make the mini-boss invisible again.
+void EnFd_CoopEnsureAnimation(EnFd* self) {
+    if (self->skelAnime.update.normal == NULL) {
+        Animation_ChangeByInfo(&self->skelAnime, sAnimationInfo, ENFD_ANIM_0);
+    }
 }
 
 void EnFd_Reappear(EnFd* this, PlayState* play) {
@@ -772,6 +833,17 @@ void EnFd_Draw(Actor* thisx, PlayState* play) {
     s32 pad;
 
     frames = play->state.frames;
+
+    // Co-op: EnFd_PostLimbDraw emits FD_EFFECT_DOT every other frame, from the
+    // DRAW path, while the only thing that ages those effects out is called from
+    // EnFd_Update. On a mirror the update never runs, so the 200 effect slots
+    // would fill with dots at full alpha that never expire -- a frozen cloud
+    // around the body. Age them here instead. On the authority this is not
+    // reached: Anchor_IsMirroredActor is false and Update already did it.
+    if (Anchor_IsMirroredActor(&this->actor)) {
+        EnFd_UpdateDots(this);
+        EnFd_UpdateFlames(this);
+    }
 
     OPEN_DISPS(play->state.gfxCtx);
 

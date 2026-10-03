@@ -25,6 +25,14 @@
 #include "objects/object_ouke_haka/object_ouke_haka.h"
 #include "soh/Enhancements/game-interactor/GameInteractor_Hooks.h"
 
+// Co-op (Anchor/FxSync.cpp): true while this door is replaying the OTHER player's
+// crossing. The slide itself is what we want to show; the three things vanilla
+// bundles into it -- spending a small key, aiming the door camera, and committing
+// the room change -- belong to the player who actually walked through, and are
+// suppressed here. Offline this is a constant false, so the solo path is unchanged.
+s32 Anchor_IsRemoteDoorOpen(Actor* doorActor);
+void Anchor_ForgetRemoteDoor(Actor* doorActor);
+
 #define FLAGS ACTOR_FLAG_UPDATE_CULLING_DISABLED
 
 void DoorShutter_Init(Actor* thisx, PlayState* play);
@@ -384,14 +392,26 @@ void func_80996B00(DoorShutter* this, PlayState* play) {
 
 void func_80996B0C(DoorShutter* this, PlayState* play) {
     if (this->unk_164 != 0) {
+        // Co-op: on a replay the other player already paid for this door. The key
+        // count is a synchronised absolute value, so a second debit here does not
+        // just charge us twice -- it races his own update and loses a key outright.
+        // The switch flag stays (same flag, idempotent, and it keeps our copy
+        // unlocked even if his flag packet never lands) and so does the unlock
+        // sound, which is half of what the replay exists to show.
+        s32 remoteOpen = Anchor_IsRemoteDoorOpen(&this->dyna.actor);
+
         DoorShutter_SetupAction(this, func_80997004);
         this->dyna.actor.velocity.y = 0.0f;
         if (this->unk_16E != 0) {
             Flags_SetSwitch(play, this->dyna.actor.params & 0x3F);
             if (this->doorType != SHUTTER_BOSS) {
-                gSaveContext.inventory.dungeonKeys[gSaveContext.mapIndex]--;
+                if (!remoteOpen) {
+                    gSaveContext.inventory.dungeonKeys[gSaveContext.mapIndex]--;
+                }
                 Audio_PlayActorSound2(&this->dyna.actor, NA_SE_EV_CHAIN_KEY_UNLOCK);
-                GameInteractor_ExecuteOnDungeonKeyUsedHooks(gSaveContext.mapIndex);
+                if (!remoteOpen) {
+                    GameInteractor_ExecuteOnDungeonKeyUsedHooks(gSaveContext.mapIndex);
+                }
             } else {
                 Audio_PlayActorSound2(&this->dyna.actor, NA_SE_EV_CHAIN_KEY_UNLOCK_B);
             }
@@ -433,8 +453,14 @@ void func_80996C60(DoorShutter* this, PlayState* play) {
         DoorShutter_SetupAction(this, func_80997004);
         this->unk_16C = sp38;
         this->unk_170 = 0.0f;
-        Camera_ChangeDoorCam(play->cameraPtrs[MAIN_CAM], &this->dyna.actor, player->cv.slidingDoorBgCamIndex, 0.0f, 12,
-                             sp34, 10);
+        // Co-op: on a replay this shot belongs to the other player's crossing.
+        // slidingDoorBgCamIndex is OUR Link's, left over from whichever door WE
+        // last opened, so aiming the door cam with it would swing our view onto an
+        // unrelated angle for a door we are not walking through.
+        if (!Anchor_IsRemoteDoorOpen(&this->dyna.actor)) {
+            Camera_ChangeDoorCam(play->cameraPtrs[MAIN_CAM], &this->dyna.actor, player->cv.slidingDoorBgCamIndex, 0.0f,
+                                 12, sp34, 10);
+        }
     }
 }
 
@@ -509,7 +535,16 @@ void func_80996F98(DoorShutter* this, PlayState* play) {
 
 void func_80997004(DoorShutter* this, PlayState* play) {
     if (DECR(this->unk_16E) == 0 && play->roomCtx.status == 0 && func_80996D14(this, play) != 0) {
-        if (((this->doorType == SHUTTER_BOSS) ? 20.0f : 50.0f) < this->dyna.actor.xzDistToPlayer) {
+        // Co-op: vanilla holds the slab up until the local Link has walked clear,
+        // because the local Link is the one crossing. On a replay nobody is
+        // crossing here, and that distance test measures OUR Link -- so the door
+        // stayed up exactly while we stood at it, which is the follow-the-leader
+        // case. Worse than cosmetic: while the sequence runs, func_80996B0C does
+        // not, so player->doorActor is never set and we cannot open our own door.
+        // Show the slide, then close and hand the door back.
+        s32 remoteOpen = Anchor_IsRemoteDoorOpen(&this->dyna.actor);
+
+        if (remoteOpen || ((this->doorType == SHUTTER_BOSS) ? 20.0f : 50.0f) < this->dyna.actor.xzDistToPlayer) {
             if (DoorShutter_SetupDoor(this, play)) {
                 this->dyna.actor.velocity.y = 30.0f;
             }
@@ -553,6 +588,34 @@ void func_80997150(DoorShutter* this, PlayState* play) {
 void func_80997220(DoorShutter* this, PlayState* play) {
     Player* player = GET_PLAYER(play);
     s8 room = this->dyna.actor.room;
+
+    // Co-op: end of a replayed sequence. Nothing below may run -- this whole
+    // function commits a room transition, and no Link crossed on this machine.
+    //
+    // Only the curRoom/prevRoom swap is conditional on our own Link having changed
+    // side. func_80097534 and Play_SetupRespawnPoint are not: func_80097534 clears
+    // prevRoom, calls func_80031B14 -- which deletes every actor belonging to
+    // another room and then wipes actorCtx.flags.tempClear and the top byte of
+    // tempSwch -- and respawns the transition actors. tempClear is latched exactly
+    // once, when the last ACTORCAT_ENEMY leaves the room, so clearing it after the
+    // room is already empty is unrecoverable without reloading: the chest or the
+    // blue warp that was appearing never comes back. That would fire on EVERY
+    // sliding door the other player opens anywhere in the scene.
+    //
+    // A previous version of this comment claimed the raised slab opens a way into
+    // a room this machine never loaded. It does not: DynaPoly_SetBgActor runs only
+    // for SHUTTER_PG_BARS and SHUTTER_GOHMA_BLOCK, so an ordinary sliding door has
+    // no actor collision at all and never blocked anything. What DOES belong to the
+    // local crossing is the far-room preload (func_8009728C, z_player.c), which we
+    // do not replay -- so a peer who wanders through the opening finds nothing
+    // there. func_80997004 now closes a replayed door immediately for that reason.
+    if (Anchor_IsRemoteDoorOpen(&this->dyna.actor)) {
+        Anchor_ForgetRemoteDoor(&this->dyna.actor);
+        this->unk_164 = 0;
+        this->dyna.actor.velocity.y = 0.0f;
+        DoorShutter_SetupDoor(this, play); // back to the right closed-and-waiting state
+        return;
+    }
 
     if (this->dyna.actor.room >= 0) {
         Vec3f vec;

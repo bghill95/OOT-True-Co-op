@@ -41,24 +41,35 @@ static void EnGoma_SerializeExtras(Actor* actor, nlohmann::json& x) {
 static void EnGoma_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     EnGoma* g = (EnGoma*)actor;
     try {
-        if (x.contains("type")) g->gomaType = x["type"].get<int16_t>();
-        if (x.contains("eggScale")) g->eggScale = x["eggScale"].get<float>();
-        if (x.contains("eggPitch")) g->eggPitch = x["eggPitch"].get<float>();
-        if (x.contains("eggSquishAngle")) g->eggSquishAngle = x["eggSquishAngle"].get<float>();
-        if (x.contains("eggSquish")) g->eggSquishAmount = x["eggSquish"].get<float>();
-        if (x.contains("eggY")) g->eggYOffset = x["eggY"].get<float>();
-        if (x.contains("eyeP")) g->eyePitch = x["eyeP"].get<int16_t>();
-        if (x.contains("eyeY")) g->eyeYaw = x["eyeY"].get<int16_t>();
-        if (x.contains("hurt")) g->hurtTimer = x["hurt"].get<int16_t>();
-        if (x.contains("vis")) g->visualState = x["vis"].get<int16_t>();
-        if (x.contains("slopeP")) g->slopePitch = x["slopeP"].get<int16_t>();
-        if (x.contains("slopeR")) g->slopeRoll = x["slopeR"].get<int16_t>();
+        if (x.contains("type"))
+            g->gomaType = x["type"].get<int16_t>();
+        if (x.contains("eggScale"))
+            g->eggScale = x["eggScale"].get<float>();
+        if (x.contains("eggPitch"))
+            g->eggPitch = x["eggPitch"].get<float>();
+        if (x.contains("eggSquishAngle"))
+            g->eggSquishAngle = x["eggSquishAngle"].get<float>();
+        if (x.contains("eggSquish"))
+            g->eggSquishAmount = x["eggSquish"].get<float>();
+        if (x.contains("eggY"))
+            g->eggYOffset = x["eggY"].get<float>();
+        if (x.contains("eyeP"))
+            g->eyePitch = x["eyeP"].get<int16_t>();
+        if (x.contains("eyeY"))
+            g->eyeYaw = x["eyeY"].get<int16_t>();
+        if (x.contains("hurt"))
+            g->hurtTimer = x["hurt"].get<int16_t>();
+        if (x.contains("vis"))
+            g->visualState = x["vis"].get<int16_t>();
+        if (x.contains("slopeP"))
+            g->slopePitch = x["slopeP"].get<int16_t>();
+        if (x.contains("slopeR"))
+            g->slopeRoll = x["slopeR"].get<int16_t>();
         if (x.contains("eenv") && x["eenv"].size() == 3) {
-            for (int i = 0; i < 3; i++) g->eyeEnvColor[i] = x["eenv"][i].get<float>();
+            for (int i = 0; i < 3; i++)
+                g->eyeEnvColor[i] = x["eenv"][i].get<float>();
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnGoma extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnGoma extras parse error: {}", ex.what()); }
 }
 
 void RegisterEnGomaAdapter() {

@@ -8,6 +8,8 @@
 
 #include "overlays/actors/ovl_En_Arrow/z_en_arrow.h"
 
+s32 Anchor_ShouldPlayArrowFlash(Actor* elementalHead, f32 range);
+
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_UPDATE_DURING_OCARINA)
 
 void ArrowLight_Init(Actor* thisx, PlayState* play);
@@ -214,7 +216,8 @@ void ArrowLight_Draw(Actor* thisx, PlayState* play) {
         Matrix_Scale(0.01f, 0.01f, 0.01f, MTXMODE_APPLY);
 
         // Draw yellow effect over the screen when arrow hits
-        if (this->unk_164 > 0) {
+        // Co-op: bounded for a PEER's arrow only — see Anchor_ShouldPlayArrowFlash.
+        if (this->unk_164 > 0 && Anchor_ShouldPlayArrowFlash(&this->actor, 600.0f)) {
             POLY_XLU_DISP = Gfx_SetupDL_57(POLY_XLU_DISP);
             gDPSetPrimColor(POLY_XLU_DISP++, 0, 0, (s32)((secondaryColor.r / 6) * this->unk_164) & 0xFF,
                             (s32)((secondaryColor.g / 6) * this->unk_164) & 0xFF,

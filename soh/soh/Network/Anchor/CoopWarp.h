@@ -2,9 +2,10 @@
 #define NETWORK_ANCHOR_COOP_WARP_H
 #ifdef __cplusplus
 
-extern "C" {
+// Included outside extern "C" on purpose: z64.h pulls in <memory>, and this header
+// is the first thing CoopWarp.cpp includes, so nothing has instantiated the C++
+// standard headers yet. Under extern "C" GCC and Clang reject their templates.
 #include "z64.h"
-}
 
 // System-initiated warps for the co-op layer. Requests are queued (latest wins;
 // these are rare and single-shot) and drained on OnGameFrameUpdate only when the

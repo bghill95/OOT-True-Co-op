@@ -86,6 +86,10 @@ void func_809BC2A4(EnBdfire* this, PlayState* play) {
     s32 temp;
 
     kingDodongo = (BossDodongo*)this->actor.parent;
+    if (kingDodongo == NULL) { // co-op replica whose boss did not resolve: nothing to follow
+        Actor_Kill(&this->actor);
+        return;
+    }
     this->actor.world.pos.x = kingDodongo->firePos.x;
     this->actor.world.pos.y = kingDodongo->firePos.y;
     this->actor.world.pos.z = kingDodongo->firePos.z;
@@ -129,6 +133,10 @@ void func_809BC598(EnBdfire* this, PlayState* play) {
     s32 temp;
 
     bossDodongo = ((BossDodongo*)this->actor.parent);
+    if (bossDodongo == NULL) { // co-op replica whose boss did not resolve
+        Actor_Kill(&this->actor);
+        return;
+    }
     this->unk_158 = bossDodongo->unk_1A2;
     phi_v1_2 = 0;
     if (this->actor.params == 0) {

@@ -140,5 +140,17 @@ void BgHidanFslift_Update(Actor* thisx, PlayState* play) {
 }
 
 void BgHidanFslift_Draw(Actor* thisx, PlayState* play) {
+    // Co-op: the hookshot target is a child actor, and the only thing that keeps it
+    // sitting on the platform is func_80886F24 -- called from the two action funcs
+    // and nowhere else. On a mirror, whose update is suppressed, the platform still
+    // follows the stream all the way up while the target stays where it spawned, on
+    // the floor: the peer aims at a block that is no longer part of the lift. Draw
+    // runs on every client, so re-pin it here. On the authority the action funcs
+    // have already done it this frame and this is the same assignment twice, which
+    // is why it needs no "am I a mirror" guard -- and could not use one anyway:
+    // Anchor_IsMirroredActor only knows the enemies EnemySync tracks, not the
+    // platforms DynaSync does.
+    func_80886F24((BgHidanFslift*)thisx);
+
     Gfx_DrawDListOpa(play, gFireTempleHookshotElevatorDL);
 }

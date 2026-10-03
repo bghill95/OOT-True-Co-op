@@ -70,8 +70,7 @@ static void OnPlayerUpdateAutoWarp() {
 }
 
 void RegisterEnemySyncTestBoot() {
-    COND_HOOK(OnZTitleUpdate, CVAR_TEST_AUTO_LOAD_VALUE >= 1 && CVAR_TEST_AUTO_LOAD_VALUE <= 3,
-              OnZTitleUpdateAutoLoad);
+    COND_HOOK(OnZTitleUpdate, CVAR_TEST_AUTO_LOAD_VALUE >= 1 && CVAR_TEST_AUTO_LOAD_VALUE <= 3, OnZTitleUpdateAutoLoad);
     COND_HOOK(OnFileChooseMain, CVAR_TEST_AUTO_LOAD_VALUE >= 1 && CVAR_TEST_AUTO_LOAD_VALUE <= 3,
               OnFileChooseMainAutoLoad);
     COND_HOOK(OnPlayerUpdate, CVAR_TEST_AUTO_WARP_VALUE >= 0, OnPlayerUpdateAutoWarp);

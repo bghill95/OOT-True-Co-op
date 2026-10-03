@@ -89,11 +89,10 @@ void Anchor::HandlePacket_UnsetFlag(nlohmann::json payload) {
             Inventory_ReplaceItem(gPlayState, itemToReplace, Randomizer_GetNextAdultTradeItem());
         }
     } else {
-        // Special case: Ignore water temple water level flags, stored at 0x1C, 0x1D, 0x1E.
-        if (sceneNum == SCENE_WATER_TEMPLE && flagType == FLAG_SCENE_SWITCH &&
-            (flag == 0x1C || flag == 0x1D || flag == 0x1E)) {
-            return;
-        }
+        // Water temple water level (0x1C, 0x1D, 0x1E) is now replicated -- see the note
+        // in SetFlag.cpp. The unset half matters just as much: WaitForAction clears the
+        // previous level's flag as it adopts the new one (z_bg_mizu_water.c:180), so
+        // dropping it here would leave two levels set at once on the peer.
 
         // Special case: Ignore forest temple elevator flag, stored at 0x1B.
         if (sceneNum == SCENE_FOREST_TEMPLE && flagType == FLAG_SCENE_SWITCH && flag == 0x1B) {

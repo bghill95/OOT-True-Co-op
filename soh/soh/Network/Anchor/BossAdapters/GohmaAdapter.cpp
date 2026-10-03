@@ -64,27 +64,37 @@ static void Gohma_SerializeExtras(Actor* actor, nlohmann::json& x) {
 static void Gohma_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     BossGoma* g = (BossGoma*)actor;
     try {
-        if (x.contains("eye")) g->eyeState = x["eye"].get<int16_t>();
-        if (x.contains("irx")) g->eyeIrisRotX = x["irx"].get<int16_t>();
-        if (x.contains("iry")) g->eyeIrisRotY = x["iry"].get<int16_t>();
-        if (x.contains("lidB")) g->eyeLidBottomRotX = x["lidB"].get<int16_t>();
-        if (x.contains("lidT")) g->eyeLidTopRotX = x["lidT"].get<int16_t>();
-        if (x.contains("isx")) g->eyeIrisScaleX = x["isx"].get<float>();
-        if (x.contains("isy")) g->eyeIrisScaleY = x["isy"].get<float>();
-        if (x.contains("vis")) g->visualState = x["vis"].get<int16_t>();
-        if (x.contains("inv")) g->invincibilityFrames = x["inv"].get<int16_t>();
+        if (x.contains("eye"))
+            g->eyeState = x["eye"].get<int16_t>();
+        if (x.contains("irx"))
+            g->eyeIrisRotX = x["irx"].get<int16_t>();
+        if (x.contains("iry"))
+            g->eyeIrisRotY = x["iry"].get<int16_t>();
+        if (x.contains("lidB"))
+            g->eyeLidBottomRotX = x["lidB"].get<int16_t>();
+        if (x.contains("lidT"))
+            g->eyeLidTopRotX = x["lidT"].get<int16_t>();
+        if (x.contains("isx"))
+            g->eyeIrisScaleX = x["isx"].get<float>();
+        if (x.contains("isy"))
+            g->eyeIrisScaleY = x["isy"].get<float>();
+        if (x.contains("vis"))
+            g->visualState = x["vis"].get<int16_t>();
+        if (x.contains("inv"))
+            g->invincibilityFrames = x["inv"].get<int16_t>();
         if (x.contains("menv") && x["menv"].size() == 3) {
-            for (int i = 0; i < 3; i++) g->mainEnvColor[i] = x["menv"][i].get<float>();
+            for (int i = 0; i < 3; i++)
+                g->mainEnvColor[i] = x["menv"][i].get<float>();
         }
         if (x.contains("eenv") && x["eenv"].size() == 3) {
-            for (int i = 0; i < 3; i++) g->eyeEnvColor[i] = x["eenv"][i].get<float>();
+            for (int i = 0; i < 3; i++)
+                g->eyeEnvColor[i] = x["eenv"][i].get<float>();
         }
         if (x.contains("tail") && x["tail"].size() == 4) {
-            for (int i = 0; i < 4; i++) g->tailLimbsScale[i] = x["tail"][i].get<float>();
+            for (int i = 0; i < 4; i++)
+                g->tailLimbsScale[i] = x["tail"][i].get<float>();
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[GohmaSync] extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[GohmaSync] extras parse error: {}", ex.what()); }
 }
 
 static bool Gohma_OnPhaseChange(Actor* actor, uint8_t fromPhase, uint8_t toPhase) {
@@ -114,5 +124,8 @@ void RegisterGohmaAdapter() {
     adapter.GetPhase = Gohma_GetPhase;
     adapter.OnPhaseChange = Gohma_OnPhaseChange;
     adapter.ShouldMirror = Gohma_ShouldMirror;
+    // OnPhaseChange hands the defeat back to BossGoma_SetupDefeated, and the
+    // heart comes from the cutscene: a generic roll here would invent treasure.
+    adapter.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_BOSS_GOMA, adapter);
 }

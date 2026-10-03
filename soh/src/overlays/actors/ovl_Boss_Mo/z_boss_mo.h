@@ -127,6 +127,25 @@ typedef struct BossMo {
     /* 0x103C */ ColliderJntSphElement tentElements[19];
     /* 0x14FC */ ColliderCylinder coreCollider;
     /* 0x1548 */ char unk_1548[0x44];
+    // Co-op (see MorphaAdapter): the tentacle's grab target (authority: local Link
+    // or a puppet) and its streamed client id, the mirror's local hold state,
+    // streamed one-shot sound events, the streamed water level, and the mirror's
+    // last applied values (edge detection).
+    Player* coopGrabTarget;
+    u32 coopGrabClientId;
+    u8 coopLocalGrab;
+    u8 coopSfxSeq;
+    u16 coopSfxId;
+    u8 coopMirrorSfxSeq;
+    s16 coopWaterLevel;
+    // Zero until a "wl" actually arrives. Without it a peer on a build that does not
+    // send the key -- or a truncated packet -- would drop the room's water box to 0
+    // and put Link on the temple floor.
+    u8 coopHasWaterLevel;
+    s16 coopMirrorVar;
+    s16 coopMirrorMelt;
+    s16 coopMashCounter;
+    f32 coopMirrorPrevY;
 } BossMo; // size = 0x158C
 
 #define BOSSMO_CORE -1

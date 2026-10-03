@@ -82,11 +82,17 @@ void func_808B3550(BgSpot12Saku* this) {
     this->dyna.actor.world.pos.z = this->dyna.actor.home.pos.z;
 }
 
+s32 Anchor_ShouldPlayCameraCutscene(Actor* actor, f32 range);
+
 void func_808B357C(BgSpot12Saku* this, PlayState* play) {
     if (GameInteractor_Should(VB_GTG_GATE_BE_OPEN, Flags_GetSwitch(play, this->dyna.actor.params & 0x3F))) {
         func_808B35E4(this);
         this->timer = 20;
-        OnePointCutscene_Init(play, 4170, -99, &this->dyna.actor, MAIN_CAM);
+        // Co-op: see Bg_Spot12_Gate — the grate follows the replicated flag on
+        // both clients, but only the one standing near it should lose its camera.
+        if (Anchor_ShouldPlayCameraCutscene(&this->dyna.actor, 800.0f)) {
+            OnePointCutscene_Init(play, 4170, -99, &this->dyna.actor, MAIN_CAM);
+        }
     }
 }
 

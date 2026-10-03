@@ -121,6 +121,9 @@ static Vec3f D_80AE4940 = { 300.0f, 0.0f, 0.0f };
 static Vec3f D_80AE494C = { 300.0f, 0.0f, 0.0f };
 static Vec3f D_80AE4958 = { 0.25f, 0.25f, 0.25f };
 
+// Co-op (Anchor/DummyPlayer.cpp): nearest live player, local Link or puppet.
+Player* Anchor_NearestPlayer(Actor* from);
+
 void EnRd_SetupAction(EnRd* this, EnRdActionFunc actionFunc) {
     this->actionFunc = actionFunc;
 }
@@ -343,7 +346,12 @@ void func_80AE2C1C(EnRd* this, PlayState* play) {
                PLAYER_STATE1_JUMPING | PLAYER_STATE1_FREEFALL | PLAYER_STATE1_CLIMBING_LADDER)) &&
             !(player->stateFlags2 & PLAYER_STATE2_GRABBED_BY_ENEMY)) {
             if (this->unk_306 == 0) {
+                // Co-op: sp32 is built from yawTowardsPlayer, which EnemySync re-points
+                // at the NEAREST player -- so this fires when the Redead turns towards a
+                // puppet, while freezeTimer below always lands on the LOCAL Link. The
+                // 150-unit check above bounds it, but the two can still disagree.
                 if (!(this->unk_312 & PLAYER_STATE2_GRABBED_BY_ENEMY) &&
+                    (Anchor_NearestPlayer(&this->actor) == player) &&
                     GameInteractor_Should(VB_REDEAD_GIBDO_FREEZE_LINK, true, this)) {
                     player->actor.freezeTimer = 40;
                     Player_SetAutoLockOnActor(play, &this->actor);
@@ -575,7 +583,13 @@ void func_80AE3834(EnRd* this, PlayState* play) {
     s16 temp_v0 = this->actor.yawTowardsPlayer - this->actor.shape.rot.y - this->unk_30E - this->unk_310;
 
     if (ABS(temp_v0) < 0x2008) {
-        if (!(this->unk_312 & 0x80) && GameInteractor_Should(VB_REDEAD_GIBDO_FREEZE_LINK, true, this)) {
+        // Co-op: this one has NO distance check at all -- temp_v0 is pure
+        // yawTowardsPlayer, which EnemySync re-points at the nearest player. A Redead
+        // facing the other player therefore froze the local Link for 60 frames from
+        // anywhere in the room. The scream animation and sfx below stay unconditional:
+        // both players should see and hear it, only the paralysis is the victim's.
+        if (!(this->unk_312 & 0x80) && (Anchor_NearestPlayer(&this->actor) == player) &&
+            GameInteractor_Should(VB_REDEAD_GIBDO_FREEZE_LINK, true, this)) {
             player->actor.freezeTimer = 60;
             func_800AA000(this->actor.xzDistToPlayer, 0xFF, 0x14, 0x96);
             Player_SetAutoLockOnActor(play, &this->actor);

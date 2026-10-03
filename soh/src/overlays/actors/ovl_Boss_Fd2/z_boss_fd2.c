@@ -178,6 +178,18 @@ void BossFd2_SpawnDust(BossFdEffect* effect, Vec3f* position, Vec3f* velocity, V
     }
 }
 
+// Co-op (Anchor/DummyPlayer.cpp): nearest live player, local Link or puppet.
+Player* Anchor_NearestPlayer(Actor* from);
+
+// Co-op: one-shot sounds the authority plays from its AI are recorded as an event
+// so the suppressed mirror copy can replay them (VolvagiaAdapter), together with
+// the one-shot particles that go with them.
+static void BossFd2_CoopSfx(BossFd2* this, u16 sfxId) {
+    Audio_PlayActorSound2(&this->actor, sfxId);
+    this->coopSfxId = sfxId;
+    this->coopSfxSeq++;
+}
+
 void BossFd2_Init(Actor* thisx, PlayState* play) {
     s32 pad;
     BossFd2* this = (BossFd2*)thisx;
@@ -248,7 +260,7 @@ void BossFd2_Emerge(BossFd2* this, PlayState* play) {
             osSyncPrintf("UP time %d \n", this->timers[0]);
             osSyncPrintf("PL time %x \n", player);
             osSyncPrintf("MT time %x \n", bossFd);
-            if ((this->timers[0] == 0) && (player->actor.world.pos.y > 70.0f)) {
+            if ((this->timers[0] == 0) && (Anchor_NearestPlayer(&this->actor)->actor.world.pos.y > 70.0f)) {
                 osSyncPrintf("UP 1.6 \n");
                 bossFd->faceExposed = 0;
                 bossFd->holePosition.x = this->actor.world.pos.x;
@@ -287,7 +299,7 @@ void BossFd2_Emerge(BossFd2* this, PlayState* play) {
                     this->skelAnime.playSpeed = 1.0f;
                     this->fwork[FD2_END_FRAME] = Animation_GetLastFrame(&gHoleVolvagiaEmergeAnim);
                     this->work[FD2_ACTION_STATE] = 2;
-                    Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_ROAR);
+                    BossFd2_CoopSfx(this, NA_SE_EN_VALVAISA_ROAR);
                     this->actor.shape.rot.y = this->actor.yawTowardsPlayer;
                     this->timers[0] = 15;
                     this->actor.world.pos.y = 150.0f;
@@ -303,7 +315,14 @@ void BossFd2_Emerge(BossFd2* this, PlayState* play) {
             break;
         case 2:
             Math_ApproachS(&this->actor.shape.rot.y, this->actor.yawTowardsPlayer, 3, 0x7D0);
-            if ((this->timers[0] == 1) && (this->actor.xzDistToPlayer < 120.0f)) {
+            // func_8002F6D4 always shoves the LOCAL Link, while xzDistToPlayer is
+            // the distance to the NEAREST player (EnemySync retargets it at
+            // puppets). Only the authority runs this branch, so without the
+            // ownership test a co-op partner standing here shoves the authority's
+            // Link instead. The head's AT collider still hits whoever is really
+            // close, on that player's own client.
+            if ((this->timers[0] == 1) && (this->actor.xzDistToPlayer < 120.0f) &&
+                (Anchor_NearestPlayer(&this->actor) == player)) {
                 func_8002F6D4(play, &this->actor, 3.0f, this->actor.yawTowardsPlayer, 2.0f, 0x20);
                 Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
             }
@@ -395,6 +414,13 @@ void BossFd2_Burrow(BossFd2* this, PlayState* play) {
     }
 }
 
+s16 BossFd2_BreathOpacity(BossFd2* this);
+void BossFd2_SpawnBreath(BossFd2* this, PlayState* play, s16 breathOpacity);
+void BossFd2_SpawnLandDust(BossFd2* this);
+void BossFd2_SpawnFaceDebris(BossFd2* this, PlayState* play);
+void BossFd2_SpawnSkullPieces(BossFd2* this, PlayState* play);
+void BossFd2_UpdateCosmetics(BossFd2* this, PlayState* play, u8 hurt);
+
 void BossFd2_SetupBreatheFire(BossFd2* this, PlayState* play) {
     Animation_MorphToPlayOnce(&this->skelAnime, &gHoleVolvagiaBreatheFireAnim, -5.0f);
     this->actionFunc = BossFd2_BreatheFire;
@@ -410,8 +436,7 @@ void BossFd2_BreatheFire(BossFd2* this, PlayState* play) {
     s16 angleX;
     s16 angleY;
     s16 breathOpacity = 0;
-    BossFd* bossFd = (BossFd*)this->actor.parent;
-    Player* player = GET_PLAYER(play);
+    Player* player = Anchor_NearestPlayer(&this->actor); // co-op: aim the breath at the closest player
     f32 tempX;
     f32 tempY;
 
@@ -424,11 +449,7 @@ void BossFd2_BreatheFire(BossFd2* this, PlayState* play) {
             play->envCtx.unk_D8 = 0.0f;
         }
         Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_FIRE - SFX_FLAG);
-        if (this->skelAnime.curFrame > 50) {
-            breathOpacity = (70.0f - this->skelAnime.curFrame) * 12.0f;
-        } else {
-            breathOpacity = 255;
-        }
+        breathOpacity = BossFd2_BreathOpacity(this);
         toLink.x = player->actor.world.pos.x - this->headPos.x;
         toLink.y = player->actor.world.pos.y - this->headPos.y;
         toLink.z = player->actor.world.pos.z - this->headPos.z;
@@ -454,7 +475,27 @@ void BossFd2_BreatheFire(BossFd2* this, PlayState* play) {
         Math_ApproachS(&this->headRot.y, 0, 5, 0x7D0);
         Math_ApproachS(&this->headRot.x, 0, 5, 0x7D0);
     }
-    if (breathOpacity != 0) {
+    BossFd2_SpawnBreath(this, play, breathOpacity);
+}
+
+// Breath opacity from the breathe-fire animation frame (25..70), 0 outside it.
+s16 BossFd2_BreathOpacity(BossFd2* this) {
+    if ((25.0f <= this->skelAnime.curFrame) && (this->skelAnime.curFrame < 70.0f)) {
+        return (this->skelAnime.curFrame > 50) ? (s16)((70.0f - this->skelAnime.curFrame) * 12.0f) : 255;
+    }
+    return 0;
+}
+
+// The fire-breath particles (into the parent's effect pool), split out of
+// BossFd2_BreatheFire so the co-op mirror can replay them from the streamed
+// head rotation and animation frame.
+void BossFd2_SpawnBreath(BossFd2* this, PlayState* play, s16 breathOpacity) {
+    BossFd* bossFd = (BossFd*)this->actor.parent;
+    f32 tempX;
+    f32 tempY;
+    s16 i;
+
+    if ((breathOpacity != 0) && (bossFd != NULL)) {
         f32 breathScale;
         Vec3f spawnSpeed = { 0.0f, 0.0f, 0.0f };
         Vec3f spawnVel;
@@ -514,7 +555,7 @@ void BossFd2_ClawSwipe(BossFd2* this, PlayState* play) {
     SkelAnime_Update(&this->skelAnime);
     if (Animation_OnFrame(&this->skelAnime, 5.0f)) {
         Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_ROAR);
-        Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_SW_NAIL);
+        BossFd2_CoopSfx(this, NA_SE_EN_VALVAISA_SW_NAIL); // the mirror plays the roar with it
     }
     if (Animation_OnFrame(&this->skelAnime, this->fwork[FD2_END_FRAME])) {
         BossFd2_SetupBurrow(this, play);
@@ -538,28 +579,11 @@ void BossFd2_Vulnerable(BossFd2* this, PlayState* play) {
     switch (this->work[FD2_ACTION_STATE]) {
         case 0:
             if (Animation_OnFrame(&this->skelAnime, 13.0f)) {
-                Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_MAHI2);
+                BossFd2_CoopSfx(this, NA_SE_EN_VALVAISA_MAHI2);
             }
             if (Animation_OnFrame(&this->skelAnime, this->fwork[FD2_END_FRAME] - 3.0f)) {
-                for (i = 0; i < 25; i++) {
-                    Vec3f spawnVel;
-                    Vec3f spawnAccel = { 0.0f, 0.0f, 0.0f };
-                    Vec3f spawnPos;
-
-                    spawnVel.x = Rand_CenteredFloat(8.0f);
-                    spawnVel.y = Rand_ZeroFloat(1.0f);
-                    spawnVel.z = Rand_CenteredFloat(8.0f);
-
-                    spawnAccel.y = 0.5f;
-
-                    spawnPos.x = Rand_CenteredFloat(10.0f) + this->actor.focus.pos.x;
-                    spawnPos.y = Rand_CenteredFloat(10.0f) + this->actor.focus.pos.y;
-                    spawnPos.z = Rand_CenteredFloat(10.0f) + this->actor.focus.pos.z;
-
-                    BossFd2_SpawnDust(bossFd->effects, &spawnPos, &spawnVel, &spawnAccel,
-                                      Rand_ZeroFloat(100.0f) + 300.0f);
-                }
-                Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_LAND);
+                BossFd2_SpawnLandDust(this);
+                BossFd2_CoopSfx(this, NA_SE_EN_VALVAISA_LAND);
             }
             if (Animation_OnFrame(&this->skelAnime, this->fwork[FD2_END_FRAME])) {
                 Animation_MorphToLoop(&this->skelAnime, &gHoleVolvagiaVulnerableAnim, -5.0f);
@@ -569,12 +593,91 @@ void BossFd2_Vulnerable(BossFd2* this, PlayState* play) {
             break;
         case 1:
             if ((this->work[FD2_VAR_TIMER] & 0xF) == 0xF) {
-                Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_KNOCKOUT);
+                BossFd2_CoopSfx(this, NA_SE_EN_VALVAISA_KNOCKOUT);
             }
             if (this->timers[0] == 0) {
                 BossFd2_SetupBurrow(this, play);
             }
             break;
+    }
+}
+
+// Dust puff when the stunned head slams the ground (BossFd2_Vulnerable).
+void BossFd2_SpawnLandDust(BossFd2* this) {
+    BossFd* bossFd = (BossFd*)this->actor.parent;
+    s16 i;
+
+    if (bossFd == NULL) {
+        return;
+    }
+    for (i = 0; i < 25; i++) {
+        Vec3f spawnVel;
+        Vec3f spawnAccel = { 0.0f, 0.0f, 0.0f };
+        Vec3f spawnPos;
+
+        spawnVel.x = Rand_CenteredFloat(8.0f);
+        spawnVel.y = Rand_ZeroFloat(1.0f);
+        spawnVel.z = Rand_CenteredFloat(8.0f);
+
+        spawnAccel.y = 0.5f;
+
+        spawnPos.x = Rand_CenteredFloat(10.0f) + this->actor.focus.pos.x;
+        spawnPos.y = Rand_CenteredFloat(10.0f) + this->actor.focus.pos.y;
+        spawnPos.z = Rand_CenteredFloat(10.0f) + this->actor.focus.pos.z;
+
+        BossFd2_SpawnDust(bossFd->effects, &spawnPos, &spawnVel, &spawnAccel, Rand_ZeroFloat(100.0f) + 300.0f);
+    }
+}
+
+// Rock shards off the face plate when the hammer breaks it (BossFd2_CollisionCheck).
+void BossFd2_SpawnFaceDebris(BossFd2* this, PlayState* play) {
+    BossFd* bossFd = (BossFd*)this->actor.parent;
+    s16 i;
+
+    if (bossFd == NULL) {
+        return;
+    }
+    for (i = 0; i < 30; i++) {
+        Vec3f debrisVel = { 0.0f, 0.0f, 0.0f };
+        Vec3f debrisAccel = { 0.0f, -1.0f, 0.0f };
+        Vec3f debrisPos;
+
+        debrisVel.x = Rand_CenteredFloat(10.0f);
+        debrisVel.y = Rand_ZeroFloat(5.0f) + 8.0f;
+        debrisVel.z = Rand_CenteredFloat(10.0f);
+
+        debrisPos.x = this->actor.focus.pos.x;
+        debrisPos.y = this->actor.focus.pos.y;
+        debrisPos.z = this->actor.focus.pos.z;
+
+        BossFd2_SpawnDebris(play, bossFd->effects, &debrisPos, &debrisVel, &debrisAccel,
+                            (s16)Rand_ZeroFloat(10.0) + 10);
+    }
+}
+
+// Skull chips off the exposed face on every damaging hit (BossFd2_CollisionCheck).
+void BossFd2_SpawnSkullPieces(BossFd2* this, PlayState* play) {
+    BossFd* bossFd = (BossFd*)this->actor.parent;
+    s16 i;
+
+    if (bossFd == NULL) {
+        return;
+    }
+    for (i = 0; i < 30; i++) {
+        Vec3f pieceVel = { 0.0f, 0.0f, 0.0f };
+        Vec3f pieceAccel = { 0.0f, -1.0f, 0.0f };
+        Vec3f piecePos;
+
+        pieceVel.x = Rand_CenteredFloat(6.0f);
+        pieceVel.y = Rand_ZeroFloat(4.0f) + 6.0f;
+        pieceVel.z = Rand_CenteredFloat(6.0f);
+
+        piecePos.x = this->actor.focus.pos.x;
+        piecePos.y = this->actor.focus.pos.y;
+        piecePos.z = this->actor.focus.pos.z;
+
+        BossFd2_SpawnSkullPiece(play, bossFd->effects, &piecePos, &pieceVel, &pieceAccel,
+                                (s16)Rand_ZeroFloat(6.0f) + 10);
     }
 }
 
@@ -598,7 +701,7 @@ void BossFd2_Damaged(BossFd2* this, PlayState* play) {
         }
     } else if (this->work[FD2_ACTION_STATE] == 1) {
         if (Animation_OnFrame(&this->skelAnime, 6.0f)) {
-            Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_DAMAGE2);
+            BossFd2_CoopSfx(this, NA_SE_EN_VALVAISA_DAMAGE2);
         }
         if (Animation_OnFrame(&this->skelAnime, 20.0f)) {
             bossFd->timers[4] = 30;
@@ -852,23 +955,8 @@ void BossFd2_CollisionCheck(BossFd2* this, PlayState* play) {
                 BossFd2_SetupVulnerable(this, play);
                 this->work[FD2_INVINC_TIMER] = 30;
                 this->work[FD2_DAMAGE_FLASH_TIMER] = 5;
-                Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_MAHI1);
-                for (i = 0; i < 30; i++) {
-                    Vec3f debrisVel = { 0.0f, 0.0f, 0.0f };
-                    Vec3f debrisAccel = { 0.0f, -1.0f, 0.0f };
-                    Vec3f debrisPos;
-
-                    debrisVel.x = Rand_CenteredFloat(10.0f);
-                    debrisVel.y = Rand_ZeroFloat(5.0f) + 8.0f;
-                    debrisVel.z = Rand_CenteredFloat(10.0f);
-
-                    debrisPos.x = this->actor.focus.pos.x;
-                    debrisPos.y = this->actor.focus.pos.y;
-                    debrisPos.z = this->actor.focus.pos.z;
-
-                    BossFd2_SpawnDebris(play, bossFd->effects, &debrisPos, &debrisVel, &debrisAccel,
-                                        (s16)Rand_ZeroFloat(10.0) + 10);
-                }
+                BossFd2_CoopSfx(this, NA_SE_EN_VALVAISA_MAHI1);
+                BossFd2_SpawnFaceDebris(this, play);
             }
         } else {
             u8 canKill = false;
@@ -903,31 +991,17 @@ void BossFd2_CollisionCheck(BossFd2* this, PlayState* play) {
                 BossFd2_SetupDamaged(this, play);
                 this->work[FD2_DAMAGE_FLASH_TIMER] = 10;
                 this->work[FD2_INVINC_TIMER] = 100;
-                Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_DAMAGE1);
+                BossFd2_CoopSfx(this, NA_SE_EN_VALVAISA_DAMAGE1); // the mirror chips the skull with it
             }
             if (damage) {
-                for (i = 0; i < 30; i++) {
-                    Vec3f pieceVel = { 0.0f, 0.0f, 0.0f };
-                    Vec3f pieceAccel = { 0.0f, -1.0f, 0.0f };
-                    Vec3f piecePos;
-
-                    pieceVel.x = Rand_CenteredFloat(6.0f);
-                    pieceVel.y = Rand_ZeroFloat(4.0f) + 6.0f;
-                    pieceVel.z = Rand_CenteredFloat(6.0f);
-
-                    piecePos.x = this->actor.focus.pos.x;
-                    piecePos.y = this->actor.focus.pos.y;
-                    piecePos.z = this->actor.focus.pos.z;
-
-                    BossFd2_SpawnSkullPiece(play, bossFd->effects, &piecePos, &pieceVel, &pieceAccel,
-                                            (s16)Rand_ZeroFloat(6.0f) + 10);
-                }
+                BossFd2_SpawnSkullPieces(this, play);
             }
         }
     }
 }
 
-void BossFd2_UpdateFace(BossFd2* this, PlayState* play) {
+// hurt: stunned / hit (eyes squint) — the co-op mirror passes the streamed flag.
+void BossFd2_UpdateFace(BossFd2* this, PlayState* play, u8 hurt) {
     f32 maxOpen;
     f32 openRate;
     s16 eyeStates[5] = { EYE_OPEN, EYE_HALF, EYE_CLOSED, EYE_CLOSED, EYE_HALF };
@@ -935,7 +1009,7 @@ void BossFd2_UpdateFace(BossFd2* this, PlayState* play) {
     if (((this->work[FD2_VAR_TIMER] % 8) == 0) && (Rand_ZeroOne() < 0.3f)) {
         this->work[FD2_BLINK_TIMER] = 4;
     }
-    if ((this->actionFunc == BossFd2_Vulnerable) || (this->actionFunc == BossFd2_Damaged)) {
+    if (hurt) {
         if (this->work[FD2_VAR_TIMER] & 0x10) {
             this->eyeState = EYE_HALF;
         } else {
@@ -999,7 +1073,14 @@ void BossFd2_Update(Actor* thisx, PlayState* play2) {
         }
     }
 
-    BossFd2_UpdateFace(this, play);
+    BossFd2_UpdateCosmetics(this, play,
+                            (this->actionFunc == BossFd2_Vulnerable) || (this->actionFunc == BossFd2_Damaged));
+}
+
+// Face, texture scroll and Z-target gate (BossFd2_Update tail), shared with the
+// co-op mirror tick.
+void BossFd2_UpdateCosmetics(BossFd2* this, PlayState* play, u8 hurt) {
+    BossFd2_UpdateFace(this, play, hurt);
     this->fwork[FD2_TEX1_SCROLL_X] += 4.0f;
     this->fwork[FD2_TEX1_SCROLL_Y] = 120.0f;
     this->fwork[FD2_TEX2_SCROLL_X] += 3.0f;
@@ -1008,6 +1089,50 @@ void BossFd2_Update(Actor* thisx, PlayState* play2) {
         this->actor.flags &= ~ACTOR_FLAG_ATTENTION_ENABLED;
     } else {
         this->actor.flags |= ACTOR_FLAG_ATTENTION_ENABLED;
+    }
+}
+
+// Co-op mirror side. BossFd2_Update is suppressed on the mirror (the authority
+// streams pose, skeleton, work[], head rotation and animation frame), so the
+// update-side cosmetics are replayed here: face / glow, the fire breath (into
+// the parent's effect pool, which burns THIS machine's Link), the face-plate
+// collider type from the parent's streamed faceExposed, and the streamed
+// one-shot sound events with their particles. Called by the Volvagia adapter
+// once per streamed frame.
+void BossFd2_CoopMirrorTick(BossFd2* this, PlayState* play, u8 hurt, u8 breathing) {
+    BossFd* bossFd = (BossFd*)this->actor.parent;
+
+    BossFd2_UpdateCosmetics(this, play, hurt);
+    if (bossFd != NULL) {
+        if (!bossFd->faceExposed) {
+            this->collider.elements[0].info.elemType = ELEMTYPE_UNK2;
+            this->collider.base.colType = COLTYPE_METAL;
+        } else {
+            this->collider.elements[0].info.elemType = ELEMTYPE_UNK3;
+            this->collider.base.colType = COLTYPE_HIT3;
+        }
+    }
+    if (breathing) {
+        Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_FIRE - SFX_FLAG);
+        BossFd2_SpawnBreath(this, play, BossFd2_BreathOpacity(this));
+    }
+    if (this->coopMirrorSfxSeq != this->coopSfxSeq) {
+        this->coopMirrorSfxSeq = this->coopSfxSeq;
+        Audio_PlayActorSound2(&this->actor, this->coopSfxId);
+        switch (this->coopSfxId) {
+            case NA_SE_EN_VALVAISA_SW_NAIL:
+                Audio_PlayActorSound2(&this->actor, NA_SE_EN_VALVAISA_ROAR);
+                break;
+            case NA_SE_EN_VALVAISA_LAND:
+                BossFd2_SpawnLandDust(this);
+                break;
+            case NA_SE_EN_VALVAISA_MAHI1:
+                BossFd2_SpawnFaceDebris(this, play);
+                break;
+            case NA_SE_EN_VALVAISA_DAMAGE1:
+                BossFd2_SpawnSkullPieces(this, play);
+                break;
+        }
     }
 }
 
@@ -1206,7 +1331,7 @@ void BossFd2_Draw(Actor* thisx, PlayState* play) {
 
     OPEN_DISPS(play->state.gfxCtx);
     osSyncPrintf("FD2 draw start \n");
-    if (this->actionFunc != BossFd2_Wait) {
+    if ((this->actionFunc != BossFd2_Wait) || this->coopVisible) { // co-op: the mirror copy idles in Wait
         Gfx_SetupDL_25Opa(play->state.gfxCtx);
         if (this->work[FD2_DAMAGE_FLASH_TIMER] & 2) {
             POLY_OPA_DISP = Gfx_SetFog(POLY_OPA_DISP, 255, 255, 255, 0, 900, 1099);

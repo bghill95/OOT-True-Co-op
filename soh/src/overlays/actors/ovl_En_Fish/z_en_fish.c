@@ -713,8 +713,15 @@ void EnFish_OrdinaryUpdate(EnFish* this, PlayState* play) {
 
             EnFish_BeginRespawn(this);
         } else if (EnFish_InBottleRange(this, play)) {
-            // GI_MAX in this case allows the player to catch the actor in a bottle
-            Actor_OfferGetItem(&this->actor, play, GI_MAX, 80.0f, 20.0f);
+            // Co-op: a fish released from a PEER's bottle is replicated here for
+            // show only. Letting it be re-bottled would hand every player a free
+            // copy of the one fish they emptied out.
+            s32 FxSync_IsBottleDropReplica(Actor * actor);
+
+            if (!FxSync_IsBottleDropReplica(&this->actor)) {
+                // GI_MAX in this case allows the player to catch the actor in a bottle
+                Actor_OfferGetItem(&this->actor, play, GI_MAX, 80.0f, 20.0f);
+            }
         }
     }
 }

@@ -45,9 +45,7 @@ static void EnDekubaba_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
         int16_t sa2 = x.contains("sa2") ? x["sa2"].get<int16_t>() : b->stemSectionAngle[2];
         int16_t timer = x.contains("timer") ? x["timer"].get<int16_t>() : b->timer;
         EnDekubaba_MirrorApplyDraw(b, stem, sa0, sa1, sa2, timer);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnDekubaba extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnDekubaba extras parse error: {}", ex.what()); }
 }
 
 // health==0 is the observable "dying" edge (the adapter contract asks GetPhase to
@@ -74,5 +72,9 @@ void RegisterEnDekubabaAdapter() {
     adapter.DeserializeExtras = EnDekubaba_DeserializeExtras;
     adapter.GetPhase = EnDekubaba_GetPhase;
     adapter.OnPhaseChange = EnDekubaba_OnPhaseChange;
+    // OnPhaseChange hands the defeat back to EnDekubaba_ShrinkDie, which drops
+    // its own nuts (z_en_dekubaba.c:1004-1011; the stick is handled elsewhere).
+    // Rolling here too would double them.
+    adapter.ownsDeathDrop = true;
     EnemySync::RegisterAdapter(ACTOR_EN_DEKUBABA, adapter);
 }

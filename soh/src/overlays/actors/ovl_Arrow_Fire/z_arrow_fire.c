@@ -7,6 +7,8 @@
 #include "z_arrow_fire.h"
 #include "overlays/actors/ovl_En_Arrow/z_en_arrow.h"
 
+s32 Anchor_ShouldPlayArrowFlash(Actor* elementalHead, f32 range);
+
 #define FLAGS (ACTOR_FLAG_UPDATE_CULLING_DISABLED | ACTOR_FLAG_UPDATE_DURING_OCARINA)
 
 void ArrowFire_Init(Actor* thisx, PlayState* play);
@@ -218,7 +220,8 @@ void ArrowFire_Draw(Actor* thisx, PlayState* play2) {
         Matrix_Scale(0.01f, 0.01f, 0.01f, MTXMODE_APPLY);
 
         // Draw red effect over the screen when arrow hits
-        if (this->unk_15C > 0) {
+        // Co-op: bounded for a PEER's arrow only — see Anchor_ShouldPlayArrowFlash.
+        if (this->unk_15C > 0 && Anchor_ShouldPlayArrowFlash(&this->actor, 600.0f)) {
             POLY_XLU_DISP = Gfx_SetupDL_57(POLY_XLU_DISP);
             gDPSetPrimColor(POLY_XLU_DISP++, 0, 0, (s32)((secondaryColor.r / 6) * this->unk_15C) & 0xFF,
                             (s32)((secondaryColor.g / 6) * this->unk_15C) & 0xFF,
