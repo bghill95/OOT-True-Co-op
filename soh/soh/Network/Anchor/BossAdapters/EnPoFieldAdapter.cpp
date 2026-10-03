@@ -28,9 +28,7 @@ static void EnPoField_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             po->lightColor.a = x["la"].get<uint8_t>();
             actor->shape.shadowAlpha = po->lightColor.a;
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnPoField extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnPoField extras parse error: {}", ex.what()); }
 }
 
 void RegisterEnPoFieldAdapter() {

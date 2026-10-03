@@ -105,7 +105,7 @@ struct TrackedState {
     uint8_t deathStallFrames = 0;  // frames already granted on top of the grace
     uint32_t lethalDmgFlags = 0;   // dying: re-armed each frame until the enemy takes its death branch
     Actor* lethalAttacker = nullptr;
-    uint8_t deathCooldown = 0;     // >0: a death was just sent/received; don't re-broadcast or re-apply
+    uint8_t deathCooldown = 0;      // >0: a death was just sent/received; don't re-broadcast or re-apply
     Collider* acCollider = nullptr; // last AC collider this actor registered
 
     // --- M2 mirroring ---
@@ -119,12 +119,12 @@ struct TrackedState {
     bool hadUncullFlag = false;       // ...and this was its original state
     uint64_t lastHitReqTick = 0;      // one hit-request per actor per tick
     // --- dynamic spawns / adapters ---
-    int16_t spawnActorId = 0;         // identity at spawn (params mutate at runtime)
+    int16_t spawnActorId = 0; // identity at spawn (params mutate at runtime)
     uint16_t spawnParams = 0;
-    bool dynamicKey = false;          // key is host-assigned (bit 63)
-    bool remoteSpawned = false;       // spawned from an ENEMY_SPAWN packet
-    uint16_t localUpdates = 0;        // frames this copy's OWN AI ran unsuppressed (saturating)
-    Vec3f lastSentScale{};            // authority: last scale actually put on the wire
+    bool dynamicKey = false;    // key is host-assigned (bit 63)
+    bool remoteSpawned = false; // spawned from an ENEMY_SPAWN packet
+    uint16_t localUpdates = 0;  // frames this copy's OWN AI ran unsuppressed (saturating)
+    Vec3f lastSentScale{};      // authority: last scale actually put on the wire
     bool scaleSent = false;
     bool needsSpawnBroadcast = false; // authority: announce this dynamic spawn
     bool projectile = false;          // whitelisted enemy projectile: fire-and-forget replica, never streamed/mirrored
@@ -432,8 +432,7 @@ static bool IsSyncedProjectile(Actor* actor) {
     // Safe to run locally: func_809B26EC derives the whole flight from world.rot
     // at a fixed speed of 15, and the spawn broadcast carries world.rot for
     // projectiles, so both machines compute the same arc.
-    return actor->id == ACTOR_EN_NUTSBALL || actor->id == ACTOR_EN_BDFIRE ||
-           actor->id == ACTOR_EN_ANUBICE_FIRE ||
+    return actor->id == ACTOR_EN_NUTSBALL || actor->id == ACTOR_EN_BDFIRE || actor->id == ACTOR_EN_ANUBICE_FIRE ||
            (actor->id == ACTOR_EN_OKUTA && actor->category == ACTORCAT_PROP);
 }
 
@@ -695,8 +694,7 @@ static void AddCollider(Actor* actor, TrackedState& st, Collider* collider) {
         return;
     }
     if (st.colliders.size() >= MAX_TRACKED_COLLIDERS) {
-        SPDLOG_WARN("[EnemySync] Collider overflow id={} key={:#x} (cap {})", actor->id, st.key,
-                    MAX_TRACKED_COLLIDERS);
+        SPDLOG_WARN("[EnemySync] Collider overflow id={} key={:#x} (cap {})", actor->id, st.key, MAX_TRACKED_COLLIDERS);
         return;
     }
     st.colliders.push_back(collider);
@@ -1451,13 +1449,12 @@ static void SubmitColliders(Actor* actor, TrackedState& st, RemoteEnemyState& r)
             // stale quad geometry lands false hits at old positions, worse than a
             // missing collider. (Same predicate the authority used to decide which
             // quads to stream, so cursor and quad iteration stay in lockstep.)
-            bool quadAtAc = ((mask & SUBMIT_AT) && (col->atFlags & AT_ON)) ||
-                            ((mask & SUBMIT_AC) && (col->acFlags & AC_ON));
+            bool quadAtAc =
+                ((mask & SUBMIT_AT) && (col->atFlags & AT_ON)) || ((mask & SUBMIT_AC) && (col->acFlags & AC_ON));
             if (quadAtAc) {
                 if (quadCursor + 4 <= r.quadVerts.size()) {
-                    Collider_SetQuadVertices((ColliderQuad*)col, &r.quadVerts[quadCursor],
-                                             &r.quadVerts[quadCursor + 1], &r.quadVerts[quadCursor + 2],
-                                             &r.quadVerts[quadCursor + 3]);
+                    Collider_SetQuadVertices((ColliderQuad*)col, &r.quadVerts[quadCursor], &r.quadVerts[quadCursor + 1],
+                                             &r.quadVerts[quadCursor + 2], &r.quadVerts[quadCursor + 3]);
                     quadCursor += 4;
                 } else {
                     continue; // qualifies but no fresh verts: never submit stale quad geometry
@@ -2152,9 +2149,7 @@ void IngestEnemyState(const nlohmann::json& payload) {
                 }
             }
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] IngestEnemyState parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] IngestEnemyState parse error: {}", ex.what()); }
 }
 
 // Per-game-frame bookkeeping (driven by the Anchor per-frame dispatcher, which runs
@@ -2202,8 +2197,8 @@ static void Tick() {
     // excludes the local player, which is always an implicit perception target.
     if (Anchor::Instance != nullptr) {
         for (auto& [cid, c] : Anchor::Instance->clients) {
-            if (!c.self && c.online && c.isSaveLoaded && c.sceneNum == gPlayState->sceneNum &&
-                c.player != nullptr && c.player->actor.update != NULL && !(c.stateFlags1 & PLAYER_STATE1_DEAD)) {
+            if (!c.self && c.online && c.isSaveLoaded && c.sceneNum == gPlayState->sceneNum && c.player != nullptr &&
+                c.player->actor.update != NULL && !(c.stateFlags1 & PLAYER_STATE1_DEAD)) {
                 sPerceptionTargets.push_back(cid);
             }
         }
@@ -2587,7 +2582,8 @@ void ReconcileRoster(int16_t roomNum, const nlohmann::json& entries) {
             // Projectiles never appear in a roster (BuildRoster skips them), so an
             // absent key must not be read as "authority killed it" — skip them here
             // too, or a mirror's live local copy would be ghost-killed on room entry.
-            if (actor->room != roomNum || st.projectile || st.dying || actor->update == NULL || IsMirrorBlocked(actor)) {
+            if (actor->room != roomNum || st.projectile || st.dying || actor->update == NULL ||
+                IsMirrorBlocked(actor)) {
                 continue;
             }
             auto it = authority.find(st.key);
@@ -2630,9 +2626,7 @@ void ReconcileRoster(int16_t roomNum, const nlohmann::json& entries) {
                 st.prevHealth = it->second.second;
             }
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] ReconcileRoster parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] ReconcileRoster parse error: {}", ex.what()); }
 }
 
 // Authority-side capture of an actor's sound (see Anchor_OnActorSfx below).
@@ -2777,13 +2771,12 @@ static void OnEnemyActorUpdate(Actor* actor) {
         // up) and only the second killed it, a visible half-second behind the
         // authority. Health 0 = the death packet owns this blow.
         if (localShare > 0 && health == 0) {
-            ESYNC_LOG("[EnemySync] HP drop id={} key={:#x} lethal — hit folded into the death packet",
-                      actor->id, state.key);
+            ESYNC_LOG("[EnemySync] HP drop id={} key={:#x} lethal — hit folded into the death packet", actor->id,
+                      state.key);
         }
         if (localShare > 0 && health > 0) {
             uint32_t dmgFlags = 0;
-            Vec3s hitPos = { (int16_t)actor->world.pos.x, (int16_t)actor->world.pos.y,
-                             (int16_t)actor->world.pos.z };
+            Vec3s hitPos = { (int16_t)actor->world.pos.x, (int16_t)actor->world.pos.y, (int16_t)actor->world.pos.z };
             if (state.acCollider != nullptr) {
                 ForEachColliderInfo(state.acCollider, [&](ColliderInfo* info) {
                     if (dmgFlags == 0 && info->acHitInfo != NULL) {
@@ -2891,8 +2884,7 @@ static void OnEnemyDefeated(Actor* actor) {
     }
     state.deathCooldown = DEATH_COOLDOWN_FRAMES;
     uint32_t txFlags = CurrentHitDmgFlags(state);
-    ESYNC_LOG("[EnemySync] DEFEAT id={} key={:#x} dmgFlags={:#x} -> broadcasting death", actor->id, state.key,
-              txFlags);
+    ESYNC_LOG("[EnemySync] DEFEAT id={} key={:#x} dmgFlags={:#x} -> broadcasting death", actor->id, state.key, txFlags);
     // Defeat-hook deaths (regrowers like En_Karebaba never Actor_Kill): the
     // receiver must not force-kill if its copy can't consume the lethal hit.
     Anchor::Instance->SendPacket_EnemyDied(actor, state.key, /*permanent=*/false, txFlags);
@@ -2965,9 +2957,8 @@ void RegisterHooks(bool isConnected) {
         }
     });
 
-    COND_HOOK(ShouldActorUpdate, isConnected, [](void* actor, bool* should) {
-        OnShouldEnemyUpdate((Actor*)actor, should);
-    });
+    COND_HOOK(ShouldActorUpdate, isConnected,
+              [](void* actor, bool* should) { OnShouldEnemyUpdate((Actor*)actor, should); });
 
     // Bug C: En_Encount1 (Stalchild/Leever spawner) is ACTORCAT_PROP, so it's
     // untracked and runs on every client — a mirror would spawn its own children
@@ -3027,9 +3018,8 @@ void RegisterHooks(bool isConnected) {
         }
     });
 
-    COND_HOOK(OnColliderSetup, isConnected, [](void* actor, void* collider) {
-        OnColliderSetup((Actor*)actor, (Collider*)collider);
-    });
+    COND_HOOK(OnColliderSetup, isConnected,
+              [](void* actor, void* collider) { OnColliderSetup((Actor*)actor, (Collider*)collider); });
 
     COND_HOOK(OnSkelAnimeInit, isConnected, [](void* skelAnime) {
         if (skelAnime != NULL) {

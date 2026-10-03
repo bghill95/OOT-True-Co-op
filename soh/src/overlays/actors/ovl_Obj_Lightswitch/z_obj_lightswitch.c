@@ -12,7 +12,7 @@
 
 #define FLAGS ACTOR_FLAG_UPDATE_CULLING_DISABLED
 
-s32 Anchor_IsSessionActive(void);       // soh/Network/Anchor/DummyPlayer.cpp
+s32 Anchor_IsSessionActive(void);        // soh/Network/Anchor/DummyPlayer.cpp
 void FxSync_OnSunSwitchLightArrow(void); // soh/Network/Anchor/FxSync.cpp
 
 /**

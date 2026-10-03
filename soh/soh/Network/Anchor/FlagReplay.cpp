@@ -112,8 +112,7 @@ namespace FlagReplay {
 // the broken span (params 1) and bring back the repaired one (params 4). Adult
 // only — the child bridge (params 2) does not depend on the flag.
 static void TickValleyBridge() {
-    if (sValleyBridge.empty() || LINK_AGE_IN_YEARS != YEARS_ADULT ||
-        !GET_EVENTCHKINF_CARPENTERS_FREE_ALL()) {
+    if (sValleyBridge.empty() || LINK_AGE_IN_YEARS != YEARS_ADULT || !GET_EVENTCHKINF_CARPENTERS_FREE_ALL()) {
         return;
     }
     for (auto& b : sValleyBridge) {
@@ -166,8 +165,8 @@ void PerFrameTick() {
                 return;
             }
         }
-        Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_BG_JYA_BLOCK, b.pos.x, b.pos.y, b.pos.z, b.rot.x,
-                    b.rot.y, b.rot.z, b.params, false);
+        Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_BG_JYA_BLOCK, b.pos.x, b.pos.y, b.pos.z, b.rot.x, b.rot.y,
+                    b.rot.z, b.params, false);
     }
 }
 
@@ -410,8 +409,7 @@ void RegisterHooks(bool isConnected) {
         if (item->collectibleFlag == 0 || gPlayState == NULL || Actor_HasParent(&item->actor, gPlayState)) {
             return;
         }
-        if (GameInteractor_Should(VB_ITEM00_DESPAWN, Flags_GetCollectible(gPlayState, item->collectibleFlag),
-                                  item)) {
+        if (GameInteractor_Should(VB_ITEM00_DESPAWN, Flags_GetCollectible(gPlayState, item->collectibleFlag), item)) {
             Actor_Kill(&item->actor);
             // MUST clear `should` in the same breath. Actor_UpdateAll reads
             //     if (GameInteractor_ShouldActorUpdate(actor)) { actor->update(...); }

@@ -61,8 +61,8 @@ u8* BossVa_CoopBodyBari(void); // [10]
 namespace {
 
 // BossVaCutscene lives in z_boss_va.c — mirror the two thresholds we gate on.
-constexpr int8_t kBattle = 13;     // BOSSVA_BATTLE
-constexpr int8_t kDeathStart = 14; // DEATH_START
+constexpr int8_t kBattle = 13;      // BOSSVA_BATTLE
+constexpr int8_t kDeathStart = 14;  // DEATH_START
 constexpr uint8_t kPhaseDeath = 18; // PHASE_DEATH
 
 enum VaPhase : uint8_t {
@@ -173,73 +173,110 @@ static void BossVaSync_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
         if (params == BOSSVA_BODY) {
             // Adopt the authority's combat statics: every part's draw and the
             // local door/stumps consume them.
-            if (x.contains("cs")) *BossVa_CoopCsState() = x["cs"].get<int8_t>();
-            if (x.contains("fp")) *BossVa_CoopFightPhase() = x["fp"].get<uint8_t>();
-            if (x.contains("hp4")) *BossVa_CoopPhase4HP() = x["hp4"].get<int8_t>();
-            if (x.contains("bs")) *BossVa_CoopBodyState() = x["bs"].get<uint8_t>();
-            if (x.contains("kb")) *BossVa_CoopKillBari() = x["kb"].get<uint8_t>();
+            if (x.contains("cs"))
+                *BossVa_CoopCsState() = x["cs"].get<int8_t>();
+            if (x.contains("fp"))
+                *BossVa_CoopFightPhase() = x["fp"].get<uint8_t>();
+            if (x.contains("hp4"))
+                *BossVa_CoopPhase4HP() = x["hp4"].get<int8_t>();
+            if (x.contains("bs"))
+                *BossVa_CoopBodyState() = x["bs"].get<uint8_t>();
+            if (x.contains("kb"))
+                *BossVa_CoopKillBari() = x["kb"].get<uint8_t>();
             if (x.contains("bari") && x["bari"].size() == 10) {
                 u8* bari = BossVa_CoopBodyBari();
                 for (int i = 0; i < 10; i++) {
                     bari[i] = x["bari"][i].get<uint8_t>();
                 }
             }
-            if (x.contains("glow")) va->bodyGlow = x["glow"].get<int16_t>();
-            if (x.contains("p0")) va->unk_1A0 = x["p0"].get<float>();
-            if (x.contains("p1")) va->unk_1A4 = x["p1"].get<float>();
-            if (x.contains("cr")) va->colliderBody.dim.radius = x["cr"].get<int16_t>();
-            if (x.contains("ch")) va->colliderBody.dim.height = x["ch"].get<int16_t>();
-            if (x.contains("cdf")) va->colliderBody.info.bumper.dmgFlags = x["cdf"].get<uint32_t>();
-            if (x.contains("t")) va->timer = x["t"].get<int32_t>();
-            if (x.contains("cft")) va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
-            if (x.contains("cfp")) va->actor.colorFilterParams = x["cfp"].get<int16_t>();
+            if (x.contains("glow"))
+                va->bodyGlow = x["glow"].get<int16_t>();
+            if (x.contains("p0"))
+                va->unk_1A0 = x["p0"].get<float>();
+            if (x.contains("p1"))
+                va->unk_1A4 = x["p1"].get<float>();
+            if (x.contains("cr"))
+                va->colliderBody.dim.radius = x["cr"].get<int16_t>();
+            if (x.contains("ch"))
+                va->colliderBody.dim.height = x["ch"].get<int16_t>();
+            if (x.contains("cdf"))
+                va->colliderBody.info.bumper.dmgFlags = x["cdf"].get<uint32_t>();
+            if (x.contains("t"))
+                va->timer = x["t"].get<int32_t>();
+            if (x.contains("cft"))
+                va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
+            if (x.contains("cfp"))
+                va->actor.colorFilterParams = x["cfp"].get<int16_t>();
             // The shared 400-effect pool is stepped by the body's update —
             // keep it decaying while the body is suppressed.
             if (gPlayState != NULL) {
                 BossVa_UpdateEffects(gPlayState);
             }
         } else if (IsSupport(params)) {
-            if (x.contains("oc")) va->onCeiling = x["oc"].get<uint8_t>();
-            if (x.contains("hrx")) va->headRot.x = x["hrx"].get<int16_t>();
-            if (x.contains("t")) va->timer = x["t"].get<int32_t>();
-            if (x.contains("t2")) va->timer2 = x["t2"].get<int16_t>();
-            if (x.contains("cft")) va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
-            if (x.contains("cfp")) va->actor.colorFilterParams = x["cfp"].get<int16_t>();
+            if (x.contains("oc"))
+                va->onCeiling = x["oc"].get<uint8_t>();
+            if (x.contains("hrx"))
+                va->headRot.x = x["hrx"].get<int16_t>();
+            if (x.contains("t"))
+                va->timer = x["t"].get<int32_t>();
+            if (x.contains("t2"))
+                va->timer2 = x["t2"].get<int16_t>();
+            if (x.contains("cft"))
+                va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
+            if (x.contains("cfp"))
+                va->actor.colorFilterParams = x["cfp"].get<int16_t>();
         } else if (IsZapper(params)) {
-            if (x.contains("r4y")) va->unk_1E6 = x["r4y"].get<int16_t>();
-            if (x.contains("r4z")) va->unk_1E4 = x["r4z"].get<int16_t>();
-            if (x.contains("r5y")) va->unk_1EC = x["r5y"].get<int16_t>();
-            if (x.contains("r5z")) va->unk_1EA = x["r5z"].get<int16_t>();
-            if (x.contains("r7y")) va->unk_1F2 = x["r7y"].get<int16_t>();
-            if (x.contains("r7z")) va->unk_1F0 = x["r7z"].get<int16_t>();
+            if (x.contains("r4y"))
+                va->unk_1E6 = x["r4y"].get<int16_t>();
+            if (x.contains("r4z"))
+                va->unk_1E4 = x["r4z"].get<int16_t>();
+            if (x.contains("r5y"))
+                va->unk_1EC = x["r5y"].get<int16_t>();
+            if (x.contains("r5z"))
+                va->unk_1EA = x["r5z"].get<int16_t>();
+            if (x.contains("r7y"))
+                va->unk_1F2 = x["r7y"].get<int16_t>();
+            if (x.contains("r7z"))
+                va->unk_1F0 = x["r7z"].get<int16_t>();
             if (x.contains("tgt") && x["tgt"].size() == 3) {
                 va->unk_1D8.x = x["tgt"][0].get<float>();
                 va->unk_1D8.y = x["tgt"][1].get<float>();
                 va->unk_1D8.z = x["tgt"][2].get<float>();
             }
-            if (x.contains("t2")) va->timer2 = x["t2"].get<int16_t>();
-            if (x.contains("b")) va->burst = x["b"].get<uint8_t>();
+            if (x.contains("t2"))
+                va->timer2 = x["t2"].get<int16_t>();
+            if (x.contains("b"))
+                va->burst = x["b"].get<uint8_t>();
             if (x.contains("hr") && x["hr"].size() == 3) {
                 va->headRot.x = x["hr"][0].get<int16_t>();
                 va->headRot.y = x["hr"][1].get<int16_t>();
                 va->headRot.z = x["hr"][2].get<int16_t>();
             }
-            if (x.contains("cft")) va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
-            if (x.contains("cfp")) va->actor.colorFilterParams = x["cfp"].get<int16_t>();
+            if (x.contains("cft"))
+                va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
+            if (x.contains("cfp"))
+                va->actor.colorFilterParams = x["cfp"].get<int16_t>();
         } else if (IsBari(params)) {
-            if (x.contains("lf")) va->unk_1F0 = x["lf"].get<int16_t>();
-            if (x.contains("sx")) va->unk_1D8.x = x["sx"].get<float>();
-            if (x.contains("sy")) va->unk_1D8.y = x["sy"].get<float>();
-            if (x.contains("t2")) va->timer2 = x["t2"].get<int16_t>();
-            if (x.contains("orb")) va->unk_1A0 = x["orb"].get<float>();
-            if (x.contains("wrx")) va->actor.world.rot.x = x["wrx"].get<int16_t>();
-            if (x.contains("wry")) va->actor.world.rot.y = x["wry"].get<int16_t>();
-            if (x.contains("cft")) va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
-            if (x.contains("cfp")) va->actor.colorFilterParams = x["cfp"].get<int16_t>();
+            if (x.contains("lf"))
+                va->unk_1F0 = x["lf"].get<int16_t>();
+            if (x.contains("sx"))
+                va->unk_1D8.x = x["sx"].get<float>();
+            if (x.contains("sy"))
+                va->unk_1D8.y = x["sy"].get<float>();
+            if (x.contains("t2"))
+                va->timer2 = x["t2"].get<int16_t>();
+            if (x.contains("orb"))
+                va->unk_1A0 = x["orb"].get<float>();
+            if (x.contains("wrx"))
+                va->actor.world.rot.x = x["wrx"].get<int16_t>();
+            if (x.contains("wry"))
+                va->actor.world.rot.y = x["wry"].get<int16_t>();
+            if (x.contains("cft"))
+                va->actor.colorFilterTimer = x["cft"].get<uint8_t>();
+            if (x.contains("cfp"))
+                va->actor.colorFilterParams = x["cfp"].get<int16_t>();
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[BossVaSync] extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[BossVaSync] extras parse error: {}", ex.what()); }
 
     // Mirror-side ambient FX (arcs/sparks/tether are actionFunc-spawned). Most
     // of it is gated on OUR gameplayFrames, so it self-throttles; the zapper's

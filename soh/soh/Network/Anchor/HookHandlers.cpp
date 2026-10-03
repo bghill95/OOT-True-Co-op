@@ -20,7 +20,7 @@
 extern "C" {
 #include "variables.h"
 #include "functions.h"
-extern EffectSsInfo sEffectSsInfo; // z_effect_soft_sprite.c (no header declares it)
+extern EffectSsInfo sEffectSsInfo;             // z_effect_soft_sprite.c (no header declares it)
 void Anchor_ForgetCaptureVictim(Actor* enemy); // Packets/CapturePlayer.cpp
 #include "src/overlays/actors/ovl_Bg_Bombwall/z_bg_bombwall.h"
 #include "src/overlays/actors/ovl_Bg_Breakwall/z_bg_breakwall.h"

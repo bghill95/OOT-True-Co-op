@@ -76,8 +76,7 @@ static void EnRr_SerializeExtras(Actor* actor, nlohmann::json& x) {
 static void EnRr_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     try {
         EnRr* rr = (EnRr*)actor;
-        if (x.contains("segs") && x["segs"].is_array() &&
-            x["segs"].size() == (size_t)(RR_SEG_COUNT * RR_SEG_VALUES)) {
+        if (x.contains("segs") && x["segs"].is_array() && x["segs"].size() == (size_t)(RR_SEG_COUNT * RR_SEG_VALUES)) {
             const nlohmann::json& segs = x["segs"];
             for (int32_t i = 0; i < RR_SEG_COUNT; i++) {
                 EnRrBodySegment* s = &rr->bodySegs[i];
@@ -100,9 +99,7 @@ static void EnRr_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         if (x.contains("sct")) {
             rr->scrollTimer = x["sct"].get<int16_t>();
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnRr extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnRr extras parse error: {}", ex.what()); }
 }
 
 void RegisterEnRrAdapter() {

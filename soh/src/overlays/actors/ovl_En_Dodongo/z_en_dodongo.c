@@ -582,8 +582,8 @@ void EnDodongo_Walk(EnDodongo* this, PlayState* play) {
     // criteria: a Dodongo that has walked away from its home can pick the player
     // nearest ITSELF and then measure that player against a point it is no longer
     // standing on. Same defect cost the Master Sword pickup a bench session.
-    if (Math_Vec3f_DistXZ(&this->actor.home.pos,
-                          &Anchor_NearestPlayerToPos(&this->actor.home.pos)->actor.world.pos) < 400.0f) {
+    if (Math_Vec3f_DistXZ(&this->actor.home.pos, &Anchor_NearestPlayerToPos(&this->actor.home.pos)->actor.world.pos) <
+        400.0f) {
         Math_SmoothStepToS(&this->actor.world.rot.y, this->actor.yawTowardsPlayer, 1, 0x1F4, 0);
         this->actor.flags |= ACTOR_FLAG_ATTENTION_ENABLED;
         if ((this->actor.xzDistToPlayer < 100.0f) && (yawDiff < 0x1388) && (this->actor.yDistToPlayer < 60.0f)) {

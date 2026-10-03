@@ -136,8 +136,7 @@ static void EnEg_HeartbeatTowerTimer(PlayState* play) {
     }
     // Same 1..4 countdown window as z_en_zl3.c's EnZl3_TowerTimerRunning: never
     // re-announce a stopwatch counting up (7..10) or an expiry (5/6).
-    if ((gSaveContext.subTimerState < 1) || (gSaveContext.subTimerState > 4) ||
-        (gSaveContext.subTimerSeconds <= 0)) {
+    if ((gSaveContext.subTimerState < 1) || (gSaveContext.subTimerState > 4) || (gSaveContext.subTimerSeconds <= 0)) {
         return;
     }
     if (sTowerTimerHeartbeat > 0) {

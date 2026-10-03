@@ -497,8 +497,7 @@ void EnWallmas_TakePlayer(EnWallmas* this, PlayState* play) {
     // authority in the middle of a carry and resume straight into this function
     // having never run SetupTakePlayer; reading its empty note as "the victim is
     // mine" would make it haul its own Link away.
-    s32 victimIsLocal =
-        Anchor_HasCaptureVictim(&this->actor) && !Anchor_CaptureVictimIsRemote(&this->actor);
+    s32 victimIsLocal = Anchor_HasCaptureVictim(&this->actor) && !Anchor_CaptureVictimIsRemote(&this->actor);
     Player* player = victimIsLocal ? GET_PLAYER(play) : Anchor_NearestPlayer(&this->actor);
 
     if (Animation_OnFrame(&this->skelAnime, 1.0f) != 0) {

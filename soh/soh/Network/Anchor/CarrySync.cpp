@@ -34,20 +34,20 @@ static constexpr int32_t CARRIER_LOST_TICKS = 45;
 // Scene-placed carryables worth replicating. Grow as needed.
 static bool IsSyncedCarryActor(const Actor* actor) {
     switch (actor->id) {
-        case ACTOR_EN_ISHI:     // small/large liftable rocks
-        case ACTOR_OBJ_TSUBO:   // pots
-        case ACTOR_EN_NIW:      // cuccos — wander AI diverges between clients, but
-                                // every CARRY/THROW re-converges the copies, which
-                                // is what actually shows on screen
-        case ACTOR_EN_KUSA:     // grass tufts: cut is BreakSync's, but they are
-                                // liftable and throwable like a pot (Actor_OfferCarry
-                                // in EnKusa_Main), and that half was unsynced
-        case ACTOR_EN_RU1:      // Princess Ruto (Jabu-Jabu): carried and thrown like a
-                                // pot (Actor_OfferCarry), lands by her own physics and
-                                // presses the blue button herself; keyed by id (PosKey)
-        case ACTOR_OBJ_KIBAKO:  // small wooden crate (Jabu-Jabu elevator room…): same
-                                // Idle/Held/Thrown trio as a pot; its break stays
-                                // BreakSync's (AC_HIT) like the pot's
+        case ACTOR_EN_ISHI:    // small/large liftable rocks
+        case ACTOR_OBJ_TSUBO:  // pots
+        case ACTOR_EN_NIW:     // cuccos — wander AI diverges between clients, but
+                               // every CARRY/THROW re-converges the copies, which
+                               // is what actually shows on screen
+        case ACTOR_EN_KUSA:    // grass tufts: cut is BreakSync's, but they are
+                               // liftable and throwable like a pot (Actor_OfferCarry
+                               // in EnKusa_Main), and that half was unsynced
+        case ACTOR_EN_RU1:     // Princess Ruto (Jabu-Jabu): carried and thrown like a
+                               // pot (Actor_OfferCarry), lands by her own physics and
+                               // presses the blue button herself; keyed by id (PosKey)
+        case ACTOR_OBJ_KIBAKO: // small wooden crate (Jabu-Jabu elevator room…): same
+                               // Idle/Held/Thrown trio as a pot; its break stays
+                               // BreakSync's (AC_HIT) like the pot's
             return true;
         default:
             return false;
@@ -57,12 +57,12 @@ static bool IsSyncedCarryActor(const Actor* actor) {
 struct CarryState {
     uint64_t key = 0;
     bool hadParent = false;
-    bool mineLatch = false;         // we announced CARRY and still own the object
-    bool remoteCarried = false;     // a peer's player is carrying this copy
+    bool mineLatch = false;     // we announced CARRY and still own the object
+    bool remoteCarried = false; // a peer's player is carrying this copy
     uint32_t carrierClientId = 0;
-    int32_t carrierLostTicks = 0;   // frames the carrier's puppet has been gone
-    int32_t carriedUpdates = 0;     // actor updates run while parented to the puppet
-    bool hasPendingThrow = false;   // THROW received before the copy ran its held update
+    int32_t carrierLostTicks = 0; // frames the carrier's puppet has been gone
+    int32_t carriedUpdates = 0;   // actor updates run while parented to the puppet
+    bool hasPendingThrow = false; // THROW received before the copy ran its held update
     nlohmann::json pendingThrow;
     bool cullForced = false; // we set ACTOR_FLAG_UPDATE_CULLING_DISABLED on this copy
     int32_t uncullTicks = 0; // frames left before handing its culling setting back
@@ -345,9 +345,7 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                 break;
         }
         ESYNC_LOG("[CarrySync] applied kind={} key={:#x}", kind, key);
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("[CarrySync] malformed CARRY_EVENT: {}", e.what());
-    }
+    } catch (const std::exception& e) { SPDLOG_ERROR("[CarrySync] malformed CARRY_EVENT: {}", e.what()); }
 }
 
 void RegisterHooks(bool isConnected) {

@@ -700,7 +700,7 @@ void EnFhgFire_PhantomWarp(EnFhgFire* this, PlayState* play) {
     osSyncPrintf("EFC 1\n");
     // Co-op: a replicated warp may have no resolvable horse parent; it then just runs its timer out.
     if ((this->work[FHGFIRE_TIMER] == 0) || ((this->actor.params == FHGFIRE_WARP_EMERGE) && (horse != NULL) &&
-                                              (horse->actor.update != NULL) && horse->fhgFireKillWarp)) {
+                                             (horse->actor.update != NULL) && horse->fhgFireKillWarp)) {
         Actor_Kill(&this->actor);
     }
     osSyncPrintf("EFC 2\n");
@@ -720,7 +720,7 @@ void EnFhgFire_CoopMirrorFx(EnFhgFire* this, PlayState* play) {
 
     if (this->coopKillMode == 0) {
         u8 color = (this->work[FHGFIRE_FIRE_MODE] >= FHGFIRE_LIGHT_BLUE) ? FHGFLASH_LIGHTBALL_LIGHTBLUE
-                                                                          : FHGFLASH_LIGHTBALL_GREEN;
+                                                                         : FHGFLASH_LIGHTBALL_GREEN;
 
         for (i = 0; i < 3; i++) {
             pos.x = Rand_CenteredFloat(20.0f) + this->actor.world.pos.x;

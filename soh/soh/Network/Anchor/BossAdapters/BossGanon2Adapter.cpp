@@ -373,9 +373,9 @@ static void BossGanon2_SerializeExtras(Actor* actor, nlohmann::json& x) {
 
         const BossGanon2Effect* sword = &sBossGanon2Particles[0];
         if (sword->type != 0) {
-            x["ms"] = { (int32_t)sword->type,   R3(sword->position.x), R3(sword->position.y),
-                        R3(sword->position.z),  (int32_t)sword->unk_2E, R3(sword->scale),
-                        R3(sword->unk_38.x),    R3(sword->unk_38.y),    R3(sword->unk_38.z) };
+            x["ms"] = { (int32_t)sword->type,  R3(sword->position.x),  R3(sword->position.y),
+                        R3(sword->position.z), (int32_t)sword->unk_2E, R3(sword->scale),
+                        R3(sword->unk_38.x),   R3(sword->unk_38.y),    R3(sword->unk_38.z) };
         }
     }
 
@@ -575,14 +575,18 @@ static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
             }
         }
 
-        if (x.contains("tc")) g->unk_19C = x["tc"].get<int16_t>();
-        if (x.contains("ta")) g->unk_1B0 = x["ta"].get<float>();
-        if (x.contains("tf")) g->unk_1B4 = x["tf"].get<float>();
+        if (x.contains("tc"))
+            g->unk_19C = x["tc"].get<int16_t>();
+        if (x.contains("ta"))
+            g->unk_1B0 = x["ta"].get<float>();
+        if (x.contains("tf"))
+            g->unk_1B4 = x["tf"].get<float>();
         if (x.contains("sw") && x["sw"].size() == 2) {
             g->unk_224 = x["sw"][0].get<float>();
             g->unk_228 = x["sw"][1].get<float>();
         }
-        if (x.contains("ob")) g->unk_30C = x["ob"].get<float>();
+        if (x.contains("ob"))
+            g->unk_30C = x["ob"].get<float>();
         if (x.contains("ey")) {
             // CRASH GUARD: BossGanon2_Draw:2832 does
             //     gSPSegment(..., SEGMENTED_TO_VIRTUAL(sEyeTextures[this->unk_310]))
@@ -654,8 +658,10 @@ static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
             g->unk_330 = 0;
         }
 
-        if (x.contains("dm")) g->unk_342 = x["dm"].get<int16_t>();
-        if (x.contains("tl")) g->unk_346 = x["tl"].get<int16_t>();
+        if (x.contains("dm"))
+            g->unk_342 = x["dm"].get<int16_t>();
+        if (x.contains("tl"))
+            g->unk_346 = x["tl"].get<int16_t>();
         if (x.contains("t1") && x["t1"].size() == ARRAY_COUNT(g->unk_348)) {
             for (size_t i = 0; i < ARRAY_COUNT(g->unk_348); i++) {
                 g->unk_348[i] = x["t1"][i].get<int16_t>();
@@ -693,9 +699,7 @@ static void BossGanon2_DeserializeExtras(Actor* actor, const nlohmann::json& x) 
         } else {
             g->unk_38C = 0.0f;
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[BossGanon2Sync] extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[BossGanon2Sync] extras parse error: {}", ex.what()); }
 }
 
 // Authority side. Reads actionFunc, which is allowed here and nowhere else: the

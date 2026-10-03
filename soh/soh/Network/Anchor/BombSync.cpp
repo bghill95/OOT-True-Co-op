@@ -380,9 +380,7 @@ void Ingest(const nlohmann::json& payload) {
                 break;
         }
         ESYNC_LOG("[BombSync] replica event kind={} bid={} aid={}", kind, bid, actorId);
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("[BombSync] malformed BOMB_EVENT: {}", e.what());
-    }
+    } catch (const std::exception& e) { SPDLOG_ERROR("[BombSync] malformed BOMB_EVENT: {}", e.what()); }
 }
 
 void RegisterHooks(bool isConnected) {

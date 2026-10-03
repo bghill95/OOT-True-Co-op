@@ -680,8 +680,7 @@ void ObjSwitch_CrystalOn(ObjSwitch* this, PlayState* play) {
                 play = play;
                 ObjSwitch_CrystalTurnOffInit(this);
                 ObjSwitch_SetOff(this, play);
-            } else if (Anchor_IsSessionActive() &&
-                       !Flags_GetSwitch(play, (this->dyna.actor.params >> 8 & 0x3F))) {
+            } else if (Anchor_IsSessionActive() && !Flags_GetSwitch(play, (this->dyna.actor.params >> 8 & 0x3F))) {
                 // The OFF half of the same fix. Subtypes 0 and 4 already poll the
                 // flag here; subtype 1 only ever left this state on a LOCAL hit, so
                 // replicating ON without this left the peer's crystal stuck blue

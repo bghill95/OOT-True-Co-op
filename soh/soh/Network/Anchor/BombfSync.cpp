@@ -30,7 +30,7 @@ static constexpr float CARRY_Y_OFFSET = 38.0f;
 
 // Owner side: one locally-simulated body.
 struct BodyState {
-    uint32_t bid = 0;          // per-client body id (correlates packets)
+    uint32_t bid = 0; // per-client body id (correlates packets)
     bool announcedInit = false;
     bool hadParent = false;
     bool detonated = false;
@@ -42,10 +42,10 @@ struct ReplicaState {
     uint32_t ownerClientId = 0;
 };
 
-static std::unordered_map<uint64_t, Actor*> sFlowers;  // flower key -> scene-placed flower
+static std::unordered_map<uint64_t, Actor*> sFlowers;   // flower key -> scene-placed flower
 static std::unordered_map<Actor*, uint64_t> sFlowerKey; // 0 = pending (resolved lazily)
-static std::unordered_map<Actor*, float> sFlowerScale; // last observed flowerBombScale
-static std::unordered_map<Actor*, BodyState> sBodies;  // locally-simulated bodies
+static std::unordered_map<Actor*, float> sFlowerScale;  // last observed flowerBombScale
+static std::unordered_map<Actor*, BodyState> sBodies;   // locally-simulated bodies
 static std::unordered_map<Actor*, ReplicaState> sReplicas;
 static std::unordered_map<uint64_t, Actor*> sRemoteBodies; // (ownerClientId<<32)|bid -> replica
 static uint32_t sNextBid = 1;
@@ -317,9 +317,7 @@ void Ingest(const nlohmann::json& payload) {
                 break;
         }
         ESYNC_LOG("[BombfSync] replica event kind={} bid={} timer={}", kind, bid, bombf->timer);
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("[BombfSync] malformed BOMBF_EVENT: {}", e.what());
-    }
+    } catch (const std::exception& e) { SPDLOG_ERROR("[BombfSync] malformed BOMBF_EVENT: {}", e.what()); }
 }
 
 void RegisterHooks(bool isConnected) {

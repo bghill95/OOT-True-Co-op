@@ -34,7 +34,7 @@ static f32 EnFd_HammerDistXZ(EnFd* this) {
     return Math_Vec3f_DistXZ(&this->actor.world.pos, hammerPos);
 }
 
-#define FLAGS                                                                               \
+#define FLAGS                                                                                 \
     (ACTOR_FLAG_ATTENTION_ENABLED | ACTOR_FLAG_HOSTILE | ACTOR_FLAG_UPDATE_CULLING_DISABLED | \
      ACTOR_FLAG_HOOKSHOT_PULLS_ACTOR)
 
@@ -300,8 +300,7 @@ s32 EnFd_CheckHammer(EnFd* this, PlayState* play) {
     if (this->actionFunc == EnFd_Reappear || this->actionFunc == EnFd_SpinAndGrow ||
         this->actionFunc == EnFd_JumpToGround || this->actionFunc == EnFd_WaitForCore) {
         return false;
-    } else if (play->actorCtx.unk_02 != 0 && EnFd_HammerDistXZ(this) < 300.0f &&
-               this->actor.yDistToPlayer < 60.0f) {
+    } else if (play->actorCtx.unk_02 != 0 && EnFd_HammerDistXZ(this) < 300.0f && this->actor.yDistToPlayer < 60.0f) {
         return true;
     } else {
         return false;
@@ -346,8 +345,7 @@ s32 EnFd_ColliderCheck(EnFd* this, PlayState* play) {
         // player. Only shove the player actually hit, away from us.
         if (this->collider.base.at == &player->actor) {
             Audio_PlayActorSound2(&player->actor, NA_SE_PL_BODY_HIT);
-            func_8002F71C(play, &this->actor, this->actor.speedXZ + 2.0f, Anchor_LocalPlayerYaw(&this->actor),
-                          6.0f);
+            func_8002F71C(play, &this->actor, this->actor.speedXZ + 2.0f, Anchor_LocalPlayerYaw(&this->actor), 6.0f);
         }
     }
     return false;

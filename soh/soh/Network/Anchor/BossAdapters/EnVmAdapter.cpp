@@ -78,9 +78,7 @@ static void EnVm_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         if (x.contains("b21")) {
             vm->unk_21C = x["b21"].get<int32_t>();
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnVm extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnVm extras parse error: {}", ex.what()); }
 }
 
 void RegisterEnVmAdapter() {

@@ -122,10 +122,14 @@ static void PhantomGanon_SerializeExtras(Actor* actor, nlohmann::json& x) {
 static void PhantomGanon_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     BossGanondrof* pg = (BossGanondrof*)actor;
     try {
-        if (x.contains("fly")) pg->flyMode = x["fly"].get<uint8_t>();
-        if (x.contains("inv")) pg->work[GND_INVINC_TIMER] = x["inv"].get<int16_t>();
-        if (x.contains("var")) pg->work[GND_VARIANCE_TIMER] = x["var"].get<int16_t>();
-        if (x.contains("shk")) pg->shockTimer = x["shk"].get<uint8_t>();
+        if (x.contains("fly"))
+            pg->flyMode = x["fly"].get<uint8_t>();
+        if (x.contains("inv"))
+            pg->work[GND_INVINC_TIMER] = x["inv"].get<int16_t>();
+        if (x.contains("var"))
+            pg->work[GND_VARIANCE_TIMER] = x["var"].get<int16_t>();
+        if (x.contains("shk"))
+            pg->shockTimer = x["shk"].get<uint8_t>();
         if (x.contains("leg") && x["leg"].size() == 3) {
             pg->legRotY = x["leg"][0].get<float>();
             pg->legRotZ = x["leg"][1].get<float>();
@@ -145,7 +149,8 @@ static void PhantomGanon_DeserializeExtras(Actor* actor, const nlohmann::json& x
             pg->colliderBody.dim.yShift = x["col"][2].get<int16_t>();
             pg->colliderBody.base.colType = (uint8_t)x["col"][3].get<int>();
         }
-        if (x.contains("nav")) actor->naviEnemyId = x["nav"].get<int8_t>();
+        if (x.contains("nav"))
+            actor->naviEnemyId = x["nav"].get<int8_t>();
 
         // Cylinders ride the chest limb and the spear tip (Update does this right
         // after the action function; PostLimbDraw refreshed both last frame).
@@ -162,9 +167,7 @@ static void PhantomGanon_DeserializeExtras(Actor* actor, const nlohmann::json& x
             pg->coopMirrorVar = pg->work[GND_VARIANCE_TIMER];
             BossGanondrof_CoopMirrorFx(pg, gPlayState, x.contains("fx") ? x["fx"].get<uint8_t>() : 0);
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[PhantomGanonSync] extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[PhantomGanonSync] extras parse error: {}", ex.what()); }
 }
 
 static bool PhantomGanon_OnPhaseChange(Actor* actor, uint8_t fromPhase, uint8_t toPhase) {
@@ -231,9 +234,12 @@ static void PhantomHorse_DeserializeExtras(Actor* actor, const nlohmann::json& x
             horse->warpColorFilterUnk1 = x["wc"][3].get<float>();
             horse->warpColorFilterUnk2 = x["wc"][4].get<float>();
         }
-        if (x.contains("turn")) horse->turnRot = x["turn"].get<int16_t>();
-        if (x.contains("kw")) horse->fhgFireKillWarp = x["kw"].get<uint8_t>();
-        if (x.contains("inp")) horse->bossGndInPainting = x["inp"].get<uint8_t>();
+        if (x.contains("turn"))
+            horse->turnRot = x["turn"].get<int16_t>();
+        if (x.contains("kw"))
+            horse->fhgFireKillWarp = x["kw"].get<uint8_t>();
+        if (x.contains("inp"))
+            horse->bossGndInPainting = x["inp"].get<uint8_t>();
         if (JsonBool(x, "hid") && actor->draw != NULL) {
             // Vanilla EnfHG_Retreat: once the fight leaves the paintings the horse
             // is done for good (draw = NULL, EnfHG_Done). The mirror step lets a
@@ -242,9 +248,7 @@ static void PhantomHorse_DeserializeExtras(Actor* actor, const nlohmann::json& x
             horse->actionFunc = EnfHG_Done;
             ESYNC_LOG("[PhantomGanonSync] horse hidden (fight left the paintings)");
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[PhantomGanonSync] horse extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[PhantomGanonSync] horse extras parse error: {}", ex.what()); }
 }
 
 static bool PhantomHorse_ShouldMirror(Actor* actor, uint8_t streamedPhase) {
@@ -277,24 +281,26 @@ static void PhantomFire_SerializeExtras(Actor* actor, nlohmann::json& x) {
 static void PhantomFire_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     EnFhgFire* fire = (EnFhgFire*)actor;
     try {
-        if (x.contains("fm")) fire->work[FHGFIRE_FIRE_MODE] = x["fm"].get<int16_t>();
-        if (x.contains("km")) fire->coopKillMode = x["km"].get<uint8_t>();
-        if (x.contains("var")) fire->work[FHGFIRE_VARIANCE_TIMER] = x["var"].get<int16_t>();
-        if (x.contains("al")) fire->fwork[FHGFIRE_ALPHA] = x["al"].get<float>();
+        if (x.contains("fm"))
+            fire->work[FHGFIRE_FIRE_MODE] = x["fm"].get<int16_t>();
+        if (x.contains("km"))
+            fire->coopKillMode = x["km"].get<uint8_t>();
+        if (x.contains("var"))
+            fire->work[FHGFIRE_VARIANCE_TIMER] = x["var"].get<int16_t>();
+        if (x.contains("al"))
+            fire->fwork[FHGFIRE_ALPHA] = x["al"].get<float>();
         if (fire->coopKillMode != 0) {
             // Impacted on the authority (draw nulled there, copy killed 30 frames
             // later): hide ours without touching draw, which would hand the copy
             // back to its local update.
             Actor_SetScale(actor, 0.0f);
         }
-        if (gPlayState != NULL &&
-            (fire->coopMirrorVar != fire->work[FHGFIRE_VARIANCE_TIMER] || fire->coopMirrorKillMode != fire->coopKillMode)) {
+        if (gPlayState != NULL && (fire->coopMirrorVar != fire->work[FHGFIRE_VARIANCE_TIMER] ||
+                                   fire->coopMirrorKillMode != fire->coopKillMode)) {
             fire->coopMirrorVar = fire->work[FHGFIRE_VARIANCE_TIMER];
             EnFhgFire_CoopMirrorFx(fire, gPlayState);
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[PhantomGanonSync] fire extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[PhantomGanonSync] fire extras parse error: {}", ex.what()); }
 }
 
 static bool PhantomFire_ShouldMirror(Actor* actor, uint8_t streamedPhase) {

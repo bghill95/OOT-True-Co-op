@@ -146,9 +146,9 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
     player->heldItemAction = client.heldItemAction;
     player->invincibilityTimer = client.invincibilityTimer;
     player->unk_862 = client.unk_862;
-    player->unk_85C = client.dekuStickLength; // stick draw scale + weapon-tip reach (z_player_lib.c)
-    player->unk_858 = client.bowString;       // bow string draw amount — stale value froze the bow drawn
-    player->currentMask = client.currentMask; // mask is drawn from the Player struct by Player_Draw
+    player->unk_85C = client.dekuStickLength;           // stick draw scale + weapon-tip reach (z_player_lib.c)
+    player->unk_858 = client.bowString;                 // bow string draw amount — stale value froze the bow drawn
+    player->currentMask = client.currentMask;           // mask is drawn from the Player struct by Player_Draw
     player->meleeWeaponState = client.meleeWeaponState; // swing trail; the puppet got its own blure in Player_Init
     // Get-item presentation (item held overhead, bottle catch, trade show-off):
     // unk_862 was already streamed, but the entry + object were never set, so the
@@ -161,9 +161,10 @@ void DummyPlayer_Update(Actor* actor, PlayState* play) {
             if (client.giId < 0) {
                 player->getItemEntry = GetItemEntry GET_ITEM_NONE;
             } else {
-                GetItemEntry entry = (client.giMod == MOD_RANDOMIZER)
-                    ? Rando::StaticData::RetrieveItem(static_cast<RandomizerGet>(client.giId)).GetGIEntry_Copy()
-                    : ItemTableManager::Instance->RetrieveItemEntry(MOD_NONE, client.giId);
+                GetItemEntry entry =
+                    (client.giMod == MOD_RANDOMIZER)
+                        ? Rando::StaticData::RetrieveItem(static_cast<RandomizerGet>(client.giId)).GetGIEntry_Copy()
+                        : ItemTableManager::Instance->RetrieveItemEntry(MOD_NONE, client.giId);
                 player->getItemEntry = entry;
                 if (player->giObjectSegment != NULL) {
                     func_8083AE40(player, entry.objectId);

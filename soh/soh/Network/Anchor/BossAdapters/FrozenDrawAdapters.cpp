@@ -128,9 +128,7 @@ static void EnBb_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "act", bb->action);
         ReadField(x, "mv", bb->moveMode);
         ReadField(x, "msp", bb->maxSpeed);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnBb extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnBb extras parse error: {}", ex.what()); }
 }
 
 // Torch slug (EN_BW). unk_248 is the whole-body scale applied in Draw: frozen at
@@ -174,9 +172,7 @@ static void EnBw_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             bw->color1.b = (packed >> 8) & 0xFF;
             bw->color1.a = packed & 0xFF;
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnBw extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnBw extras parse error: {}", ex.what()); }
 }
 
 // Lizalfos / Dinolfos (EN_ZF). alpha is the one that matters: the fade path sets
@@ -198,9 +194,7 @@ static void EnZf_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "hr", zf->headRot);
         ReadField(x, "swh", zf->swordSheathed);
         ReadField(x, "act", zf->action);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnZf extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnZf extras parse error: {}", ex.what()); }
 }
 
 // Stalfos (EN_TEST). unk_7DE draws the shield, unk_7C8 is the action id the limb
@@ -251,9 +245,7 @@ static void EnTest_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
                 test->actor.shape.shadowDraw = NULL;
             }
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnTest extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnTest extras parse error: {}", ex.what()); }
 }
 
 // Wolfos (EN_WF). Only the eye texture actually diverges: the draw guard on
@@ -278,9 +270,7 @@ static void EnWf_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "eye", wf->eyeIndex);
         ReadField(x, "act", wf->action);
         ReadField(x, "hr", wf->unk_4D4);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnWf extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnWf extras parse error: {}", ex.what()); }
 }
 
 // Keese (EN_FIREFLY). onFire and auraType decide what the mirror SEES -- a plain
@@ -312,9 +302,7 @@ static void EnFirefly_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         if (x.value("dying", 0) != 0) {
             ff->actionFunc = EnFirefly_Die;
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnFirefly extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnFirefly extras parse error: {}", ex.what()); }
 }
 
 // Shell Blade (EN_SB). `fire` is the ignition counter its Draw reads.
@@ -325,9 +313,7 @@ static void EnSb_SerializeExtras(Actor* actor, nlohmann::json& x) {
 static void EnSb_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     try {
         ReadField(x, "fire", ((EnSb*)actor)->fire);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnSb extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnSb extras parse error: {}", ex.what()); }
 }
 
 // Iron Knuckle (EN_IK). drawMode indexes sDrawFuncs, so a frozen mirror keeps
@@ -361,9 +347,7 @@ static void EnIk_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "u2fa", ik->unk_2FA);
         ReadField(x, "u2fb", ik->unk_2FB);
         ReadField(x, "u2fe", ik->unk_2FE);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnIk extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnIk extras parse error: {}", ex.what()); }
 }
 
 // Wallmaster (EN_WALLMAS). Both its draw functions branch on actionFunc, and
@@ -421,9 +405,7 @@ static void EnWallmas_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             }
         }
         ReadField(x, "tmr", wm->timer);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnWallmas extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnWallmas extras parse error: {}", ex.what()); }
 }
 
 // Baby Dodongo (EN_DODOJR). Its whole draw is a two-way switch on actionFunc —
@@ -462,9 +444,7 @@ static void EnDodojr_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
                 dj->actionFunc = sDodojrActions[idx];
             }
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnDodojr extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnDodojr extras parse error: {}", ex.what()); }
 }
 
 // Spike (EN_NY). Its draw picks between two skins and decides whether the spikes
@@ -497,9 +477,7 @@ static void EnNy_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "e0", ny->unk_1E0);
         ReadField(x, "cs", ny->elements[0].dim.scale);
         ReadField(x, "ca", ny->unk_1CA);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnNy extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnNy extras parse error: {}", ex.what()); }
 }
 
 // Dead Hand (EN_DH) and its hands (EN_DHA), the pair in the Bottom of the Well and
@@ -546,9 +524,7 @@ static void EnDh_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             dh->dirtWaveSpread = x["wave"][1].get<float>();
             dh->dirtWaveHeight = x["wave"][2].get<float>();
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnDh extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnDh extras parse error: {}", ex.what()); }
 }
 
 static void EnDha_SerializeExtras(Actor* actor, nlohmann::json& x) {
@@ -572,9 +548,7 @@ static void EnDha_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             dha->handAngle.y = x["ha"][1].get<int16_t>();
             dha->handAngle.z = x["ha"][2].get<int16_t>();
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnDha extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnDha extras parse error: {}", ex.what()); }
 }
 
 // Octorok (EN_OKUTA). headScale is the snout deformation -- the swell before it
@@ -597,9 +571,7 @@ static void EnOkuta_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "hsx", ok->headScale.x);
         ReadField(x, "hsy", ok->headScale.y);
         ReadField(x, "hsz", ok->headScale.z);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnOkuta extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnOkuta extras parse error: {}", ex.what()); }
 }
 
 // Freezard (EN_FZ). Three faults stacked on one actor.
@@ -657,9 +629,7 @@ static void EnFz_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         ReadField(x, "frz", fz->isFreezing);
         ReadField(x, "ish", fz->iceSmokeFreezingSpawnHeight);
         ReadField(x, "ut2", fz->unusedTimer2);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnFz extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnFz extras parse error: {}", ex.what()); }
 
     // Outside the try, deliberately. Declaring customColliderPos is a contract: the
     // generic path no longer places ANY of this actor's cylinders, so if a malformed
@@ -679,8 +649,8 @@ static void EnFz_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     fz->collider3.dim.pos.z = 0x7FFF;
 }
 
-static void Register(int16_t id, void (*ser)(Actor*, nlohmann::json&),
-                     void (*deser)(Actor*, const nlohmann::json&), bool ownsDeathDrop = false) {
+static void Register(int16_t id, void (*ser)(Actor*, nlohmann::json&), void (*deser)(Actor*, const nlohmann::json&),
+                     bool ownsDeathDrop = false) {
     ActorSyncAdapter adapter;
     adapter.SerializeExtras = ser;
     adapter.DeserializeExtras = deser;
@@ -701,7 +671,7 @@ static void Register(int16_t id, void (*ser)(Actor*, nlohmann::json&),
 // Not carried: coreActive, spinTimer, attackTimer and the rest are read by Update
 // alone, and a mirror's Update never runs.
 static EnFdActionFunc sFdActions[] = {
-    NULL, EnFd_Run, EnFd_SpinAndSpawnFire, EnFd_Reappear, EnFd_SpinAndGrow, EnFd_JumpToGround, EnFd_WaitForCore,
+    NULL,      EnFd_Run, EnFd_SpinAndSpawnFire, EnFd_Reappear, EnFd_SpinAndGrow, EnFd_JumpToGround, EnFd_WaitForCore,
     EnFd_Land,
 };
 
@@ -749,9 +719,7 @@ static void EnFd_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         }
         ReadField(x, "inv", fd->invincibilityTimer);
         ReadField(x, "sa", fd->actor.shape.shadowAlpha);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnFd extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnFd extras parse error: {}", ex.what()); }
 }
 
 // Dodongo (EN_DODONGO). bodyScale is applied to limbs 15 and 16 in the limb
@@ -773,9 +741,7 @@ static void EnDodongo_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     try {
         EnDodongo* dd = (EnDodongo*)actor;
         ReadField(x, "bs", dd->bodyScale);
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnDodongo extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnDodongo extras parse error: {}", ex.what()); }
 }
 
 void RegisterFrozenDrawAdapters() {

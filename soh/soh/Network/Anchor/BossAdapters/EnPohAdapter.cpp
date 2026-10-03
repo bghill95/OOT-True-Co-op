@@ -42,9 +42,7 @@ static void EnPoh_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         if (x.contains("b8")) {
             poh->unk_198 = x["b8"].get<int16_t>();
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnPoh extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnPoh extras parse error: {}", ex.what()); }
 }
 
 void RegisterEnPohAdapter() {

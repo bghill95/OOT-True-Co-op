@@ -110,16 +110,26 @@ static void Volvagia_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
                 fd->work[i] = (int16_t)x["w"][i].get<int>();
             }
         }
-        if (x.contains("t4")) fd->timers[4] = x["t4"].get<int16_t>();
-        if (x.contains("fb")) fd->fireBreathTimer = x["fb"].get<int16_t>();
-        if (x.contains("fog")) fd->fogMode = x["fog"].get<uint8_t>();
-        if (x.contains("ss")) fd->skinSegments = x["ss"].get<int16_t>();
-        if (x.contains("fe")) fd->faceExposed = x["fe"].get<uint8_t>();
-        if (x.contains("hp")) fd->holePosition = x["hp"].get<Vec3f>();
-        if (x.contains("wr")) actor->world.rot = x["wr"].get<Vec3s>();
-        if (x.contains("spd")) actor->speedXZ = x["spd"].get<float>();
-        if (x.contains("pul")) fd->fwork[BFD_BODY_PULSE] = x["pul"].get<float>();
-        if (x.contains("vis")) fd->coopVisible = JsonBool(x["vis"]) ? 1 : 0;
+        if (x.contains("t4"))
+            fd->timers[4] = x["t4"].get<int16_t>();
+        if (x.contains("fb"))
+            fd->fireBreathTimer = x["fb"].get<int16_t>();
+        if (x.contains("fog"))
+            fd->fogMode = x["fog"].get<uint8_t>();
+        if (x.contains("ss"))
+            fd->skinSegments = x["ss"].get<int16_t>();
+        if (x.contains("fe"))
+            fd->faceExposed = x["fe"].get<uint8_t>();
+        if (x.contains("hp"))
+            fd->holePosition = x["hp"].get<Vec3f>();
+        if (x.contains("wr"))
+            actor->world.rot = x["wr"].get<Vec3s>();
+        if (x.contains("spd"))
+            actor->speedXZ = x["spd"].get<float>();
+        if (x.contains("pul"))
+            fd->fwork[BFD_BODY_PULSE] = x["pul"].get<float>();
+        if (x.contains("vis"))
+            fd->coopVisible = JsonBool(x["vis"]) ? 1 : 0;
         if (x.contains("sfx") && x["sfx"].size() == 2) {
             fd->coopSfxSeq = x["sfx"][0].get<uint8_t>();
             fd->coopSfxId = x["sfx"][1].get<uint16_t>();
@@ -136,9 +146,7 @@ static void Volvagia_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             BossFd_CoopMirrorSfx(fd);
             BossFd_CoopMirrorTick(fd, gPlayState);
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[VolvagiaSync] extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[VolvagiaSync] extras parse error: {}", ex.what()); }
 }
 
 static bool Volvagia_OnPhaseChange(Actor* actor, uint8_t fromPhase, uint8_t toPhase) {
@@ -210,9 +218,12 @@ static void VolvagiaHead_DeserializeExtras(Actor* actor, const nlohmann::json& x
                 fd2->work[i] = (int16_t)x["w"][i].get<int>();
             }
         }
-        if (x.contains("hr")) fd2->headRot = x["hr"].get<Vec3s>();
-        if (x.contains("cf")) fd2->skelAnime.curFrame = x["cf"].get<float>();
-        if (x.contains("vis")) fd2->coopVisible = JsonBool(x["vis"]) ? 1 : 0;
+        if (x.contains("hr"))
+            fd2->headRot = x["hr"].get<Vec3s>();
+        if (x.contains("cf"))
+            fd2->skelAnime.curFrame = x["cf"].get<float>();
+        if (x.contains("vis"))
+            fd2->coopVisible = JsonBool(x["vis"]) ? 1 : 0;
         if (x.contains("sfx") && x["sfx"].size() == 2) {
             fd2->coopSfxSeq = x["sfx"][0].get<uint8_t>();
             fd2->coopSfxId = x["sfx"][1].get<uint16_t>();
@@ -225,9 +236,7 @@ static void VolvagiaHead_DeserializeExtras(Actor* actor, const nlohmann::json& x
             // UpdateCosmetics re-derives the attention flag from focus.pos; the
             // streamed hookshot bit (stunned head) survives it.
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[VolvagiaSync] head extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[VolvagiaSync] head extras parse error: {}", ex.what()); }
 }
 
 static bool VolvagiaHead_OnPhaseChange(Actor* actor, uint8_t fromPhase, uint8_t toPhase) {
@@ -279,7 +288,7 @@ void RegisterVolvagiaAdapters() {
         adapter.OnPhaseChange = VolvagiaHead_OnPhaseChange;
         adapter.ShouldMirror = VolvagiaHead_ShouldMirror;
         adapter.IsHealthless = VolvagiaHead_Always; // the parent's health is the fight's health
-        adapter.ownsSfx = true; // its mirror tick replays this actor's sounds itself
+        adapter.ownsSfx = true;                     // its mirror tick replays this actor's sounds itself
         // Same fight, same handback; the head has no drop of its own either.
         adapter.ownsDeathDrop = true;
         EnemySync::RegisterAdapter(ACTOR_BOSS_FD2, adapter);

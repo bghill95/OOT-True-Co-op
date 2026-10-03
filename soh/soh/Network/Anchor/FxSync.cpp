@@ -68,16 +68,16 @@ s32 DoorShutter_SetupDoor(DoorShutter* self, PlayState* play);
 namespace FxSync {
 
 enum FxEventKind : uint8_t {
-    FX_EV_SPELL = 0,  // caster spawned a magic spell actor (aid says which)
-    FX_EV_TORCH = 1,  // a torch's litTimer flipped (key + new value)
-    FX_EV_AMMOHIT = 2,   // an EN_ARROW projectile hit something (pos, ap = arrow params)
-    FX_EV_HAMMER = 3,    // hammer ground shockwave (pos)
-    FX_EV_HOOKSPARK = 4, // hookshot reflected off a wall (pos)
-    FX_EV_POEPAINT = 5,  // Forest Temple portrait chain decided its next painting (pt, pi, ev, nx)
-    FX_EV_SHIELD = 6,    // our shield deflected a hit (pos, metal)
-    FX_EV_SILVER = 7,    // we picked up a silver rupee (home pos): peers tally it and remove theirs
-    FX_EV_BOTTLEDROP = 8, // we emptied a bottle: fish / blue fire / bug / fairy released (aid, pos, rot)
-    FX_EV_AMYTIMER = 9,   // Amy puzzle driver: the countdown block landed, HUD timer starts (sec)
+    FX_EV_SPELL = 0,       // caster spawned a magic spell actor (aid says which)
+    FX_EV_TORCH = 1,       // a torch's litTimer flipped (key + new value)
+    FX_EV_AMMOHIT = 2,     // an EN_ARROW projectile hit something (pos, ap = arrow params)
+    FX_EV_HAMMER = 3,      // hammer ground shockwave (pos)
+    FX_EV_HOOKSPARK = 4,   // hookshot reflected off a wall (pos)
+    FX_EV_POEPAINT = 5,    // Forest Temple portrait chain decided its next painting (pt, pi, ev, nx)
+    FX_EV_SHIELD = 6,      // our shield deflected a hit (pos, metal)
+    FX_EV_SILVER = 7,      // we picked up a silver rupee (home pos): peers tally it and remove theirs
+    FX_EV_BOTTLEDROP = 8,  // we emptied a bottle: fish / blue fire / bug / fairy released (aid, pos, rot)
+    FX_EV_AMYTIMER = 9,    // Amy puzzle driver: the countdown block landed, HUD timer starts (sec)
     FX_EV_BOTTLEGONE = 10, // a bottle drop we announced is gone (re-caught, swam off…): kill the copy (seq)
     FX_EV_GROTTO = 11,     // a hidden grotto (Door_Ana) was opened here (key = position)
     FX_EV_STORM = 12,      // Song of Storms: spawn the storm manager at pos on every client
@@ -209,7 +209,7 @@ struct ProjSnap {
 struct ProjReplica {
     uint32_t id = 0; // matches ProjSnap::id
     Actor* actor = NULL;
-    uint8_t grace = 0; // update frames still allowed after spawn
+    uint8_t grace = 0;  // update frames still allowed after spawn
     bool armed = false; // Fly handoff granted (release moment)
 };
 
@@ -369,8 +369,8 @@ struct HorseReplica {
 static std::unordered_map<uint32_t, HorseReplica> sHorseReplicas;
 extern "C" void EnHorse_CoopSetAnim(Actor* horseActor, int32_t animIdx, float frame, float speed);
 
-void TickPuppetHorse(uint32_t clientId, Actor* puppet, bool active, int8_t type, Vec3f pos, Vec3s rot,
-                     int8_t anim, float frame, float speed) {
+void TickPuppetHorse(uint32_t clientId, Actor* puppet, bool active, int8_t type, Vec3f pos, Vec3s rot, int8_t anim,
+                     float frame, float speed) {
     if (!SyncEnabled() || gPlayState == NULL || puppet == NULL) {
         return;
     }
@@ -490,7 +490,8 @@ void ReapClientProjectiles(uint32_t clientId) {
         pp.hookGrace = 0;
         // A client that left the roster never gets ticked again: drop its
         // entry instead of keeping a dead slot forever.
-        if (Anchor::Instance == nullptr || Anchor::Instance->clients.find(clientId) == Anchor::Instance->clients.end()) {
+        if (Anchor::Instance == nullptr ||
+            Anchor::Instance->clients.find(clientId) == Anchor::Instance->clients.end()) {
             sProj.erase(it);
         }
     }
@@ -560,8 +561,8 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
         }
         if (r.actor == NULL) {
             BorrowFiredCounter();
-            r.actor = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_ARROW, s.pos.x, s.pos.y, s.pos.z,
-                                  s.rot.x, s.rot.y, 0, s.params, false);
+            r.actor = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_ARROW, s.pos.x, s.pos.y, s.pos.z, s.rot.x,
+                                  s.rot.y, 0, s.params, false);
             r.grace = 0;
             r.armed = false;
             if (r.actor != NULL) {
@@ -591,8 +592,8 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
                 int16_t childId = (s.params == ARROW_FIRE)  ? ACTOR_ARROW_FIRE
                                   : (s.params == ARROW_ICE) ? ACTOR_ARROW_ICE
                                                             : ACTOR_ARROW_LIGHT;
-                Actor_SpawnAsChild(&gPlayState->actorCtx, r.actor, gPlayState, childId, s.pos.x, s.pos.y, s.pos.z, 0,
-                                   0, 0, 0);
+                Actor_SpawnAsChild(&gPlayState->actorCtx, r.actor, gPlayState, childId, s.pos.x, s.pos.y, s.pos.z, 0, 0,
+                                   0, 0);
             }
             if (r.actor->child != NULL) {
                 r.actor->child->destroy = NULL; // ArrowFire/Light_Destroy calls Magic_Reset (local magic!)
@@ -613,8 +614,8 @@ void TickPuppetProjectiles(uint32_t clientId, Actor* puppet) {
     }
     if (pp.hookActive || pp.hookGrace > 0) {
         if (pp.hookReplica == NULL) {
-            pp.hookReplica = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_ARMS_HOOK, pp.hookPos.x,
-                                         pp.hookPos.y, pp.hookPos.z, 0, pp.hookRot.y, 0, 0, false);
+            pp.hookReplica = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_ARMS_HOOK, pp.hookPos.x, pp.hookPos.y,
+                                         pp.hookPos.z, 0, pp.hookRot.y, 0, 0, false);
             ESYNC_LOG("[FxSync] puppet hook spawn client={} ok={}", clientId, pp.hookReplica != NULL);
         }
         if (pp.hookReplica != NULL) {
@@ -809,8 +810,7 @@ extern "C" s32 FxSync_IsBottleDropReplica(Actor* actor) {
 // behaviour is untouched, and you always get the flash of the shot you fired, however
 // far away it lands. Only a peer's arrow is bounded.
 extern "C" s32 Anchor_ShouldPlayArrowFlash(Actor* elementalHead, f32 range) {
-    if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected || gPlayState == NULL ||
-        elementalHead == NULL) {
+    if (Anchor::Instance == nullptr || !Anchor::Instance->isConnected || gPlayState == NULL || elementalHead == NULL) {
         return 1;
     }
     if (elementalHead->parent == NULL || !IsOwnProjReplica(elementalHead->parent)) {
@@ -900,7 +900,6 @@ static void OnSilverRupeePreUpdate(Actor* a) {
 // and killed when it stops (catch, drop, scene change). The pin happens here;
 // suppression happens in the ShouldActorUpdate hook below.
 
-
 void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw, int16_t pitch) {
     if (gPlayState == NULL || !SyncEnabled()) {
         return;
@@ -911,8 +910,8 @@ void TickPuppetBoomerang(uint32_t clientId, bool active, Vec3f pos, int16_t yaw,
     }
     if (active) {
         if (boom == NULL) {
-            boom = Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_BOOM, pos.x, pos.y, pos.z, 0, yaw, 0, 0,
-                               false);
+            boom =
+                Actor_Spawn(&gPlayState->actorCtx, gPlayState, ACTOR_EN_BOOM, pos.x, pos.y, pos.z, 0, yaw, 0, 0, false);
             ESYNC_LOG("[FxSync] puppet boomerang spawn client={} ok={}", clientId, boom != NULL);
         }
         if (boom != NULL) {
@@ -1431,8 +1430,8 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             }
             uint32_t seq = payload.value("seq", (uint32_t)0);
             sSpawningBottleDrop = true;
-            Actor* copy = Actor_Spawn(&gPlayState->actorCtx, gPlayState, aid, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z,
-                                      ap, true);
+            Actor* copy =
+                Actor_Spawn(&gPlayState->actorCtx, gPlayState, aid, pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, ap, true);
             sSpawningBottleDrop = false;
             if (copy != NULL && aid != ACTOR_EN_ELF) {
                 sBottleDrops[copy] = { senderClientId, seq }; // never re-bottleable: it is the peer's item
@@ -1541,9 +1540,8 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             // ganon_final and ganon_boss have none). Outside them there is no
             // collapse to fail out of, and Play_TriggerRespawn would be a
             // teleport out of nowhere.
-            bool apply = gPlayState != nullptr &&
-                         (gPlayState->sceneNum == SCENE_GANONS_TOWER_COLLAPSE_INTERIOR ||
-                          gPlayState->sceneNum == SCENE_INSIDE_GANONS_CASTLE_COLLAPSE);
+            bool apply = gPlayState != nullptr && (gPlayState->sceneNum == SCENE_GANONS_TOWER_COLLAPSE_INTERIOR ||
+                                                   gPlayState->sceneNum == SCENE_INSIDE_GANONS_CASTLE_COLLAPSE);
             if (apply) {
                 // Runs the same void En_Eg runs locally and latches its `voided`
                 // static, so our own copy will not fire a second one — and, since
@@ -1717,7 +1715,7 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
                     continue;
                 }
                 (*EnGSwitch_CoopCollectedCount())++; // the tracker plays the note / sets the flag from this
-                sSilverAnnounced.insert(a);           // a remote pickup is never re-announced
+                sSilverAnnounced.insert(a);          // a remote pickup is never re-announced
                 Actor_Kill(a);
                 ESYNC_LOG("[FxSync] silver rupee rx -> tally {}", *EnGSwitch_CoopCollectedCount());
                 break;
@@ -1831,9 +1829,7 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             ESYNC_LOG("[FxSync] torch rx key={:#x} lit={}", key, torch->litTimer);
             return;
         }
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("[FxSync] malformed FX_EVENT: {}", e.what());
-    }
+    } catch (const std::exception& e) { SPDLOG_ERROR("[FxSync] malformed FX_EVENT: {}", e.what()); }
 }
 
 void RegisterHooks(bool isConnected) {

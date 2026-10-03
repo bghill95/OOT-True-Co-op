@@ -650,7 +650,8 @@ void BossFd2_SpawnFaceDebris(BossFd2* this, PlayState* play) {
         debrisPos.y = this->actor.focus.pos.y;
         debrisPos.z = this->actor.focus.pos.z;
 
-        BossFd2_SpawnDebris(play, bossFd->effects, &debrisPos, &debrisVel, &debrisAccel, (s16)Rand_ZeroFloat(10.0) + 10);
+        BossFd2_SpawnDebris(play, bossFd->effects, &debrisPos, &debrisVel, &debrisAccel,
+                            (s16)Rand_ZeroFloat(10.0) + 10);
     }
 }
 
@@ -675,7 +676,8 @@ void BossFd2_SpawnSkullPieces(BossFd2* this, PlayState* play) {
         piecePos.y = this->actor.focus.pos.y;
         piecePos.z = this->actor.focus.pos.z;
 
-        BossFd2_SpawnSkullPiece(play, bossFd->effects, &piecePos, &pieceVel, &pieceAccel, (s16)Rand_ZeroFloat(6.0f) + 10);
+        BossFd2_SpawnSkullPiece(play, bossFd->effects, &piecePos, &pieceVel, &pieceAccel,
+                                (s16)Rand_ZeroFloat(6.0f) + 10);
     }
 }
 

@@ -11,12 +11,12 @@
 // unsynchronised .get(), and logger::should_log() dereferences that pointer before
 // it checks whether the level is even enabled -- so a log line that is filtered out
 // still crashes. Fetch the pointer once, check it, drop the line if it is gone.
-#define NET_LOG(MACRO, ...)                             \
-    do {                                                \
-        auto* netLogger_ = spdlog::default_logger_raw();\
-        if (netLogger_ != nullptr) {                    \
-            MACRO(netLogger_, __VA_ARGS__);             \
-        }                                               \
+#define NET_LOG(MACRO, ...)                              \
+    do {                                                 \
+        auto* netLogger_ = spdlog::default_logger_raw(); \
+        if (netLogger_ != nullptr) {                     \
+            MACRO(netLogger_, __VA_ARGS__);              \
+        }                                                \
     } while (0)
 #ifdef ENABLE_REMOTE_CONTROL
 #include <SDL2/SDL_net.h>

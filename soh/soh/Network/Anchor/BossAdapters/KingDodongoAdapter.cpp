@@ -78,10 +78,14 @@ static void KingDodongo_SerializeExtras(Actor* actor, nlohmann::json& x) {
 static void KingDodongo_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     BossDodongo* kd = (BossDodongo*)actor;
     try {
-        if (x.contains("mouth")) kd->unk_1DA = x["mouth"].get<int16_t>();
-        if (x.contains("flash")) kd->unk_1C0 = x["flash"].get<int16_t>();
-        if (x.contains("m1f8")) kd->unk_1F8 = x["m1f8"].get<float>();
-        if (x.contains("m208")) kd->unk_208 = x["m208"].get<float>();
+        if (x.contains("mouth"))
+            kd->unk_1DA = x["mouth"].get<int16_t>();
+        if (x.contains("flash"))
+            kd->unk_1C0 = x["flash"].get<int16_t>();
+        if (x.contains("m1f8"))
+            kd->unk_1F8 = x["m1f8"].get<float>();
+        if (x.contains("m208"))
+            kd->unk_208 = x["m208"].get<float>();
         if (x.contains("cf") && x["cf"].size() == 5) {
             kd->colorFilterR = x["cf"][0].get<float>();
             kd->colorFilterG = x["cf"][1].get<float>();
@@ -94,16 +98,21 @@ static void KingDodongo_DeserializeExtras(Actor* actor, const nlohmann::json& x)
                 kd->unk_25C[i] = x["curl"][i].get<float>();
             }
         }
-        if (x.contains("fc")) kd->unk_19E = x["fc"].get<int16_t>();
-        if (x.contains("lava")) kd->unk_224 = x["lava"].get<float>();
-        if (x.contains("cool")) kd->unk_1C6 = x["cool"].get<int16_t>();
-        if (x.contains("fl")) kd->unk_1C8 = x["fl"].get<int16_t>();
-        if (x.contains("inh")) kd->unk_1E2 = x["inh"].get<uint8_t>();
-        if (x.contains("dir")) kd->unk_1A2 = x["dir"].get<int16_t>();
-        if (x.contains("af")) kd->skelAnime.curFrame = x["af"].get<float>();
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[KingDodongoSync] extras parse error: {}", ex.what());
-    }
+        if (x.contains("fc"))
+            kd->unk_19E = x["fc"].get<int16_t>();
+        if (x.contains("lava"))
+            kd->unk_224 = x["lava"].get<float>();
+        if (x.contains("cool"))
+            kd->unk_1C6 = x["cool"].get<int16_t>();
+        if (x.contains("fl"))
+            kd->unk_1C8 = x["fl"].get<int16_t>();
+        if (x.contains("inh"))
+            kd->unk_1E2 = x["inh"].get<uint8_t>();
+        if (x.contains("dir"))
+            kd->unk_1A2 = x["dir"].get<int16_t>();
+        if (x.contains("af"))
+            kd->skelAnime.curFrame = x["af"].get<float>();
+    } catch (const std::exception& ex) { SPDLOG_WARN("[KingDodongoSync] extras parse error: {}", ex.what()); }
     // EnemySync re-applies the last received extras EVERY game frame, not only
     // when a packet lands. Every ambient spawn below is gated on the AUTHORITY's
     // frame counter, so replaying a cached frame would fire them again: two

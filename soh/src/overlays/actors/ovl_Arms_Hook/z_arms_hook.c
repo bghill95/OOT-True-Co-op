@@ -288,7 +288,7 @@ void ArmsHook_Shoot(ArmsHook* this, PlayState* play) {
                                        &gSfxDefaultFreqAndVolScale, &gSfxDefaultFreqAndVolScale, &gSfxDefaultReverb);
                 {
                     // Co-op: replay the metal impact sparkle on peers (FxSync).
-                    void FxSync_OnHookSpark(Vec3f* pos);
+                    void FxSync_OnHookSpark(Vec3f * pos);
                     FxSync_OnHookSpark(&this->actor.world.pos);
                 }
             }
@@ -331,8 +331,7 @@ void ArmsHook_Draw(Actor* thisx, PlayState* play) {
         isPuppetOwned = 1;
     }
 
-    if ((player->actor.draw != NULL) &&
-        (isPuppetOwned || (player->rightHandType == PLAYER_MODELTYPE_RH_HOOKSHOT))) {
+    if ((player->actor.draw != NULL) && (isPuppetOwned || (player->rightHandType == PLAYER_MODELTYPE_RH_HOOKSHOT))) {
         OPEN_DISPS(play->state.gfxCtx);
 
         if ((ArmsHook_Shoot != this->actionFunc) || (this->timer <= 0)) {

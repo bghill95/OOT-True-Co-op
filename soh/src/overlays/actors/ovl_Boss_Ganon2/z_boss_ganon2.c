@@ -1803,8 +1803,7 @@ void func_8090120C(BossGanon2* this, PlayState* play) {
                     yawDiff = Math_Atan2S(dz, dx) - candidate->actor.shape.rot.y;
 
                     if ((ABS(yawDiff) < 0x2000) && (sqrtf(SQ(dx) + SQ(dz)) < 70.0f) &&
-                        (candidate->meleeWeaponState != 0) &&
-                        (candidate->heldItemAction == PLAYER_IA_SWORD_MASTER)) {
+                        (candidate->meleeWeaponState != 0) && (candidate->heldItemAction == PLAYER_IA_SWORD_MASTER)) {
                         striker = candidate;
                         break;
                     }
@@ -2032,8 +2031,7 @@ void func_80902348(BossGanon2* this, PlayState* play) {
                 // func_8002F6D4 always acts on the LOCAL Link and
                 // yawTowardsPlayer is retargeted at the nearest player.
                 if (this->unk_444.base.at == &GET_PLAYER(play)->actor) {
-                    func_8002F6D4(play, &this->actor, 15.0f, Anchor_LocalPlayerYaw(&this->actor) + phi_v0_2, 2.0f,
-                                  0);
+                    func_8002F6D4(play, &this->actor, 15.0f, Anchor_LocalPlayerYaw(&this->actor) + phi_v0_2, 2.0f, 0);
                 }
                 sBossGanon2Zelda->unk_3C8 = 8;
                 this->unk_316 = 10;

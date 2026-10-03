@@ -277,8 +277,10 @@ static void BossGanon_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
     }
     BossGanon* gd = (BossGanon*)actor;
     try {
-        if (x.contains("a2")) gd->unk_1A2 = x["a2"].get<int16_t>();
-        if (x.contains("df")) gd->unk_1A6 = x["df"].get<int16_t>();
+        if (x.contains("a2"))
+            gd->unk_1A2 = x["a2"].get<int16_t>();
+        if (x.contains("df"))
+            gd->unk_1A6 = x["df"].get<int16_t>();
         if (x.contains("hb") && x["hb"].size() == 2) {
             gd->handLightBallScale = x["hb"][0].get<float>();
             gd->unk_258 = x["hb"][1].get<float>();
@@ -290,7 +292,8 @@ static void BossGanon_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
             gd->unk_290 = x["bm"][3].get<float>();
             gd->unk_2D0 = x["bm"][4].get<float>();
         }
-        if (x.contains("bp")) gd->unk_278 = x["bp"].get<Vec3f>();
+        if (x.contains("bp"))
+            gd->unk_278 = x["bp"].get<Vec3f>();
         if (x.contains("bi") && x["bi"].size() == 2) {
             gd->unk_1AA = x["bi"][0].get<int16_t>();
             int32_t rayCount = x["bi"][1].get<int32_t>();
@@ -335,9 +338,7 @@ static void BossGanon_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
                 gd->unk_49C[first + i] = x["sv"][i].get<float>();
             }
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[BossGanonSync] extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[BossGanonSync] extras parse error: {}", ex.what()); }
 
     // customColliderPos: the body cylinder rides the torso limb, not world.pos
     // (BossGanon_Update:2938). unk_1FC was refreshed by our OWN PostLimbDraw

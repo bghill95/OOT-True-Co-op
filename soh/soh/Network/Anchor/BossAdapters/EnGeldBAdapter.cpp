@@ -49,9 +49,7 @@ static void EnGeldB_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
         if (x.contains("act")) {
             geldB->action = x["act"].get<int32_t>();
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[EnemySync] EnGeldB extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[EnemySync] EnGeldB extras parse error: {}", ex.what()); }
 }
 
 // The small key, when the force-kill has to step in -- a last resort, and only

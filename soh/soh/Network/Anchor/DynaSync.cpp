@@ -386,8 +386,8 @@ static bool IsRideClaimable(const Actor* actor) {
     switch (actor->id) {
         case ACTOR_OBJ_BEAN: // magic bean leaf platform (adult); the child soil never moves
             return LINK_AGE_IN_YEARS == YEARS_ADULT;
-        case ACTOR_BG_MORI_ELEVATOR:  // Forest Temple elevator (flag 0x1B stays per-client by design)
-        case ACTOR_OBJ_ELEVATOR:      // stone elevator (Gerudo Training Ground), toggles on each rider
+        case ACTOR_BG_MORI_ELEVATOR: // Forest Temple elevator (flag 0x1B stays per-client by design)
+        case ACTOR_OBJ_ELEVATOR:     // stone elevator (Gerudo Training Ground), toggles on each rider
         case ACTOR_BG_HIDAN_SYOKU:   // Fire Temple: elevator pillar, rises under its rider
         case ACTOR_BG_HIDAN_FSLIFT:  // Fire Temple: hookshot elevator, rises while ridden
         case ACTOR_BG_GND_FIREMEIRO: // Ganon's Castle fire trial: sinks, shakes and rises under its rider
@@ -424,9 +424,9 @@ struct TrackedDyna {
     bool everSent = false;
     bool suppressed = false;
     bool claimable = false;
-    bool ride = false;          // claimed by standing on it, mirrored with update suppressed
-    bool pinned = false;        // position mirrored, update NEVER suppressed (see IsPinnedDynaActor)
-    bool hadUncullFlag = false; // actor's own culling setting, restored on release
+    bool ride = false;           // claimed by standing on it, mirrored with update suppressed
+    bool pinned = false;         // position mirrored, update NEVER suppressed (see IsPinnedDynaActor)
+    bool hadUncullFlag = false;  // actor's own culling setting, restored on release
     uint64_t localClaimTick = 0; // last tick our player pushed/moved it
     uint64_t softClaimTick = 0;  // last tick a module asked us to keep driving it (HoldSoftClaim)
     Vec3f prevPos{};             // motion detection for claim upkeep
@@ -451,7 +451,7 @@ struct RemoteSoftClaim {
 
 static std::unordered_map<Actor*, TrackedDyna> sTracked;
 static std::unordered_map<uint64_t, RemoteDynaState> sRemote;
-static std::unordered_map<uint64_t, uint64_t> sRemoteClaims; // key -> last claimed-entry rx tick
+static std::unordered_map<uint64_t, uint64_t> sRemoteClaims;      // key -> last claimed-entry rx tick
 static std::unordered_map<uint64_t, RemoteSoftClaim> sRemoteSoft; // key -> last soft-claimed entry
 static uint64_t sTick = 0;
 
@@ -555,9 +555,8 @@ static void OnShouldDynaUpdate(Actor* actor, bool* should) {
         // keep the claim while it still slides after release.
         bool moved = fabsf(actor->world.pos.x - st.prevPos.x) > POS_EPSILON ||
                      fabsf(actor->world.pos.y - st.prevPos.y) > POS_EPSILON ||
-                     fabsf(actor->world.pos.z - st.prevPos.z) > POS_EPSILON ||
-                     actor->shape.rot.x != st.prevRot.x || actor->shape.rot.y != st.prevRot.y ||
-                     actor->shape.rot.z != st.prevRot.z;
+                     fabsf(actor->world.pos.z - st.prevPos.z) > POS_EPSILON || actor->shape.rot.x != st.prevRot.x ||
+                     actor->shape.rot.y != st.prevRot.y || actor->shape.rot.z != st.prevRot.z;
         st.prevPos = actor->world.pos;
         st.prevRot = actor->shape.rot;
         // KNOWN, ACCEPTED: taking a ride claim can snap the platform.
@@ -714,17 +713,14 @@ void Ingest(uint32_t senderClientId, const nlohmann::json& payload) {
             r.pos = e["pos"].get<Vec3f>();
             r.rot = e["rot"].get<Vec3s>();
         }
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("[DynaSync] malformed DYNA_STATE: {}", e.what());
-    }
+    } catch (const std::exception& e) { SPDLOG_ERROR("[DynaSync] malformed DYNA_STATE: {}", e.what()); }
 }
 
 static bool MovedSinceLastSend(const Actor* actor, const TrackedDyna& st) {
     return fabsf(actor->world.pos.x - st.lastSentPos.x) > POS_EPSILON ||
            fabsf(actor->world.pos.y - st.lastSentPos.y) > POS_EPSILON ||
-           fabsf(actor->world.pos.z - st.lastSentPos.z) > POS_EPSILON ||
-           actor->shape.rot.x != st.lastSentRot.x || actor->shape.rot.y != st.lastSentRot.y ||
-           actor->shape.rot.z != st.lastSentRot.z;
+           fabsf(actor->world.pos.z - st.lastSentPos.z) > POS_EPSILON || actor->shape.rot.x != st.lastSentRot.x ||
+           actor->shape.rot.y != st.lastSentRot.y || actor->shape.rot.z != st.lastSentRot.z;
 }
 
 void PerFrameTick() {
@@ -813,8 +809,7 @@ void RegisterHooks(bool isConnected) {
 
     // Whitelisted spinners with no DynaPoly collision never reach the hook
     // above; track them from their plain actor init.
-    COND_ID_HOOK(OnActorInit, ACTOR_BG_SPOT01_FUSYA, isConnected,
-                 [](void* actor) { OnDynaRegistered((Actor*)actor); });
+    COND_ID_HOOK(OnActorInit, ACTOR_BG_SPOT01_FUSYA, isConnected, [](void* actor) { OnDynaRegistered((Actor*)actor); });
 
     // Same door for the pinned obstacles: neither registers DynaPoly, so
     // OnDynaPolySetBgActor never fires for them. OnActorInit runs AFTER the actor's own

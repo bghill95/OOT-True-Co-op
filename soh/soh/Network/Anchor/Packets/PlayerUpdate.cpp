@@ -95,9 +95,9 @@ void Anchor::SendPacket_PlayerUpdate() {
     payload["unk_862"] = player->unk_862;
     payload["stickFlame"] = player->unk_860;
     payload["stickLen"] = player->unk_85C;
-    payload["bowStr"] = player->unk_858; // bow string draw amount
-    payload["mask"] = player->currentMask;   // worn mask (Keaton/Skull/Spooky/Bunny/...)
-    payload["mws"] = player->meleeWeaponState; // sword/stick swing trail
+    payload["bowStr"] = player->unk_858;                 // bow string draw amount
+    payload["mask"] = player->currentMask;               // worn mask (Keaton/Skull/Spooky/Bunny/...)
+    payload["mws"] = player->meleeWeaponState;           // sword/stick swing trail
     payload["bgs"] = (gSaveContext.swordHealth <= 0.0f); // snapped Giant's Knife
     payload["giId"] = (player->unk_862 != 0) ? (s16)player->getItemEntry.getItemId : (s16)-1; // item held up
     payload["giMod"] = (s8)player->getItemEntry.modIndex;

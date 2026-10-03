@@ -111,7 +111,7 @@ static void Morpha_SerializeExtras(Actor* actor, nlohmann::json& x) {
         x["str"] = str;
         x["ring"] = { mo->widthIndex, mo->pulsePhase };
         x["cut"] = { mo->cutIndex, mo->meltIndex, mo->noBubbles, mo->linkToLeft };
-        x["f"] = { mo->tentPulse, mo->cutScale, mo->baseAlpha, mo->tentRippleSize, mo->fwork[MO_TENT_MAX_STRETCH],
+        x["f"] = { mo->tentPulse,    mo->cutScale, mo->baseAlpha, mo->tentRippleSize, mo->fwork[MO_TENT_MAX_STRETCH],
                    mo->waterTexAlpha };
         x["bbt"] = mo->baseBubblesTimer;
         x["draw"] = mo->drawActor;
@@ -133,12 +133,14 @@ static void Morpha_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
                 mo->work[i] = (int16_t)x["w"][i].get<int>();
             }
         }
-        if (x.contains("t0")) mo->timers[0] = x["t0"].get<int16_t>();
+        if (x.contains("t0"))
+            mo->timers[0] = x["t0"].get<int16_t>();
         if (x.contains("sfx") && x["sfx"].size() == 2) {
             mo->coopSfxSeq = x["sfx"][0].get<uint8_t>();
             mo->coopSfxId = x["sfx"][1].get<uint16_t>();
         }
-        if (x.contains("draw")) mo->drawActor = JsonBool(x["draw"]) ? 1 : 0;
+        if (x.contains("draw"))
+            mo->drawActor = JsonBool(x["draw"]) ? 1 : 0;
 
         if (Morpha_IsTentacle(actor)) {
             if (x.contains("rot") && x["rot"].size() == 82 && x.contains("str") && x["str"].size() == 41) {
@@ -172,8 +174,10 @@ static void Morpha_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
                 mo->fwork[MO_TENT_MAX_STRETCH] = x["f"][4].get<float>();
                 mo->waterTexAlpha = x["f"][5].get<float>();
             }
-            if (x.contains("bbt")) mo->baseBubblesTimer = x["bbt"].get<int16_t>();
-            if (x.contains("grab")) mo->coopGrabClientId = x["grab"].get<uint32_t>();
+            if (x.contains("bbt"))
+                mo->baseBubblesTimer = x["bbt"].get<int16_t>();
+            if (x.contains("grab"))
+                mo->coopGrabClientId = x["grab"].get<uint32_t>();
             // A second tentacle materialised from ENEMY_SPAWN is nobody's child:
             // give it the overlay's static slot and the otherTent links.
             if (actor->parent == NULL && BossMo_CoopTent1() != mo && BossMo_CoopTent2() == NULL) {
@@ -189,22 +193,22 @@ static void Morpha_DeserializeExtras(Actor* actor, const nlohmann::json& x) {
                 mo->coopWaterLevel = (int16_t)x["wl"].get<int>();
                 mo->coopHasWaterLevel = 1;
             }
-            if (x.contains("wlv")) mo->waterLevel = x["wlv"].get<float>();
+            if (x.contains("wlv"))
+                mo->waterLevel = x["wlv"].get<float>();
             if (x.contains("cf") && x["cf"].size() == 4) {
                 mo->baseAlpha = x["cf"][0].get<float>();
                 mo->waterTex1x = x["cf"][1].get<float>();
                 mo->waterTex1y = x["cf"][2].get<float>();
                 mo->waterTex2y = x["cf"][3].get<float>();
             }
-            if (x.contains("hc")) mo->hitCount = x["hc"].get<uint8_t>();
+            if (x.contains("hc"))
+                mo->hitCount = x["hc"].get<uint8_t>();
             if (gPlayState != NULL && mo->coopMirrorVar != mo->work[MO_TENT_VAR_TIMER]) {
                 mo->coopMirrorVar = mo->work[MO_TENT_VAR_TIMER];
                 BossMo_CoopMirrorCoreTick(mo, gPlayState);
             }
         }
-    } catch (const std::exception& ex) {
-        SPDLOG_WARN("[MorphaSync] extras parse error: {}", ex.what());
-    }
+    } catch (const std::exception& ex) { SPDLOG_WARN("[MorphaSync] extras parse error: {}", ex.what()); }
 }
 
 static bool Morpha_OnPhaseChange(Actor* actor, uint8_t fromPhase, uint8_t toPhase) {

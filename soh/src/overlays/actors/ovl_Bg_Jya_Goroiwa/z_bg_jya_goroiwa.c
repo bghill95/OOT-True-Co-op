@@ -216,9 +216,8 @@ void BgJyaGoroiwa_Update(Actor* thisx, PlayState* play) {
     // textbox stops HIS boulder while the other keeps rolling, and the two never
     // line up again — each player crushed by a rock the other does not see there.
     // Keep rolling when connected; the pause is a courtesy to a single player.
-    if (Anchor_IsSessionActive() ||
-        !(player->stateFlags1 &
-          (PLAYER_STATE1_TALKING | PLAYER_STATE1_DEAD | PLAYER_STATE1_IN_ITEM_CS | PLAYER_STATE1_IN_CUTSCENE))) {
+    if (Anchor_IsSessionActive() || !(player->stateFlags1 & (PLAYER_STATE1_TALKING | PLAYER_STATE1_DEAD |
+                                                             PLAYER_STATE1_IN_ITEM_CS | PLAYER_STATE1_IN_CUTSCENE))) {
         this->actionFunc(this, play);
         BgJyaGoroiwa_UpdateRotation(this);
         pos.x = this->actor.world.pos.x;

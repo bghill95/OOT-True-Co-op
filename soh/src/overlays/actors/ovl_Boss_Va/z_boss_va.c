@@ -2702,7 +2702,8 @@ void BossVa_BariPhase2Attack(BossVa* this, PlayState* play) {
         if (this->colliderSph.base.acFlags & AC_HIT) {
             this->colliderSph.base.acFlags &= ~AC_HIT;
 
-            if ((this->colliderSph.base.ac != NULL) && (this->colliderSph.base.ac->id == ACTOR_EN_BOOM) && (sp52 >= 64)) {
+            if ((this->colliderSph.base.ac != NULL) && (this->colliderSph.base.ac->id == ACTOR_EN_BOOM) &&
+                (sp52 >= 64)) {
                 boomerang = (EnBoom*)this->colliderSph.base.ac;
                 boomerang->returnTimer = 0;
                 boomerang->moveTo = &player->actor;

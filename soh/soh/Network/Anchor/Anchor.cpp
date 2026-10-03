@@ -208,8 +208,8 @@ void Anchor::ProcessIncomingPacketQueue() {
         // handlers below rely on. And is_number_unsigned rather than a bare get<>:
         // this runs outside the try below, so a malformed clientId must not throw
         // its way out of the game frame.
-        if (packetType != ALL_CLIENT_STATE && packetType != UPDATE_CLIENT_STATE &&
-            payload.contains("clientId") && payload["clientId"].is_number_unsigned()) {
+        if (packetType != ALL_CLIENT_STATE && packetType != UPDATE_CLIENT_STATE && payload.contains("clientId") &&
+            payload["clientId"].is_number_unsigned()) {
             uint32_t clientId = payload["clientId"].get<uint32_t>();
             auto it = clients.find(clientId);
             if (it != clients.end() && it->second.clientVersion != clientVersion) {
@@ -226,93 +226,93 @@ void Anchor::ProcessIncomingPacketQueue() {
         // which silently disables every local broadcast for the rest of the session.
         // One bad packet must cost one packet, nothing more.
         try {
-        // packetType here is a string so we can't use a switch statement
-        if (packetType == ALL_CLIENT_STATE)
-            HandlePacket_AllClientState(payload);
-        else if (packetType == BGM_POS)
-            HandlePacket_BgmPos(payload);
-        else if (packetType == BGM_POS_REQUEST)
-            HandlePacket_BgmPosRequest(payload);
-        else if (packetType == BGM_RESTART)
-            HandlePacket_BgmRestart(payload);
-        else if (packetType == BGM_STATE)
-            HandlePacket_BgmState(payload);
-        else if (packetType == BOMBF_EVENT)
-            HandlePacket_BombfEvent(payload);
-        else if (packetType == BOMB_EVENT)
-            HandlePacket_BombEvent(payload);
-        else if (packetType == BREAK_EVENT)
-            HandlePacket_BreakEvent(payload);
-        else if (packetType == BOSS_ENTRY)
-            HandlePacket_BossEntry(payload);
-        else if (packetType == CARRY_EVENT)
-            HandlePacket_CarryEvent(payload);
-        else if (packetType == CUTSCENE_SYNC)
-            HandlePacket_CutsceneSync(payload);
-        else if (packetType == CAPTURE_PLAYER)
-            HandlePacket_CapturePlayer(payload);
-        else if (packetType == DAMAGE_PLAYER)
-            HandlePacket_DamagePlayer(payload);
-        else if (packetType == DISABLE_ANCHOR)
-            HandlePacket_DisableAnchor(payload);
-        else if (packetType == DYNA_STATE)
-            HandlePacket_DynaState(payload);
-        else if (packetType == ENEMY_DESPAWN)
-            HandlePacket_EnemyDespawn(payload);
-        else if (packetType == ENEMY_DIED)
-            HandlePacket_EnemyDied(payload);
-        else if (packetType == ENEMY_HIT)
-            HandlePacket_EnemyHit(payload);
-        else if (packetType == ENEMY_HIT_REQUEST)
-            HandlePacket_EnemyHitRequest(payload);
-        else if (packetType == ENEMY_ROSTER)
-            HandlePacket_EnemyRoster(payload);
-        else if (packetType == ENEMY_SPAWN)
-            HandlePacket_EnemySpawn(payload);
-        else if (packetType == ENEMY_STATE)
-            HandlePacket_EnemyState(payload);
-        else if (packetType == ENTRANCE_DISCOVERED)
-            HandlePacket_EntranceDiscovered(payload);
-        else if (packetType == FX_EVENT)
-            HandlePacket_FxEvent(payload);
-        else if (packetType == GAME_COMPLETE)
-            HandlePacket_GameComplete(payload);
-        else if (packetType == GIVE_ITEM)
-            HandlePacket_GiveItem(payload);
-        else if (packetType == PLAYER_LIFE_STATE)
-            HandlePacket_PlayerLifeState(payload);
-        else if (packetType == PLAYER_SFX)
-            HandlePacket_PlayerSfx(payload);
-        else if (packetType == PLAYER_UPDATE)
-            HandlePacket_PlayerUpdate(payload);
-        else if (packetType == UPDATE_TEAM_STATE)
-            HandlePacket_UpdateTeamState(payload);
-        else if (packetType == REQUEST_TEAM_STATE)
-            HandlePacket_RequestTeamState(payload);
-        else if (packetType == REQUEST_TELEPORT)
-            HandlePacket_RequestTeleport(payload);
-        else if (packetType == RUPEE_CHANGE)
-            HandlePacket_RupeeChange(payload);
-        else if (packetType == SERVER_MESSAGE)
-            HandlePacket_ServerMessage(payload);
-        else if (packetType == SET_CHECK_STATUS)
-            HandlePacket_SetCheckStatus(payload);
-        else if (packetType == SET_FLAG)
-            HandlePacket_SetFlag(payload);
-        else if (packetType == TELEPORT_TO)
-            HandlePacket_TeleportTo(payload);
-        else if (packetType == TIME_SYNC)
-            HandlePacket_TimeSync(payload);
-        else if (packetType == UNSET_FLAG)
-            HandlePacket_UnsetFlag(payload);
-        else if (packetType == UPDATE_BEANS_COUNT)
-            HandlePacket_UpdateBeansCount(payload);
-        else if (packetType == UPDATE_CLIENT_STATE)
-            HandlePacket_UpdateClientState(payload);
-        else if (packetType == UPDATE_ROOM_STATE)
-            HandlePacket_UpdateRoomState(payload);
-        else if (packetType == UPDATE_DUNGEON_ITEMS)
-            HandlePacket_UpdateDungeonItems(payload);
+            // packetType here is a string so we can't use a switch statement
+            if (packetType == ALL_CLIENT_STATE)
+                HandlePacket_AllClientState(payload);
+            else if (packetType == BGM_POS)
+                HandlePacket_BgmPos(payload);
+            else if (packetType == BGM_POS_REQUEST)
+                HandlePacket_BgmPosRequest(payload);
+            else if (packetType == BGM_RESTART)
+                HandlePacket_BgmRestart(payload);
+            else if (packetType == BGM_STATE)
+                HandlePacket_BgmState(payload);
+            else if (packetType == BOMBF_EVENT)
+                HandlePacket_BombfEvent(payload);
+            else if (packetType == BOMB_EVENT)
+                HandlePacket_BombEvent(payload);
+            else if (packetType == BREAK_EVENT)
+                HandlePacket_BreakEvent(payload);
+            else if (packetType == BOSS_ENTRY)
+                HandlePacket_BossEntry(payload);
+            else if (packetType == CARRY_EVENT)
+                HandlePacket_CarryEvent(payload);
+            else if (packetType == CUTSCENE_SYNC)
+                HandlePacket_CutsceneSync(payload);
+            else if (packetType == CAPTURE_PLAYER)
+                HandlePacket_CapturePlayer(payload);
+            else if (packetType == DAMAGE_PLAYER)
+                HandlePacket_DamagePlayer(payload);
+            else if (packetType == DISABLE_ANCHOR)
+                HandlePacket_DisableAnchor(payload);
+            else if (packetType == DYNA_STATE)
+                HandlePacket_DynaState(payload);
+            else if (packetType == ENEMY_DESPAWN)
+                HandlePacket_EnemyDespawn(payload);
+            else if (packetType == ENEMY_DIED)
+                HandlePacket_EnemyDied(payload);
+            else if (packetType == ENEMY_HIT)
+                HandlePacket_EnemyHit(payload);
+            else if (packetType == ENEMY_HIT_REQUEST)
+                HandlePacket_EnemyHitRequest(payload);
+            else if (packetType == ENEMY_ROSTER)
+                HandlePacket_EnemyRoster(payload);
+            else if (packetType == ENEMY_SPAWN)
+                HandlePacket_EnemySpawn(payload);
+            else if (packetType == ENEMY_STATE)
+                HandlePacket_EnemyState(payload);
+            else if (packetType == ENTRANCE_DISCOVERED)
+                HandlePacket_EntranceDiscovered(payload);
+            else if (packetType == FX_EVENT)
+                HandlePacket_FxEvent(payload);
+            else if (packetType == GAME_COMPLETE)
+                HandlePacket_GameComplete(payload);
+            else if (packetType == GIVE_ITEM)
+                HandlePacket_GiveItem(payload);
+            else if (packetType == PLAYER_LIFE_STATE)
+                HandlePacket_PlayerLifeState(payload);
+            else if (packetType == PLAYER_SFX)
+                HandlePacket_PlayerSfx(payload);
+            else if (packetType == PLAYER_UPDATE)
+                HandlePacket_PlayerUpdate(payload);
+            else if (packetType == UPDATE_TEAM_STATE)
+                HandlePacket_UpdateTeamState(payload);
+            else if (packetType == REQUEST_TEAM_STATE)
+                HandlePacket_RequestTeamState(payload);
+            else if (packetType == REQUEST_TELEPORT)
+                HandlePacket_RequestTeleport(payload);
+            else if (packetType == RUPEE_CHANGE)
+                HandlePacket_RupeeChange(payload);
+            else if (packetType == SERVER_MESSAGE)
+                HandlePacket_ServerMessage(payload);
+            else if (packetType == SET_CHECK_STATUS)
+                HandlePacket_SetCheckStatus(payload);
+            else if (packetType == SET_FLAG)
+                HandlePacket_SetFlag(payload);
+            else if (packetType == TELEPORT_TO)
+                HandlePacket_TeleportTo(payload);
+            else if (packetType == TIME_SYNC)
+                HandlePacket_TimeSync(payload);
+            else if (packetType == UNSET_FLAG)
+                HandlePacket_UnsetFlag(payload);
+            else if (packetType == UPDATE_BEANS_COUNT)
+                HandlePacket_UpdateBeansCount(payload);
+            else if (packetType == UPDATE_CLIENT_STATE)
+                HandlePacket_UpdateClientState(payload);
+            else if (packetType == UPDATE_ROOM_STATE)
+                HandlePacket_UpdateRoomState(payload);
+            else if (packetType == UPDATE_DUNGEON_ITEMS)
+                HandlePacket_UpdateDungeonItems(payload);
         } catch (const std::exception& ex) {
             SPDLOG_WARN("[Anchor] handler for '{}' threw: {}", packetType, ex.what());
         }

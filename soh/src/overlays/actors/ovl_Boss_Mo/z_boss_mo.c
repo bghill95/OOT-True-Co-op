@@ -807,8 +807,7 @@ void BossMo_Tentacle(BossMo* this, PlayState* play) {
                     // the mirrors so the grabbed machine runs the hold on its Link.
                     this->coopGrabTarget = target;
                     this->coopGrabClientId = Anchor_PlayerClientId(target);
-                    if ((s16)(this->actor.shape.rot.y - Actor_WorldYawTowardActor(&this->actor, &target->actor)) >=
-                        0) {
+                    if ((s16)(this->actor.shape.rot.y - Actor_WorldYawTowardActor(&this->actor, &target->actor)) >= 0) {
                         this->linkToLeft = false;
                     } else {
                         this->linkToLeft = true;
@@ -2346,10 +2345,9 @@ void BossMo_CoreWaterEntrySplash(BossMo* this, PlayState* play) {
     f32 sp5C;
     s16 i;
 
-    if ((this->timers[3] != 0) ||
-        ((sMorphaTent1 != NULL) && (sMorphaTent1->fwork[MO_TENT_MAX_STRETCH] > 0.2f) &&
-         (fabsf(this->actor.world.pos.x - sMorphaTent1->actor.world.pos.x) < 30.0f) &&
-         (fabsf(this->actor.world.pos.z - sMorphaTent1->actor.world.pos.z) < 30.0f))) {
+    if ((this->timers[3] != 0) || ((sMorphaTent1 != NULL) && (sMorphaTent1->fwork[MO_TENT_MAX_STRETCH] > 0.2f) &&
+                                   (fabsf(this->actor.world.pos.x - sMorphaTent1->actor.world.pos.x) < 30.0f) &&
+                                   (fabsf(this->actor.world.pos.z - sMorphaTent1->actor.world.pos.z) < 30.0f))) {
         // This space intentionally left blank.
     } else {
         this->timers[3] = 8;

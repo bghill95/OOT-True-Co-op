@@ -59,22 +59,22 @@ typedef struct {
     u8 modelGroup;
     s8 invincibilityTimer;
     s16 unk_862;
-    s16 dekuStickFlame; // player->unk_860: burning deku stick timer
+    s16 dekuStickFlame;  // player->unk_860: burning deku stick timer
     f32 dekuStickLength; // player->unk_85C: remaining stick fraction (draw scale + tip reach)
-    f32 bowString; // player->unk_858: bow string draw amount (stale on puppets = bow stuck drawn)
-    f32 shapeYOffset; // player->actor.shape.yOffset: the render offset a ledge climb uses. world.pos
-                      // jumps to the top of the ledge in one frame and this pulls the model back down
-                      // for the pull-up; without it the puppet teleported onto the ledge and then
-                      // played the climb in mid-air. Most visible getting out of water.
-    u8 currentMask;  // player->currentMask: worn mask (PlayerMask). Never streamed before -> puppets showed no mask.
+    f32 bowString;       // player->unk_858: bow string draw amount (stale on puppets = bow stuck drawn)
+    f32 shapeYOffset;    // player->actor.shape.yOffset: the render offset a ledge climb uses. world.pos
+                         // jumps to the top of the ledge in one frame and this pulls the model back down
+                         // for the pull-up; without it the puppet teleported onto the ledge and then
+                         // played the climb in mid-air. Most visible getting out of water.
+    u8 currentMask; // player->currentMask: worn mask (PlayerMask). Never streamed before -> puppets showed no mask.
     s8 meleeWeaponState; // player->meleeWeaponState: swing trail live (the puppet owns a blure from Player_Init)
-    bool bgsBroken;      // owner's gSaveContext.swordHealth <= 0: snapped Giant's Knife (model reads OUR save otherwise)
-    s16 giId;            // get-item presentation: getItemEntry.getItemId while unk_862 != 0, else -1
-    s8 giMod;            // ... and its modIndex (MOD_NONE / MOD_RANDOMIZER)
+    bool bgsBroken; // owner's gSaveContext.swordHealth <= 0: snapped Giant's Knife (model reads OUR save otherwise)
+    s16 giId;       // get-item presentation: getItemEntry.getItemId while unk_862 != 0, else -1
+    s8 giMod;       // ... and its modIndex (MOD_NONE / MOD_RANDOMIZER)
     s8 actionVar1;
     bool boomActive; // thrower's EN_BOOM is in flight (boomPos/boomYaw valid)
     Vec3f boomPos;
-    bool carryActive;  // this client is carrying an actor (carryPos/carryRot are its pose)
+    bool carryActive; // this client is carrying an actor (carryPos/carryRot are its pose)
     Vec3f carryPos;
     Vec3s carryRot;
     s16 boomYaw;
@@ -82,10 +82,10 @@ typedef struct {
     bool horseActive; // this client sits on an EN_HORSE (the fields below are its pose and gait)
     Vec3f horsePos;
     Vec3s horseRot;
-    s8 horseType;     // HORSE_EPONA / HORSE_HNI
-    s8 horseAnim;     // EnHorse animationIdx
-    f32 horseFrame;   // skelAnime.curFrame
-    f32 horseSpeed;   // skelAnime.playSpeed
+    s8 horseType;   // HORSE_EPONA / HORSE_HNI
+    s8 horseAnim;   // EnHorse animationIdx
+    f32 horseFrame; // skelAnime.curFrame
+    f32 horseSpeed; // skelAnime.playSpeed
 
     // Ptr to the dummy player
     Player* player;

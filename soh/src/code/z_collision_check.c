@@ -1622,7 +1622,7 @@ void CollisionCheck_HitSolid(PlayState* play, ColliderInfo* info, Collider* coll
         }
         if (collider->actor == &GET_PLAYER(play)->actor) {
             // Co-op: our shield deflected something; replay the sparks on peers (FxSync).
-            void FxSync_OnShieldHit(Vec3f* pos, s32 metal);
+            void FxSync_OnShieldHit(Vec3f * pos, s32 metal);
             FxSync_OnShieldHit(hitPos, 1);
         }
     } else if (flags == TOUCH_SFX_HARD) {
@@ -1706,7 +1706,7 @@ void CollisionCheck_HitEffects(PlayState* play, Collider* at, ColliderInfo* atIn
             }
             if (ac->actor == &GET_PLAYER(play)->actor) {
                 // Co-op: our (wooden) shield deflected something; replay on peers (FxSync).
-                void FxSync_OnShieldHit(Vec3f* pos, s32 metal);
+                void FxSync_OnShieldHit(Vec3f * pos, s32 metal);
                 FxSync_OnShieldHit(hitPos, 0);
             }
         } else if (sHitInfo[ac->colType].effect != HIT_NONE) {

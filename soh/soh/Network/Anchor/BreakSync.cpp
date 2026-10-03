@@ -82,8 +82,8 @@ static bool IsSyncedBreakable(int16_t id) {
 
 struct BreakState {
     uint64_t key = 0;
-    bool announced = false;      // we already sent BREAK for this actor
-    bool remoteBreaking = false; // break was remote-triggered: never echo it
+    bool announced = false;       // we already sent BREAK for this actor
+    bool remoteBreaking = false;  // break was remote-triggered: never echo it
     uint16_t kanbanPrevParts = 0; // signposts break piece by piece, not once
     uint16_t latchTicks = 0;      // frames since remoteBreaking was armed
 };
@@ -312,7 +312,7 @@ void Ingest(const nlohmann::json& payload) {
                     case KCUT_DIAG_L:
                         anim = 2; // DIAG_R base; local flip may mirror
                         break;
-                    default: // CUT_VERT_L / CUT_VERT_R
+                    default:      // CUT_VERT_L / CUT_VERT_R
                         anim = 0; // VERT_L base; local flip may mirror
                         break;
                 }
@@ -386,9 +386,7 @@ void Ingest(const nlohmann::json& payload) {
                 break;
         }
         ESYNC_LOG("[BreakSync] break rx id={} key={:#x}", actor->id, key);
-    } catch (const std::exception& e) {
-        SPDLOG_ERROR("[BreakSync] malformed BREAK_EVENT: {}", e.what());
-    }
+    } catch (const std::exception& e) { SPDLOG_ERROR("[BreakSync] malformed BREAK_EVENT: {}", e.what()); }
 }
 
 void RegisterHooks(bool isConnected) {
@@ -442,8 +440,7 @@ void RegisterHooks(bool isConnected) {
         // shatter every pot and rock the peer still had loaded around it.
         if (a->update == NULL && SyncEnabled() &&
             (a->id == ACTOR_OBJ_TSUBO || a->id == ACTOR_OBJ_KIBAKO || a->id == ACTOR_OBJ_KIBAKO2 ||
-                              (a->id == ACTOR_EN_ISHI && !(a->params & 1)) || a->id == ACTOR_OBJ_COMB ||
-                              a->id == ACTOR_EN_KUSA)) {
+             (a->id == ACTOR_EN_ISHI && !(a->params & 1)) || a->id == ACTOR_OBJ_COMB || a->id == ACTOR_EN_KUSA)) {
             SendBreak(a, it->second);
         }
         auto bk = sByKey.find(it->second.key);

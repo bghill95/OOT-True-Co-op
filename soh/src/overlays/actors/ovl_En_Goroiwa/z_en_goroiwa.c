@@ -740,9 +740,8 @@ void EnGoroiwa_Update(Actor* thisx, PlayState* play) {
     // copies never line up again, each player being crushed by a rock the other
     // does not see there. Keep rolling when connected; the pause is a courtesy
     // to a single player, not a rule of the puzzle.
-    if (Anchor_IsSessionActive() ||
-        !(player->stateFlags1 &
-          (PLAYER_STATE1_TALKING | PLAYER_STATE1_DEAD | PLAYER_STATE1_IN_ITEM_CS | PLAYER_STATE1_IN_CUTSCENE))) {
+    if (Anchor_IsSessionActive() || !(player->stateFlags1 & (PLAYER_STATE1_TALKING | PLAYER_STATE1_DEAD |
+                                                             PLAYER_STATE1_IN_ITEM_CS | PLAYER_STATE1_IN_CUTSCENE))) {
         if (this->collisionDisabledTimer > 0) {
             this->collisionDisabledTimer--;
         }
