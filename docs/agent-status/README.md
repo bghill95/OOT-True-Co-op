@@ -31,7 +31,7 @@ Each state is reported separately, at a named commit; none implies another, and 
 
 | State | Evidence that counts here |
 |---|---|
-| Implemented | a commit on `enemy-sync`, the only branch on GitHub; this fork's own work starts at 27f6fcb, and everything before it is upstream history |
+| Implemented | a commit on `enemy-sync`, the only branch on GitHub apart from the records' own `agent-status`; this fork's own work starts at 27f6fcb, and everything before it is upstream history |
 | Merged | a commit on the default branch `enemy-sync`, pushed directly (the fork's history is linear) or brought in by the merge of a pull request such as #2, named by its merge commit |
 | Tested | the CI build (the `generate-builds` workflow on every push: `soh.o2r` generation, then Linux, macOS and Windows builds, with no test step), the two-instance rig checks that commit messages report, and the eight-step play-test in `COOP-TEST-GUIDE.md`; each a `VERIFICATION.md` entry or cited row naming its commit |
 | Independently reviewed | no reviewer is defined; a review counts when its reviewer, the commit it covered and its disposition are recorded in `VERIFICATION.md` (the reviews that commit messages cite record neither reviewer nor commit) |
