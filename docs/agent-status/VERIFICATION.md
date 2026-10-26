@@ -9,6 +9,18 @@ Current state only; each cell names the commit its result is at.
 |---|---|---|---|---|
 | enemy-sync | b738c76 | Not Run: no unit test suite is registered in the repository's CMake files (inspection) | CI build Failed at b738c76 before any build job ran; a rig check Passed at b738c76, cited from its commit message; neither re-run | Not Verified |
 
+## VER-002: Fable's verification of these records
+- Test name and purpose: Fable's verification of these records against the repository: the rollout verification checklist (checker, hashes and dates, lifecycle claims, Business Context values, pilot leakage, roadmap labels, ceilings, diff scope, the PR).
+- Command or procedure: `python -I ~/projects/navideus-reporting-standard/main/scripts/check_records.py --repo . --base origin/enemy-sync` with the banned-words variable set at run time, then `git log -1` on every cited hash, `git branch -r`, `gh pr list --state all`, `gh issue list --state all`, and a read of every cited document.
+- Commit tested: 14490f6f3 (the records as they stood before this entry's commit; later record edits are outside this disposition)
+- Environment and configuration: the owner's PC, Git Bash, Python 3.11, git 2.52, gh 2.86; the checklist was run by a read-only verification subagent on Fable's behalf, and Fable read its report.
+- Execution date: 2026-10-26T07:49Z
+- Result: Passed after fix round 1 (the lifecycle observations dated in the seed line, the CI failure's cause marked unrecorded, the review scope and branch wording corrected, the VER-001 snapshot named, in 14490f6; the PR body's Merge section now names the workflows that pushes start)
+- Evidence: checker: PASS with the banned-words variable set to the 223 name tokens from the 168 author and committer names and the documents, no warning (the verification seat's run), and PASS again by the implementer at 14490f6; a controller run with an uncurated author-list word set produced only common-word collisions from the 168-author list, none a name in the records; all 14 cited hashes resolve with the dates and subjects recorded and sit on origin/enemy-sync; the README roadmap lines were committed by the owner in this fork and state a plan, so their [approved by record] labels stand; the CI run at b738c76 (failure at a build-environment step, log expired) and the rig result in the b738c76 message were confirmed; the fix (14490f6) was read back by diff: ten lines across STATUS.md, VERIFICATION.md and docs/agent-status/README.md, nothing else; the verification report was returned to the controller and is not a file
+- Reviewer and disposition: Fable; disposition: the records are verified as of 14490f6; no Codex audit is scheduled for this repository; the runs the records push started are not cited (controller ruling)
+- Remaining failures, limitations or untested scenarios: no build or test was run by the rollout; the first CI build of this code past the SDL step fails on Linux at the records push (not credited to b738c76, uncited); the lifecycle word, PR #2, issue #1 and the local-only plan and rig files await the owner's answers in the PR
+- Who ran it: a read-only verification subagent on Fable's behalf (the checklist and the checker); Fable (the read of its report and this entry)
+
 ## VER-001: Records check
 - Test name and purpose: Records check: the standard's checker on these records, for their form, hashes, paths and banned strings.
 - Command or procedure: `python -I ~/projects/navideus-reporting-standard/main/scripts/check_records.py --repo .`, from the worktree root

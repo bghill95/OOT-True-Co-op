@@ -51,6 +51,7 @@ No other branch exists: the remote holds `enemy-sync` only, apart from the recor
 - Developer checks reported in commit messages: Passed at ec103b7, 0599601 and b738c76 (a two-instance rig, with a packet injector at the latter two) and at faf0cf2 (music seek), cited; not re-run
 - Play-test script (`COOP-TEST-GUIDE.md`): no result recorded; Not Run
 - Independent review: Not Verified at b738c76
+- Fable's verification of these records at 14490f6f3: Passed after fix round 1 (VER-002, 2026-10-26T07:49Z).
 
 ## Open blockers
 - None recorded in the repository; the reason for the pause is not recorded (Uncertainties).
@@ -59,7 +60,7 @@ No other branch exists: the remote holds `enemy-sync` only, apart from the recor
 None is on record as the owner's: the project is recorded as Paused (unconfirmed) and resuming is the owner's decision. Resuming requires, by the root `README.md` ("Running it"), a build with the `libultraship` submodule from the companion fork (the upstream build docs; a copy is `docs/BUILDING.md`), a legally dumped copy of the game and an Anchor relay server (`ROADMAP.md`, Dependencies); the play-test launcher and instance folders that `COOP-TEST-GUIDE.md` uses (`launch-coop-test.bat`, `test-a`, `test-b`) are not in the repository. Suggestion (agent, not approved): decide on pull request #2 and answer issue #1 first, then get a CI build of `enemy-sync` past its dependency step and record it in `VERIFICATION.md`.
 
 ## GitHub issue/PR links
-- Checked 2026-10-26: one open pull request (#2) and one open issue (#1) besides the records' own pull request, both from outside the project; no release, no tag, and no comment from the owner on either.
+- Checked 2026-10-26: one open pull request (#2) and one open issue (#1) besides the records' own pull request, both from outside the project; no release, no tag, and no comment from the owner on either. PR for these records: https://github.com/bghill95/OOT-True-Co-op/pull/3 (draft).
 - https://github.com/bghill95/OOT-True-Co-op/pull/2: open, not a draft, from an outside contributor's fork, opened 2026-09-14, updated 2026-10-03: "Sync the rest of the shared world: objects, effects, bosses, and the endgame" (125 commits, 177 files changed); no review. The build and format runs that the owner's account started for it on 2026-09-17 failed, and the runs for its latest push (2026-10-03) await a maintainer's approval (https://github.com/bghill95/OOT-True-Co-op/actions/workflows/generate-builds.yml?query=branch%3Acoop-world-sync).
 - https://github.com/bghill95/OOT-True-Co-op/issues/1: open, opened 2026-08-27, updated 2026-09-15: a Windows build that crashes at startup; a commenter, the author of pull request #2, traces it to building without `BUILD_REMOTE_CONTROL` (2026-09-14), a flag the CI build sets (`.github/workflows/generate-builds.yml`) and the root `README.md` does not mention.
 
@@ -69,10 +70,10 @@ None is on record as the owner's: the project is recorded as Paused (unconfirmed
 - Commit tested: b738c76 (its rig check cited from the commit message, and its CI build Failed in a dependency step, before the project's own code was built; neither re-run)
 - Commit reviewed: Not Verified
 - Commit deployed: Not applicable: no deployment environment is defined (a game mod built and run locally)
-- Records revision: this commit
+- Records revision: this commit (previous records revision: 14490f6f3)
 
 ## Last verified
-2026-10-26T06:55Z (Opus: the standard's checker on these records, VER-001; Fable's verification has not run yet)
+2026-10-26T07:49Z (Fable's verification at 14490f6f3, VER-002; the implementer's check is VER-001)
 
 ## Uncertainties
 - Paused is the rollout's planning seed, not confirmed; the reason for the pause is not recorded (the owner can settle both).
