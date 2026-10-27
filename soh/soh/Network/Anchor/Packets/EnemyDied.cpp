@@ -57,8 +57,8 @@ void Anchor::HandlePacket_EnemyDied(nlohmann::json payload) {
     ESYNC_LOG("[EnemySync] DIED rx id={}", payload["actorId"].get<int16_t>());
 
     uint64_t key = payload["key"].get<uint64_t>();
-    Actor* actor = EnemySync::FindActorForPacket(key, payload["actorId"].get<int16_t>(),
-                                                 payload["homePos"].get<Vec3f>());
+    Actor* actor =
+        EnemySync::FindActorForPacket(key, payload["actorId"].get<int16_t>(), payload["homePos"].get<Vec3f>());
     if (actor == NULL) {
         // Bug D: the enemy lives in a room we don't have loaded (the authority can
         // still re-enter it later). Record the kill so its copy dies on room load

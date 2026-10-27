@@ -13,11 +13,11 @@ extern "C" {
 // Verbose sync tracing for the two-instance test rig: INFO-level, flushed
 // immediately (log-grep assertions read files while the game runs). Desync
 // canaries stay unconditional SPDLOG_WARN — never route those through this.
-#define ESYNC_LOG(...)                    \
-    do {                                  \
-        if (EnemySync::VerboseSync()) {   \
-            SPDLOG_INFO(__VA_ARGS__);     \
-        }                                 \
+#define ESYNC_LOG(...)                  \
+    do {                                \
+        if (EnemySync::VerboseSync()) { \
+            SPDLOG_INFO(__VA_ARGS__);   \
+        }                               \
     } while (0)
 
 /**
