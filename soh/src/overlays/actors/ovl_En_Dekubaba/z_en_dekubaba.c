@@ -1063,7 +1063,8 @@ void EnDekubaba_MirrorApplyDraw(EnDekubaba* this, u8 stemMode, s16 stemAngle0, s
             this->actionFunc = EnDekubaba_DeadStickDrop; // stick-drop blink (uses timer)
             break;
         default:
-            this->actionFunc = EnDekubaba_DecideLunge; // any non-Wait/non-DeadStickDrop -> DrawStemExtended (3 sections)
+            this->actionFunc =
+                EnDekubaba_DecideLunge; // any non-Wait/non-DeadStickDrop -> DrawStemExtended (3 sections)
             break;
     }
     this->stemSectionAngle[0] = stemAngle0;

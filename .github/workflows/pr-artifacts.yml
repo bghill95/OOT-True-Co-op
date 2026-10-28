@@ -6,6 +6,10 @@ on:
     types:
       - completed
 
+permissions:
+  actions: read
+  pull-requests: write
+
 jobs:
   pr-artifacts:
     runs-on: ubuntu-latest

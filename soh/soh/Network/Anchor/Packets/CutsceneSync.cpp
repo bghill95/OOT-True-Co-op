@@ -133,8 +133,7 @@ void ResolvePendingReplay() {
     }
     ReplayLatch& latch = LatchForKind(sPendingReplay.kind);
     if (latch.armed) {
-        if (sPendingReplay.kind == 0 && sPendingReplay.csFlag >= 0 &&
-            !GET_EVENTCHKINF(sPendingReplay.csFlag)) {
+        if (sPendingReplay.kind == 0 && sPendingReplay.csFlag >= 0 && !GET_EVENTCHKINF(sPendingReplay.csFlag)) {
             SET_EVENTCHKINF(sPendingReplay.csFlag);
         }
         latch.armed = false;
@@ -172,10 +171,8 @@ void ReconcilePendingReplay() {
     // We are at the target scene + entrance. Play_Init already ran the entrance-CS
     // trigger (z_play.c:512) this load, so a still-armed latch means the CS did NOT
     // fire (age mismatch / stale cutsceneIndex). Re-SET the bit we cleared.
-    if (gPlayState->sceneNum == sPendingReplay.sceneNum &&
-        gSaveContext.entranceIndex == sPendingReplay.entrance) {
-        if (sPendingReplay.kind == 0 && sPendingReplay.csFlag >= 0 &&
-            !GET_EVENTCHKINF(sPendingReplay.csFlag)) {
+    if (gPlayState->sceneNum == sPendingReplay.sceneNum && gSaveContext.entranceIndex == sPendingReplay.entrance) {
+        if (sPendingReplay.kind == 0 && sPendingReplay.csFlag >= 0 && !GET_EVENTCHKINF(sPendingReplay.csFlag)) {
             SET_EVENTCHKINF(sPendingReplay.csFlag);
             SPDLOG_INFO("[CutsceneSync] reconcile: CS did not fire on load, re-SET guard flag {}",
                         sPendingReplay.csFlag);
@@ -188,8 +185,7 @@ void ReconcilePendingReplay() {
     // Never reached the target scene before the deadline: the pull warp expired or was
     // superseded. Undo the clear and disarm the latch so it cannot wedge.
     if (std::chrono::steady_clock::now() >= sPendingReplay.deadline) {
-        if (sPendingReplay.kind == 0 && sPendingReplay.csFlag >= 0 &&
-            !GET_EVENTCHKINF(sPendingReplay.csFlag)) {
+        if (sPendingReplay.kind == 0 && sPendingReplay.csFlag >= 0 && !GET_EVENTCHKINF(sPendingReplay.csFlag)) {
             SET_EVENTCHKINF(sPendingReplay.csFlag);
             SPDLOG_INFO("[CutsceneSync] reconcile: pull warp did not land, re-SET guard flag {}",
                         sPendingReplay.csFlag);
@@ -310,8 +306,8 @@ void RegisterCutsceneSyncHooks(bool isConnected) {
         if (ConsumeLatch(sEntranceCsReplay, entrance)) {
             SPDLOG_INFO("[CutsceneSync] tx suppressed (self-replay) kind=0 entrance={}", entrance);
         } else if (Anchor::Instance != nullptr) {
-            Anchor::Instance->SendPacket_CutsceneSync(0, gPlayState->sceneNum, entrance,
-                                                      gSaveContext.cutsceneIndex, (s16)flag);
+            Anchor::Instance->SendPacket_CutsceneSync(0, gPlayState->sceneNum, entrance, gSaveContext.cutsceneIndex,
+                                                      (s16)flag);
         }
     });
 

@@ -2,6 +2,8 @@
 #define NETWORK_ANCHOR_COOP_WARP_H
 #ifdef __cplusplus
 
+#include <memory> // z64.h includes this under __cplusplus; it must be seen outside extern "C" first (as in Anchor.h)
+
 extern "C" {
 #include "z64.h"
 }

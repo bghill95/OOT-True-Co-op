@@ -70,8 +70,7 @@ void Anchor::HandlePacket_EnemyRoster(nlohmann::json payload) {
     }
 
     // Data: reconcile only against the client we currently elect as authority.
-    if (EnemySync::IsLocalAuthority() ||
-        payload["clientId"].get<uint32_t>() != EnemySync::CurrentAuthorityId()) {
+    if (EnemySync::IsLocalAuthority() || payload["clientId"].get<uint32_t>() != EnemySync::CurrentAuthorityId()) {
         return;
     }
     EnemySync::ReconcileRoster(roomNum, payload["entries"]);
